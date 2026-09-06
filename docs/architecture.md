@@ -183,5 +183,5 @@ Validated on the `main` development server with Minecraft 26.1, Fabric Loader 0.
 Testing caveats:
 
 - the development server pauses ticking when it has been empty for 60 seconds, so `onTick()` tests need an online player/bot or another reason for the server to tick
-- the current `mc-mcp` prismarine-based TestBot physically walks when asked to move, but during validation its movement did not set `ServerPlayer.getLastClientInput().forward()` as observed by the runtime. Treat this as a TestBot/tool limitation until proven otherwise; real-client input still requires separate validation
+- `mc-mcp` TestBot input has now been validated end-to-end: a `playtest_scenario` forward move sets `ServerPlayer.getLastClientInput().forward()`, `input.players().forward` becomes true in TypeScript, and script logic can move a runtime actor in response. This makes mc-mcp suitable for automated input-driven E2E tests of script games.
 - runtime operations targeting unloaded chunks can fail silently because several PoC APIs currently delegate to Minecraft commands. Tests that spawn actors at fixed coordinates should ensure the relevant chunk is loaded
