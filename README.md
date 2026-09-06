@@ -11,7 +11,8 @@ Verified in a standalone Fabric 26.1 server:
 - embedded GraalJS loads from the mod JAR
 - embedded TypeScript 5.9.2 transpiles datapack `main.ts`
 - `game.onStart` executes
-- runtime API calls can spawn/move a mannequin and modify the world
+- runtime API calls can spawn/move/remove a mannequin and modify the world
+- default actor transforms/removal and `world.setBlock` use direct server APIs instead of command dispatch
 - editing `main.ts` followed by `/reload` loads the new script
 
 ## Architecture
@@ -71,7 +72,7 @@ game.onTick(() => {
 });
 ```
 
-A complete example lives under [`examples/demo-datapack`](examples/demo-datapack).
+A minimal example lives under [`examples/demo-datapack`](examples/demo-datapack), and the validated two-room game loop lives under [`examples/topdown-roguelike`](examples/topdown-roguelike).
 
 ## Current API
 

@@ -106,7 +106,7 @@ Player snapshots currently expose:
 - `actors.move(id, options)`
 - `actors.remove(id)`
 
-Actors are currently implemented as `minecraft:mannequin` entities. This is an implementation detail behind the API and may change.
+Actors are currently implemented as `minecraft:mannequin` entities. The default mannequin path is backed by direct server Entity APIs: the runtime keeps a Java reference per script actor, applies movement directly, and discards the entity directly on removal/reload. Custom resource-pack textures still use the command-backed spawn/move fallback until mannequin profile construction is moved to the direct path. The mannequin implementation remains an internal detail and may change.
 
 ### camera
 
@@ -123,6 +123,8 @@ Current detach behavior switches the player to Adventure mode; original gamemode
 - `world.setBlock(options)`
 - `effects.particle(options)`
 - `effects.sound(options)`
+
+`world.setBlock` resolves the block through the server registry and calls the ServerLevel block API directly; it no longer invokes the command parser. This preserves the small capability surface while removing command parsing from block-write hot paths. Individual writes still perform normal block updates and can synchronously obtain target chunks, so large map generation should use a future batched/fill capability rather than thousands of per-tick `setBlock` calls. Effects remain command-backed in the current PoC.
 
 The initial API intentionally stays small. New capabilities should be added deliberately rather than exposing raw command execution or raw Minecraft Java objects.
 
@@ -165,7 +167,7 @@ An earlier external TCP/JSONL bridge PoC exists separately. The long-term design
 - no collision/query abstraction
 - actor implementation is mannequin-specific
 - camera detach does not restore the player's prior gamemode
-- APIs currently translate many operations through Minecraft commands rather than direct server APIs
+- camera operations, effects, and custom-texture actor fallback still translate through Minecraft commands; default actor transforms/removal and `world.setBlock` now use direct server APIs
 - watchdog/resource limits need more validation
 - no multiplayer game-session ownership abstraction beyond per-script entity tags
 
@@ -184,10 +186,11 @@ Testing caveats:
 
 - the development server pauses ticking when it has been empty for 60 seconds, so `onTick()` tests need an online player/bot or another reason for the server to tick
 - `mc-mcp` TestBot input has now been validated end-to-end: a `playtest_scenario` forward move sets `ServerPlayer.getLastClientInput().forward()`, `input.players().forward` becomes true in TypeScript, and script logic can move a runtime actor in response. This makes mc-mcp suitable for automated input-driven E2E tests of script games.
-- runtime operations targeting unloaded chunks can fail silently because several PoC APIs currently delegate to Minecraft commands. Tests that spawn actors at fixed coordinates should ensure the relevant chunk is loaded
+- actor spawning still requires a usable target level/chunk context; `world.setBlock` now uses `ServerLevel.setBlock` directly, which may synchronously obtain the target chunk. Avoid distant/high-volume per-tick writes and prefer a future batched world-edit API for map generation
 - the migrated `examples/topdown-roguelike` loop has been validated end-to-end with mc-mcp: WASD moves the TypeScript-authoritative hero, enemies chase, held jump drives the 8-tick attack loop, Room 1 opens its gate, entering the corridor spawns Room 2 and moves the camera, and defeating Room 2 opens the final gate
 - the top-down example claims its single-player controller on the first gameplay input and releases it on disconnect, so capture/observer clients do not steal control merely by being online
-- the full loop produced a 45.6 ms script-tick warning during a combat-heavy frame; command-backed actor transforms/effects remain a performance hotspot and should move toward direct/batched server APIs before scaling actor counts
+- before the 0.1.1 hot-path rewrite, the full loop produced a 45.6 ms script-tick warning during a combat-heavy frame. Default actor transforms and `world.setBlock` are now direct; rerun the same main-server E2E after deploying 0.1.1 to quantify the improvement. Effects remain command-backed.
+- a standalone 0.1.1 smoke test verified direct actor spawn/move/remove, exact final actor transform `[2.5, 101, 0.5]` / yaw `60`, and direct gold/diamond block writes. After compiler warmup and `/reload`, that smoke run produced no script-tick warning above the 10 ms threshold.
 
 ## Full game-loop example
 

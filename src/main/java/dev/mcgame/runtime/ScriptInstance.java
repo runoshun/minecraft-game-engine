@@ -1,9 +1,19 @@
 package dev.mcgame.runtime;
 
-import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.entity.player.Input;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.EntitySpawnReason;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.decoration.Mannequin;
+import net.minecraft.world.entity.player.Input;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.HostAccess;
 import org.graalvm.polyglot.PolyglotAccess;
@@ -49,6 +59,7 @@ final class ScriptInstance {
     private final List<Value> tickCallbacks = new ArrayList<>();
     private final Set<UUID> attachedPlayers = new HashSet<>();
     private final Map<UUID, ButtonState> previous = new HashMap<>();
+    private final Map<String, Mannequin> actorEntities = new HashMap<>();
 
     private List<PlayerSnapshot> players = List.of();
     private MinecraftServer currentServer;
@@ -118,6 +129,11 @@ final class ScriptInstance {
             if (player != null) exec(server, "execute as " + player.getGameProfile().name() + " run spectate");
         }
         attachedPlayers.clear();
+        for (Mannequin actor : actorEntities.values()) {
+            if (!actor.isRemoved()) actor.discard();
+        }
+        actorEntities.clear();
+        // Camera anchors and any command-fallback entities are still owner-tagged.
         exec(server, "kill @e[tag=" + ownerTag + "]");
         context.close(true);
     }
@@ -231,29 +247,95 @@ final class ScriptInstance {
         String dimension = memberResource(opts, "dimension", "minecraft:overworld");
         double x = memberDouble(opts, "x", 0), y = memberDouble(opts, "y", 0), z = memberDouble(opts, "z", 0);
         float yaw = (float) memberDouble(opts, "yaw", 0);
+        float pitch = (float) memberDouble(opts, "pitch", 0);
         String texture = memberResource(opts, "texture", "minecraft:entity/player/wide/steve");
+
         String tag = actorTag(actorId);
-        exec(server, "kill @e[tag=" + tag + "]");
-        exec(server, String.format(Locale.ROOT,
-            "execute in %s run summon minecraft:mannequin %.4f %.4f %.4f {Tags:[\"%s\",\"%s\"],Invulnerable:1b,NoGravity:1b,Rotation:[%.2ff,0f],profile:{texture:\"%s\"}}",
-            dimension, x, y, z, ownerTag, tag, yaw, texture));
+        if (!removeActorEntity(actorId)) {
+            // Also clear an untracked custom-texture fallback with the same logical id.
+            exec(server, "kill @e[tag=" + tag + "]");
+        }
+        ServerLevel level = requireLevel(server, dimension);
+
+        // The common/default mannequin path is fully direct. Keep the old command path only
+        // for custom resource-pack textures until profile construction is exposed directly.
+        if (!"minecraft:entity/player/wide/steve".equals(texture)) {
+            exec(server, String.format(Locale.ROOT,
+                "execute in %s run summon minecraft:mannequin %.4f %.4f %.4f {Tags:[\"%s\",\"%s\"],Invulnerable:1b,NoGravity:1b,Rotation:[%.2ff,%.2ff],profile:{texture:\"%s\"}}",
+                dimension, x, y, z, ownerTag, tag, yaw, pitch, texture));
+            return;
+        }
+
+        Mannequin actor = EntityType.MANNEQUIN.create(level, EntitySpawnReason.COMMAND);
+        if (actor == null) throw new IllegalStateException("failed to create mannequin actor " + actorId);
+        actor.setPos(x, y, z);
+        actor.setYRot(yaw);
+        actor.setXRot(pitch);
+        actor.setNoGravity(true);
+        actor.noPhysics = true;
+        actor.setDeltaMovement(0, 0, 0);
+        actor.setInvulnerable(true);
+        actor.addTag(ownerTag);
+        actor.addTag(tag);
+        if (!level.addFreshEntity(actor)) {
+            actor.discard();
+            throw new IllegalStateException("failed to add mannequin actor " + actorId + " to " + dimension);
+        }
+        actorEntities.put(actorId, actor);
     }
 
     private void moveActor(Value[] args) {
         MinecraftServer server = requireServer();
         String actorId = safeId(stringArg(args, 0, "actors.move"));
         Value opts = objectArg(args, 1, "actors.move");
-        String dimension = memberResource(opts, "dimension", "minecraft:overworld");
-        double x = memberDouble(opts, "x", 0), y = memberDouble(opts, "y", 0), z = memberDouble(opts, "z", 0);
-        float yaw = (float) memberDouble(opts, "yaw", 0);
-        float pitch = (float) memberDouble(opts, "pitch", 0);
-        exec(server, String.format(Locale.ROOT,
-            "execute in %s run tp @e[type=minecraft:mannequin,tag=%s,limit=1] %.4f %.4f %.4f %.2f %.2f",
-            dimension, actorTag(actorId), x, y, z, yaw, pitch));
+        Mannequin actor = actorEntities.get(actorId);
+        if (actor == null || actor.isRemoved()) {
+            // Custom-texture fallback actors are not held as Java references.
+            String dimension = memberResource(opts, "dimension", "minecraft:overworld");
+            double x = memberDouble(opts, "x", 0), y = memberDouble(opts, "y", 0), z = memberDouble(opts, "z", 0);
+            float yaw = (float) memberDouble(opts, "yaw", 0);
+            float pitch = (float) memberDouble(opts, "pitch", 0);
+            exec(server, String.format(Locale.ROOT,
+                "execute in %s run tp @e[type=minecraft:mannequin,tag=%s,limit=1] %.4f %.4f %.4f %.2f %.2f",
+                dimension, actorTag(actorId), x, y, z, yaw, pitch));
+            return;
+        }
+
+        String currentDimension = actor.level().dimension().identifier().toString();
+        String dimension = memberResource(opts, "dimension", currentDimension);
+        double x = memberDouble(opts, "x", actor.getX());
+        double y = memberDouble(opts, "y", actor.getY());
+        double z = memberDouble(opts, "z", actor.getZ());
+        float yaw = (float) memberDouble(opts, "yaw", actor.getYRot());
+        float pitch = (float) memberDouble(opts, "pitch", actor.getXRot());
+
+        if (dimension.equals(currentDimension)) {
+            actor.setDeltaMovement(0, 0, 0);
+            actor.setPos(x, y, z);
+            actor.setYRot(yaw);
+            actor.setXRot(pitch);
+        } else {
+            ServerLevel target = requireLevel(server, dimension);
+            if (!actor.teleportTo(target, x, y, z, Set.of(), yaw, pitch, false)) {
+                actorEntities.remove(actorId);
+                throw new IllegalStateException("actor dimension transfer failed for " + actorId);
+            }
+            actorEntities.put(actorId, actor);
+        }
     }
 
     private void removeActor(Value[] args) {
-        exec(requireServer(), "kill @e[tag=" + actorTag(safeId(stringArg(args, 0, "actors.remove"))) + "]");
+        String actorId = safeId(stringArg(args, 0, "actors.remove"));
+        if (!removeActorEntity(actorId)) {
+            exec(requireServer(), "kill @e[tag=" + actorTag(actorId) + "]");
+        }
+    }
+
+    private boolean removeActorEntity(String actorId) {
+        Mannequin actor = actorEntities.remove(actorId);
+        if (actor == null) return false;
+        if (!actor.isRemoved()) actor.discard();
+        return true;
     }
 
     private void attachCamera(Value[] args) {
@@ -302,11 +384,17 @@ final class ScriptInstance {
         MinecraftServer server = requireServer();
         Value opts = objectArg(args, 0, "world.setBlock");
         String dimension = memberResource(opts, "dimension", "minecraft:overworld");
-        String block = memberResource(opts, "block", null);
+        String blockId = memberResource(opts, "block", null);
         int x = (int) Math.floor(memberDouble(opts, "x", 0));
         int y = (int) Math.floor(memberDouble(opts, "y", 0));
         int z = (int) Math.floor(memberDouble(opts, "z", 0));
-        exec(server, "execute in " + dimension + " run setblock " + x + " " + y + " " + z + " " + block);
+
+        ServerLevel level = requireLevel(server, dimension);
+        Block block = BuiltInRegistries.BLOCK.getOptional(Identifier.parse(blockId))
+            .orElseThrow(() -> new IllegalArgumentException("unknown block: " + blockId));
+        BlockPos pos = new BlockPos(x, y, z);
+        if (!level.isInWorldBounds(pos)) throw new IllegalArgumentException("block position is outside world bounds: " + pos);
+        level.setBlock(pos, block.defaultBlockState(), Block.UPDATE_ALL);
     }
 
     private void particle(Value[] args) {
@@ -358,6 +446,13 @@ final class ScriptInstance {
     private MinecraftServer requireServer() {
         if (currentServer == null) throw new IllegalStateException("Minecraft API may only be called from game callbacks");
         return currentServer;
+    }
+
+    private ServerLevel requireLevel(MinecraftServer server, String id) {
+        ResourceKey<Level> key = ResourceKey.create(Registries.DIMENSION, Identifier.parse(id));
+        ServerLevel level = server.getLevel(key);
+        if (level == null) throw new IllegalArgumentException("unknown dimension: " + id);
+        return level;
     }
 
     private ServerPlayer requirePlayer(MinecraftServer server, String key) {
