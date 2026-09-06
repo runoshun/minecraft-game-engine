@@ -168,3 +168,20 @@ An earlier external TCP/JSONL bridge PoC exists separately. The long-term design
 - APIs currently translate many operations through Minecraft commands rather than direct server APIs
 - watchdog/resource limits need more validation
 - no multiplayer game-session ownership abstraction beyond per-script entity tags
+
+## Validation notes
+
+Validated on the `main` development server with Minecraft 26.1, Fabric Loader 0.19.5, Java 25, and Fabric API 0.155.2+26.1.2:
+
+- a datapack resource at `data/<namespace>/mcgame/main.ts` is discovered on `/reload`
+- embedded TypeScript compilation succeeds and `game.onStart()` executes
+- `actors.spawn()` creates a mannequin projection in-world
+- `game.onTick()` executes while the server is actively ticking
+- editing `main.ts` and running `/reload` replaces the old script instance, cleans up its owned actor, and starts the new instance
+- removing the datapack and reloading returns the runtime to zero active scripts and cleans up owned entities
+
+Testing caveats:
+
+- the development server pauses ticking when it has been empty for 60 seconds, so `onTick()` tests need an online player/bot or another reason for the server to tick
+- the current `mc-mcp` prismarine-based TestBot physically walks when asked to move, but during validation its movement did not set `ServerPlayer.getLastClientInput().forward()` as observed by the runtime. Treat this as a TestBot/tool limitation until proven otherwise; real-client input still requires separate validation
+- runtime operations targeting unloaded chunks can fail silently because several PoC APIs currently delegate to Minecraft commands. Tests that spawn actors at fixed coordinates should ensure the relevant chunk is loaded
