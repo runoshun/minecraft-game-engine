@@ -1,0 +1,38 @@
+plugins {
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
+    id 'maven-publish'
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+    compileOnly "org.graalvm.polyglot:polyglot:${project.graal_version}"
+
+    include "org.graalvm.js:js-language:${project.graal_version}"
+    include "org.graalvm.regex:regex:${project.graal_version}"
+    include "org.graalvm.truffle:truffle-api:${project.graal_version}"
+    include "org.graalvm.truffle:truffle-runtime:${project.graal_version}"
+    include "org.graalvm.truffle:truffle-compiler:${project.graal_version}"
+    include "org.graalvm.polyglot:polyglot:${project.graal_version}"
+    include "org.graalvm.sdk:collections:${project.graal_version}"
+    include "org.graalvm.sdk:jniutils:${project.graal_version}"
+    include "org.graalvm.sdk:nativeimage:${project.graal_version}"
+    include "org.graalvm.sdk:word:${project.graal_version}"
+    include "org.graalvm.shadowed:icu4j:${project.graal_version}"
+    include "org.graalvm.shadowed:xz:${project.graal_version}"
+}
+
+processResources {
+    inputs.property "version", project.version
+    filesMatching("fabric.mod.json") { expand "version": project.version }
+}
+
+tasks.withType(JavaCompile).configureEach { it.options.release = 25 }
+
+java {
+    withSourcesJar()
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+}
