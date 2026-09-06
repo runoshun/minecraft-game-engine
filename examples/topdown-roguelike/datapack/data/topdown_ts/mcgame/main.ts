@@ -13,18 +13,38 @@ type Enemy = {
   x: number;
   z: number;
   hp: number;
+  attackCooldown: number;
 };
 
 type Stage = 0 | 1 | 2 | 3;
 
 const FLOOR_Y = 101;
 const PLAYER_SPEED = 0.12;
+const PLAYER_MAX_HP = 10;
+const PLAYER_INVULN_TICKS = 20;
+const PLAYER_KNOCKBACK = 0.9;
+const DEATH_RESTART_TICKS = 40;
+
 const ENEMY_SPEED = 0.06;
+const ENEMY_STOP_DISTANCE = 1.1;
+const ENEMY_ATTACK_RANGE = 1.25;
+const ENEMY_ATTACK_COOLDOWN = 20;
+
 const ATTACK_COOLDOWN = 8;
 const ATTACK_REACH = 1.2;
 const ATTACK_RADIUS = 1.65;
 
-const player = { x: 0.5, z: 0.5, yaw: 0, attackCooldown: 0 };
+const player = {
+  x: 0.5,
+  z: 0.5,
+  yaw: 0,
+  hp: PLAYER_MAX_HP,
+  invulnTicks: 0,
+  attackCooldown: 0,
+  dead: false,
+  restartTicks: 0,
+};
+
 let stage: Stage = 0;
 let enemies: Enemy[] = [];
 let controllerId: string | null = null;
@@ -53,9 +73,14 @@ function setGate(z: number, block: string): void {
   }
 }
 
+function removeEnemies(): void {
+  for (const enemy of enemies) actors.remove(enemy.id);
+  enemies = [];
+}
+
 function spawnEnemy(id: string, x: number, z: number, hp: number): Enemy {
   actors.spawn(id, { x, y: FLOOR_Y, z, yaw: 0 });
-  return { id, x, z, hp };
+  return { id, x, z, hp, attackCooldown: 0 };
 }
 
 function spawnRoom1(): void {
@@ -94,6 +119,23 @@ function tryMovePlayer(dx: number, dz: number, yaw: number): void {
   player.yaw = yaw;
 }
 
+function movePlayerBy(dx: number, dz: number): void {
+  const nextX = player.x + dx;
+  const nextZ = player.z + dz;
+  if (isWalkable(nextX, nextZ)) {
+    player.x = nextX;
+    player.z = nextZ;
+  } else if (isWalkable(nextX, player.z)) {
+    player.x = nextX;
+  } else if (isWalkable(player.x, nextZ)) {
+    player.z = nextZ;
+  }
+}
+
+function projectPlayer(): void {
+  actors.move("hero", { x: player.x, y: FLOOR_Y, z: player.z, yaw: player.yaw });
+}
+
 function updatePlayer(p: PlayerInput): void {
   // Preserve the original screen-space mapping for yaw=0, pitch=90.
   // W => +Z, S => -Z, A => +X, D => -X.
@@ -102,18 +144,76 @@ function updatePlayer(p: PlayerInput): void {
   if (p.backward) tryMovePlayer(0, -PLAYER_SPEED, 180);
   if (p.left) tryMovePlayer(PLAYER_SPEED, 0, -90);
   if (p.right) tryMovePlayer(-PLAYER_SPEED, 0, 90);
+  projectPlayer();
+}
 
-  actors.move("hero", { x: player.x, y: FLOOR_Y, z: player.z, yaw: player.yaw });
+function killPlayer(): void {
+  if (player.dead) return;
+  player.dead = true;
+  player.restartTicks = DEATH_RESTART_TICKS;
+  removeEnemies();
+
+  effects.sound({
+    sound: "minecraft:entity.player.death",
+    x: player.x,
+    y: FLOOR_Y,
+    z: player.z,
+    volume: 0.9,
+    pitch: 1.0,
+  });
+  effects.particle({
+    particle: "minecraft:poof",
+    x: player.x,
+    y: FLOOR_Y + 1,
+    z: player.z,
+  });
+  game.log("TOPDOWN_TS_PLAYER_DIED");
+}
+
+function damagePlayer(enemy: Enemy): void {
+  if (player.dead || player.invulnTicks > 0) return;
+
+  player.hp -= 1;
+  player.invulnTicks = PLAYER_INVULN_TICKS;
+  enemy.attackCooldown = ENEMY_ATTACK_COOLDOWN;
+
+  const dx = player.x - enemy.x;
+  const dz = player.z - enemy.z;
+  const distance = Math.hypot(dx, dz);
+  if (distance > 0.0001) {
+    movePlayerBy(dx / distance * PLAYER_KNOCKBACK, dz / distance * PLAYER_KNOCKBACK);
+    projectPlayer();
+  }
+
+  effects.sound({
+    sound: "minecraft:entity.player.hurt",
+    x: player.x,
+    y: FLOOR_Y,
+    z: player.z,
+    volume: 0.8,
+    pitch: 1.0,
+  });
+  effects.particle({
+    particle: "minecraft:damage_indicator",
+    x: player.x,
+    y: FLOOR_Y + 1,
+    z: player.z,
+  });
+  game.log("TOPDOWN_TS_PLAYER_HIT", `hp=${player.hp}`);
+
+  if (player.hp <= 0) killPlayer();
 }
 
 function updateEnemies(): void {
   for (const enemy of enemies) {
+    if (enemy.attackCooldown > 0) enemy.attackCooldown -= 1;
+
     const dx = player.x - enemy.x;
     const dz = player.z - enemy.z;
     const distance = Math.hypot(dx, dz);
     const yaw = yawToward(dx, dz);
 
-    if (distance > 1.1) {
+    if (distance > ENEMY_STOP_DISTANCE) {
       const stepX = dx / distance * ENEMY_SPEED;
       const stepZ = dz / distance * ENEMY_SPEED;
       const nextX = enemy.x + stepX;
@@ -130,6 +230,12 @@ function updateEnemies(): void {
     }
 
     actors.move(enemy.id, { x: enemy.x, y: FLOOR_Y, z: enemy.z, yaw });
+
+    const attackDistance = Math.hypot(player.x - enemy.x, player.z - enemy.z);
+    if (attackDistance <= ENEMY_ATTACK_RANGE && enemy.attackCooldown === 0) {
+      damagePlayer(enemy);
+      if (player.dead) return;
+    }
   }
 }
 
@@ -186,10 +292,12 @@ function attack(): void {
 
 function clearRoom1(): void {
   stage = 1;
+  player.hp = PLAYER_MAX_HP;
+  player.invulnTicks = 0;
   setGate(8, "minecraft:air");
   effects.sound({ sound: "minecraft:block.iron_door.open", x: 0, y: 101, z: 8, volume: 1, pitch: 1 });
   effects.particle({ particle: "minecraft:happy_villager", x: 0.5, y: 102, z: 7.5 });
-  game.log("TOPDOWN_TS_ROOM1_CLEAR");
+  game.log("TOPDOWN_TS_ROOM1_CLEAR", `hp=${player.hp}`);
 }
 
 function enterRoom2(): void {
@@ -216,22 +324,34 @@ function clearRoom2(): void {
   game.log("TOPDOWN_TS_RUN_COMPLETE");
 }
 
-game.onStart(() => {
+function resetRun(fromDeath: boolean): void {
+  removeEnemies();
   stage = 0;
-  controllerId = null;
-  cameraAttached.clear();
   player.x = 0.5;
   player.z = 0.5;
   player.yaw = 0;
+  player.hp = PLAYER_MAX_HP;
+  player.invulnTicks = 0;
   player.attackCooldown = 0;
+  player.dead = false;
+  player.restartTicks = 0;
 
-  // Dynamic gates reset on game reload; static map geometry is not rebuilt.
   setGate(8, "minecraft:polished_blackstone_bricks");
   setGate(28, "minecraft:polished_blackstone_bricks");
-
   actors.spawn("hero", { x: player.x, y: FLOOR_Y, z: player.z, yaw: player.yaw });
   spawnRoom1();
-  game.log("TOPDOWN_TS_START");
+
+  if (controllerId && cameraAttached.has(controllerId)) {
+    camera.move(controllerId, { x: 0.5, y: 115, z: 0.5, yaw: 0, pitch: 90 });
+  }
+
+  game.log(fromDeath ? "TOPDOWN_TS_RESTART" : "TOPDOWN_TS_START", `hp=${player.hp}`);
+}
+
+game.onStart(() => {
+  controllerId = null;
+  cameraAttached.clear();
+  resetRun(false);
 });
 
 game.onTick(() => {
@@ -260,10 +380,19 @@ game.onTick(() => {
     cameraAttached.add(p.id);
   }
 
+  if (player.dead) {
+    player.restartTicks -= 1;
+    if (player.restartTicks <= 0) resetRun(true);
+    return;
+  }
+
+  if (player.invulnTicks > 0) player.invulnTicks -= 1;
   if (player.attackCooldown > 0) player.attackCooldown -= 1;
+
   updatePlayer(p);
   if (p.jump && player.attackCooldown === 0) attack();
   updateEnemies();
+  if (player.dead) return;
 
   if (stage === 0 && enemies.length === 0) clearRoom1();
   if (stage === 1 && player.x >= -2 && player.x <= 2 && player.z >= 9 && player.z <= 12.35) enterRoom2();

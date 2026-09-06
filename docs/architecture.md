@@ -163,7 +163,7 @@ An earlier external TCP/JSONL bridge PoC exists separately. The long-term design
 - single-file TypeScript only
 - no stable versioned script API yet
 - no persistent script storage API
-- no player HP/combat abstraction
+- no generic runtime-level player HP/combat abstraction; game scripts currently own gameplay HP/damage state themselves
 - no collision/query abstraction
 - actor implementation is mannequin-specific
 - camera detach does not restore the player's prior gamemode
@@ -188,10 +188,12 @@ Testing caveats:
 - `mc-mcp` TestBot input has now been validated end-to-end: a `playtest_scenario` forward move sets `ServerPlayer.getLastClientInput().forward()`, `input.players().forward` becomes true in TypeScript, and script logic can move a runtime actor in response. This makes mc-mcp suitable for automated input-driven E2E tests of script games.
 - actor spawning still requires a usable target level/chunk context; `world.setBlock` now uses `ServerLevel.setBlock` directly, which may synchronously obtain the target chunk. Avoid distant/high-volume per-tick writes and prefer a future batched world-edit API for map generation
 - the migrated `examples/topdown-roguelike` loop has been validated end-to-end with mc-mcp: WASD moves the TypeScript-authoritative hero, enemies chase, held jump drives the 8-tick attack loop, Room 1 opens its gate, entering the corridor spawns Room 2 and moves the camera, and defeating Room 2 opens the final gate
+- the example combat model now also keeps player HP (10 max in the example), 20-tick hit invulnerability, knockback, enemy contact-attack cooldowns, room-clear healing, death, and a 40-tick Room 1 restart entirely in TypeScript; vanilla player health remains presentation-independent
+- final combat E2E on `main` validated both branches: a continuous input-driven run clears Room 1, restores HP to 10, defeats the front and rear Room 2 pairs, opens the final gate, and logs `TOPDOWN_TS_RUN_COMPLETE`; a separate idle test receives ten contact hits (`hp=9` through `hp=0`), logs `TOPDOWN_TS_PLAYER_DIED`, waits 40 ticks, logs `TOPDOWN_TS_RESTART hp=10`, and restores the Room 1 actors and gates
 - the top-down example claims its single-player controller on the first gameplay input and releases it on disconnect, so capture/observer clients do not steal control merely by being online
 - before the 0.1.1 hot-path rewrite, the full loop produced a 45.6 ms script-tick warning during a combat-heavy frame. With 0.1.1 deployed on `main`, the same Room 1 -> Room 2 -> run-complete E2E passed and produced no script-tick warnings above 10 ms during the post-camera combat and progression phases. One 35.841 ms warning was observed on the first controller-acquisition tick after startup; that tick includes the still-command-backed `camera.attach()` path. Camera/effects remain the next direct-API optimization targets.
 - a standalone 0.1.1 smoke test verified direct actor spawn/move/remove, exact final actor transform `[2.5, 101, 0.5]` / yaw `60`, and direct gold/diamond block writes. After compiler warmup and `/reload`, that smoke run produced no script-tick warning above the 10 ms threshold.
 
 ## Full game-loop example
 
-`examples/topdown-roguelike` migrates the existing two-room top-down prototype to the embedded runtime. TypeScript is authoritative for player movement/collision, attack cooldown and hit testing, enemy HP/AI, room progression, dynamic gates, and camera transitions. Static arena construction remains a manual datapack function (`topdown_ts:arena/build`) so normal `/reload` iterations replace game state without rebuilding level geometry; see ADR 0002.
+`examples/topdown-roguelike` migrates the existing two-room top-down prototype to the embedded runtime. TypeScript is authoritative for player movement/collision, player HP/invulnerability/death/restart, attack cooldown and hit testing, enemy HP/chase/contact attacks, room progression, dynamic gates, and camera transitions. Static arena construction remains a manual datapack function (`topdown_ts:arena/build`) so normal `/reload` iterations replace game state without rebuilding level geometry; see ADR 0002.
