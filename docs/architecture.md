@@ -78,7 +78,7 @@ The runtime runs from Fabric's end-of-server-tick event. For each active script 
 
 Minecraft remains the clock source, nominally 20 TPS / 50 ms per tick.
 
-A soft warning is logged for a script tick over 10 ms. A hard watchdog currently attempts to cancel a script context after 100 ms of guest execution. The watchdog is a PoC safety measure, not yet a fully validated resource-governance mechanism.
+A soft warning is logged for a script tick over 10 ms. Normal game ticks retain a 100 ms hard watchdog. Runtime 0.2.1 gives cold script evaluation and `game.onStart` a separate 1000 ms startup budget so GraalJS/class initialization does not falsely disable a game immediately after a server restart. The watchdog is a PoC safety measure, not yet a fully validated resource-governance mechanism.
 
 ## Public script API
 
@@ -160,7 +160,7 @@ Presentation follows ADR 0004 and `docs/presentation-api.md`. Game Core TypeScri
 
 ## Entity ownership
 
-Every runtime-created actor, render projection, and camera receives script ownership metadata/tags. When a script unloads, owned actors/render nodes are discarded, command-fallback/camera entities with the owner tag are killed, attached spectator views are detached, per-player panels are cleared, open menu state is closed where possible, and Dialog custom-click tokens are invalidated.
+Every runtime-created actor, render projection, and camera receives script ownership metadata/tags. Display projections also retain their logical node metadata so runtime 0.2.1 can reacquire the live Minecraft entity after a chunk unload/reload invalidates the previous Java object reference. When a script unloads, owned actors/render nodes are discarded, command-fallback/camera entities with the owner tag are killed, attached spectator views are detached, per-player panels are cleared, open menu state is closed where possible, and Dialog custom-click tokens are invalidated.
 
 This is important for `/reload`: old runtime entities, UI, and action tokens must not leak into the newly loaded script instance.
 
@@ -198,7 +198,8 @@ An earlier external TCP/JSONL bridge PoC exists separately. The long-term design
 - `actors` remains a mannequin-specific compatibility API; new presentation code should prefer `render`
 - `render.attach` currently follows translation only; it does not compose parent rotation/scale into child transforms
 - `ui.panel` owns the vanilla sidebar channel while active and can be visually replaced by another system sending sidebar scoreboard packets
-- menu/Dialog/container click behavior has compile-time coverage but still needs player-driven E2E validation on the main server for runtime 0.2.0
+- runtime 0.2.0 main-server smoke testing exposed two lifecycle issues before final validation: cold `onStart` could exceed the 100 ms tick budget, and Display Java references became stale across chunk unload/reload; runtime 0.2.1 addresses both and requires repeat main-server validation
+- menu/Dialog/container click behavior has compile-time coverage; open/render behavior is covered by main-server smoke testing, while semantic click delivery still needs a tool/client path that can click those GUI controls
 - camera detach does not restore the player's prior gamemode
 - camera operations, effects, and custom-texture actor fallback still translate through Minecraft commands; default actor transforms/removal and `world.setBlock` now use direct server APIs
 - watchdog/resource limits need more validation

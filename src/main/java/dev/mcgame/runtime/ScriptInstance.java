@@ -85,6 +85,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 final class ScriptInstance {
     private static final long HARD_BUDGET_MS = 100;
+    private static final long STARTUP_BUDGET_MS = 1_000;
     private static final ScheduledExecutorService WATCHDOG = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "mcgame-script-watchdog");
         thread.setDaemon(true);
@@ -133,7 +134,7 @@ final class ScriptInstance {
 
         installBindings();
         try {
-            runWithBudget(() -> context.eval(Source.newBuilder("js", javascript, id.toString()).buildLiteral()));
+            runWithBudget(() -> context.eval(Source.newBuilder("js", javascript, id.toString()).buildLiteral()), STARTUP_BUDGET_MS);
         } catch (RuntimeException e) {
             context.close(true);
             throw e;
@@ -146,7 +147,7 @@ final class ScriptInstance {
     void start(MinecraftServer server) {
         withServer(server, 0, () -> runWithBudget(() -> {
             for (Value callback : List.copyOf(startCallbacks)) callback.execute();
-        }));
+        }, STARTUP_BUDGET_MS));
     }
 
     void tick(MinecraftServer server, long tick) {
@@ -565,9 +566,8 @@ final class ScriptInstance {
         String renderId = safeId(stringArg(args, 0, "render.update"));
         Value opts = objectArg(args, 1, "render.update");
         RenderNode node = renderNodes.get(renderId);
-        if (node == null || node.entity == null || node.entity.isRemoved()) {
-            throw new IllegalArgumentException("unknown render node: " + renderId);
-        }
+        if (node == null) throw new IllegalArgumentException("unknown render node: " + renderId);
+        if (node.entity == null || node.entity.isRemoved()) node.entity = resolveRenderEntity(server, node);
 
         VisualSpec newVisual = node.visual;
         if (opts.hasMember("visual")) {
@@ -643,10 +643,30 @@ final class ScriptInstance {
 
     private RenderNode requireRenderNode(String id) {
         RenderNode node = renderNodes.get(id);
-        if (node == null || node.entity == null || node.entity.isRemoved()) {
-            throw new IllegalArgumentException("unknown render node: " + id);
+        if (node == null) throw new IllegalArgumentException("unknown render node: " + id);
+        if (node.entity == null || node.entity.isRemoved()) {
+            node.entity = resolveRenderEntity(requireServer(), node);
         }
         return node;
+    }
+
+    private Entity resolveRenderEntity(MinecraftServer server, RenderNode node) {
+        ServerLevel level = requireLevel(server, node.dimension);
+        // Runtime entities persist with the chunk, but a chunk unload invalidates the old Java object.
+        // Load the node's last known chunk and reacquire the live entity by the script-owned render tag.
+        level.getChunkAt(BlockPos.containing(node.x, node.y, node.z));
+        String tag = renderTag(node.id);
+        Entity entity = switch (node.visual.kind) {
+            case "character" -> level.getEntities(EntityType.MANNEQUIN, candidate -> candidate.entityTags().contains(tag)).stream().findFirst().orElse(null);
+            case "model" -> level.getEntities(EntityType.ITEM_DISPLAY, candidate -> candidate.entityTags().contains(tag)).stream().findFirst().orElse(null);
+            case "block" -> level.getEntities(EntityType.BLOCK_DISPLAY, candidate -> candidate.entityTags().contains(tag)).stream().findFirst().orElse(null);
+            case "text" -> level.getEntities(EntityType.TEXT_DISPLAY, candidate -> candidate.entityTags().contains(tag)).stream().findFirst().orElse(null);
+            default -> null;
+        };
+        if (entity == null) throw new IllegalArgumentException("unknown render node: " + node.id);
+        entity.noPhysics = true;
+        entity.setDeltaMovement(0, 0, 0);
+        return entity;
     }
 
     private void removeRenderNode(String id) {
@@ -827,8 +847,9 @@ final class ScriptInstance {
         if (attachment == null) return;
         RenderNode child = renderNodes.get(childId);
         RenderNode parent = renderNodes.get(attachment.parentId);
-        if (child == null || parent == null || child.entity == null || parent.entity == null
-            || child.entity.isRemoved() || parent.entity.isRemoved()) return;
+        if (child == null || parent == null) return;
+        if (child.entity == null || child.entity.isRemoved()) child.entity = resolveRenderEntity(requireServer(), child);
+        if (parent.entity == null || parent.entity.isRemoved()) parent.entity = resolveRenderEntity(requireServer(), parent);
         if (!child.entity.level().dimension().equals(parent.entity.level().dimension())) {
             if (!(parent.entity.level() instanceof ServerLevel target)) return;
             double targetX = parent.entity.getX() + attachment.offset.x;
@@ -1292,13 +1313,17 @@ final class ScriptInstance {
     }
 
     private void runWithBudget(Runnable action) {
+        runWithBudget(action, HARD_BUDGET_MS);
+    }
+
+    private void runWithBudget(Runnable action, long budgetMs) {
         AtomicBoolean running = new AtomicBoolean(true);
         ScheduledFuture<?> killer = WATCHDOG.schedule(() -> {
             if (running.compareAndSet(true, false)) {
-                logger.error("mcgame script {} exceeded hard {} ms execution budget; cancelling context", id, HARD_BUDGET_MS);
+                logger.error("mcgame script {} exceeded hard {} ms execution budget; cancelling context", id, budgetMs);
                 context.close(true);
             }
-        }, HARD_BUDGET_MS, TimeUnit.MILLISECONDS);
+        }, budgetMs, TimeUnit.MILLISECONDS);
         try {
             action.run();
         } finally {
