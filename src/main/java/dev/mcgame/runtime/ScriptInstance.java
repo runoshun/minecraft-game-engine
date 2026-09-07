@@ -155,6 +155,7 @@ final class ScriptInstance {
         buildInputSnapshot(server);
         long started = System.nanoTime();
         withServer(server, tick, () -> {
+            refreshRenderEntities(server);
             runWithBudget(() -> {
                 deliverMenuActions();
                 ProxyObject tickContext = ProxyObject.fromMap(Map.of("tick", tick));
@@ -556,10 +557,11 @@ final class ScriptInstance {
         node.billboard = memberString(opts, "billboard", "fixed");
         if (opts.hasMember("smoothing")) applySmoothing(node, memberObject(opts, "smoothing", "render.spawn"));
 
-        ServerLevel level = requireLevel(server, node.dimension);
-        node.entity = createRenderEntity(server, level, node);
         renderNodes.put(renderId, node);
-        applyRenderTransform(node, true);
+        if (ensureRenderEntity(server, node)) {
+            applyVisual(node.entity, node.visual);
+            applyRenderTransform(node, true);
+        }
     }
 
     private void updateRender(Value[] args) {
@@ -568,7 +570,6 @@ final class ScriptInstance {
         Value opts = objectArg(args, 1, "render.update");
         RenderNode node = renderNodes.get(renderId);
         if (node == null) throw new IllegalArgumentException("unknown render node: " + renderId);
-        if (node.entity == null || node.entity.isRemoved()) node.entity = resolveRenderEntity(server, node);
 
         VisualSpec newVisual = node.visual;
         if (opts.hasMember("visual")) {
@@ -576,6 +577,9 @@ final class ScriptInstance {
         }
 
         String oldDimension = node.dimension;
+        boolean visualNeedsReplacement = !node.visual.kind.equals(newVisual.kind)
+            || ("character".equals(node.visual.kind) && !java.util.Objects.equals(node.visual.resource, newVisual.resource));
+
         node.dimension = memberResource(opts, "dimension", node.dimension);
         node.x = memberDouble(opts, "x", node.x);
         node.y = memberDouble(opts, "y", node.y);
@@ -587,26 +591,17 @@ final class ScriptInstance {
         if (opts.hasMember("offset")) node.offset = memberVec3(opts, "offset", node.offset);
         node.billboard = memberString(opts, "billboard", node.billboard);
         if (opts.hasMember("smoothing")) applySmoothing(node, memberObject(opts, "smoothing", "render.update"));
+        node.visual = newVisual;
 
-        boolean visualNeedsReplacement = !node.visual.kind.equals(newVisual.kind)
-            || ("character".equals(node.visual.kind) && !node.visual.resource.equals(newVisual.resource));
-        if (visualNeedsReplacement) {
-            Entity old = node.entity;
-            if (!old.isRemoved()) old.discard();
-            node.visual = newVisual;
-            node.entity = createRenderEntity(server, requireLevel(server, node.dimension), node);
-        } else {
-            node.visual = newVisual;
-            applyVisual(node.entity, newVisual);
+        if (node.entity != null && node.entity.isRemoved()) node.entity = null;
+        if (node.entity != null && (visualNeedsReplacement || !oldDimension.equals(node.dimension))) {
+            node.entity.discard();
+            node.entity = null;
         }
-
-        if (!oldDimension.equals(node.dimension) && !visualNeedsReplacement) {
-            ServerLevel target = requireLevel(server, node.dimension);
-            if (!node.entity.teleportTo(target, node.x, node.y, node.z, Set.of(), node.yaw, node.pitch, false)) {
-                throw new IllegalStateException("render dimension transfer failed for " + renderId);
-            }
+        if (ensureRenderEntity(server, node)) {
+            applyVisual(node.entity, node.visual);
+            applyRenderTransform(node, false);
         }
-        applyRenderTransform(node, false);
         syncAttachedChildren(renderId);
     }
 
@@ -645,29 +640,28 @@ final class ScriptInstance {
     private RenderNode requireRenderNode(String id) {
         RenderNode node = renderNodes.get(id);
         if (node == null) throw new IllegalArgumentException("unknown render node: " + id);
-        if (node.entity == null || node.entity.isRemoved()) {
-            node.entity = resolveRenderEntity(requireServer(), node);
-        }
         return node;
     }
 
-    private Entity resolveRenderEntity(MinecraftServer server, RenderNode node) {
+    private void refreshRenderEntities(MinecraftServer server) {
+        for (RenderNode node : renderNodes.values()) {
+            if (node.entity != null && node.entity.isRemoved()) node.entity = null;
+            if (ensureRenderEntity(server, node)) {
+                // Re-created projections need their full current state projected once.
+                applyVisual(node.entity, node.visual);
+                applyRenderTransform(node, true);
+            }
+        }
+    }
+
+    private boolean ensureRenderEntity(MinecraftServer server, RenderNode node) {
+        if (node.entity != null && !node.entity.isRemoved()) return false;
+        node.entity = null;
         ServerLevel level = requireLevel(server, node.dimension);
-        // Runtime entities persist with the chunk, but a chunk unload invalidates the old Java object.
-        // Load the node's last known chunk and reacquire the live entity by the script-owned render tag.
-        level.getChunkAt(BlockPos.containing(node.x, node.y, node.z));
-        String tag = renderTag(node.id);
-        Entity entity = switch (node.visual.kind) {
-            case "character" -> level.getEntities(EntityType.MANNEQUIN, candidate -> candidate.entityTags().contains(tag)).stream().findFirst().orElse(null);
-            case "model" -> level.getEntities(EntityType.ITEM_DISPLAY, candidate -> candidate.entityTags().contains(tag)).stream().findFirst().orElse(null);
-            case "block" -> level.getEntities(EntityType.BLOCK_DISPLAY, candidate -> candidate.entityTags().contains(tag)).stream().findFirst().orElse(null);
-            case "text" -> level.getEntities(EntityType.TEXT_DISPLAY, candidate -> candidate.entityTags().contains(tag)).stream().findFirst().orElse(null);
-            default -> null;
-        };
-        if (entity == null) throw new IllegalArgumentException("unknown render node: " + node.id);
-        entity.noPhysics = true;
-        entity.setDeltaMovement(0, 0, 0);
-        return entity;
+        BlockPos pos = BlockPos.containing(node.x, node.y, node.z);
+        if (!level.isLoaded(pos)) return false;
+        node.entity = createRenderEntity(server, level, node);
+        return true;
     }
 
     private void removeRenderNode(String id) {
@@ -682,10 +676,9 @@ final class ScriptInstance {
     }
 
     private Entity createRenderEntity(MinecraftServer server, ServerLevel level, RenderNode node) {
-        level.getChunkAt(BlockPos.containing(node.x, node.y, node.z));
         String tag = renderTag(node.id);
-        // A prior process can leave a persisted projection behind if it stopped while this chunk was unloaded.
-        // Once the target chunk is loaded, clear that logical id before creating its new projection.
+        // Render projections are transient. Clear a currently loaded projection with the same logical id
+        // before recreating it; unloaded projections are not persisted by RenderProjectionEntityMixin.
         exec(server, "execute in " + node.dimension + " run kill @e[tag=" + tag + "]");
         Entity entity;
         switch (node.visual.kind) {
@@ -696,13 +689,14 @@ final class ScriptInstance {
                     if (mannequin == null) throw new IllegalStateException("failed to create character render " + node.id);
                     entity = mannequin;
                     prepareOwnedEntity(entity, tag);
+                    entity.setPos(node.x, node.y, node.z);
                     if (!level.addFreshEntity(entity)) {
                         entity.discard();
                         throw new IllegalStateException("failed to add character render " + node.id);
                     }
                 } else {
                     exec(server, String.format(Locale.ROOT,
-                        "execute in %s run summon minecraft:mannequin %.4f %.4f %.4f {Tags:[\\\"%s\\\",\\\"%s\\\"],Invulnerable:1b,NoGravity:1b,profile:{texture:\\\"%s\\\"}}",
+                        "execute in %s run summon minecraft:mannequin %.4f %.4f %.4f {Tags:[\"%s\",\"%s\"],Invulnerable:1b,NoGravity:1b,profile:{texture:\"%s\"}}",
                         node.dimension, node.x, node.y, node.z, ownerTag, tag, texture));
                     entity = level.getEntities(EntityType.MANNEQUIN, candidate -> candidate.entityTags().contains(tag)).stream()
                         .findFirst()
@@ -716,6 +710,7 @@ final class ScriptInstance {
                 if (display == null) throw new IllegalStateException("failed to create model render " + node.id);
                 entity = display;
                 prepareOwnedEntity(entity, tag);
+                entity.setPos(node.x, node.y, node.z);
                 applyVisual(entity, node.visual);
                 if (!level.addFreshEntity(entity)) {
                     entity.discard();
@@ -727,6 +722,7 @@ final class ScriptInstance {
                 if (display == null) throw new IllegalStateException("failed to create block render " + node.id);
                 entity = display;
                 prepareOwnedEntity(entity, tag);
+                entity.setPos(node.x, node.y, node.z);
                 applyVisual(entity, node.visual);
                 if (!level.addFreshEntity(entity)) {
                     entity.discard();
@@ -738,6 +734,7 @@ final class ScriptInstance {
                 if (display == null) throw new IllegalStateException("failed to create text render " + node.id);
                 entity = display;
                 prepareOwnedEntity(entity, tag);
+                entity.setPos(node.x, node.y, node.z);
                 applyVisual(entity, node.visual);
                 if (!level.addFreshEntity(entity)) {
                     entity.discard();
@@ -784,6 +781,7 @@ final class ScriptInstance {
 
     private void applyRenderTransform(RenderNode node, boolean initial) {
         Entity entity = node.entity;
+        if (entity == null || entity.isRemoved()) return;
         entity.setDeltaMovement(0, 0, 0);
         entity.setPos(node.x, node.y, node.z);
         entity.setYRot(node.yaw);
@@ -853,21 +851,23 @@ final class ScriptInstance {
         RenderNode child = renderNodes.get(childId);
         RenderNode parent = renderNodes.get(attachment.parentId);
         if (child == null || parent == null) return;
-        if (child.entity == null || child.entity.isRemoved()) child.entity = resolveRenderEntity(requireServer(), child);
-        if (parent.entity == null || parent.entity.isRemoved()) parent.entity = resolveRenderEntity(requireServer(), parent);
-        if (!child.entity.level().dimension().equals(parent.entity.level().dimension())) {
-            if (!(parent.entity.level() instanceof ServerLevel target)) return;
-            double targetX = parent.entity.getX() + attachment.offset.x;
-            double targetY = parent.entity.getY() + attachment.offset.y;
-            double targetZ = parent.entity.getZ() + attachment.offset.z;
-            if (!child.entity.teleportTo(target, targetX, targetY, targetZ, Set.of(), child.yaw, child.pitch, false)) return;
-            child.dimension = target.dimension().identifier().toString();
+
+        String oldDimension = child.dimension;
+        child.dimension = parent.dimension;
+        child.x = parent.x + attachment.offset.x;
+        child.y = parent.y + attachment.offset.y;
+        child.z = parent.z + attachment.offset.z;
+        if (child.entity != null && child.entity.isRemoved()) child.entity = null;
+        if (child.entity != null && !oldDimension.equals(child.dimension)) {
+            child.entity.discard();
+            child.entity = null;
         }
-        child.x = parent.entity.getX() + attachment.offset.x;
-        child.y = parent.entity.getY() + attachment.offset.y;
-        child.z = parent.entity.getZ() + attachment.offset.z;
-        child.entity.setDeltaMovement(0, 0, 0);
-        child.entity.setPos(child.x, child.y, child.z);
+        if (ensureRenderEntity(requireServer(), child)) {
+            applyVisual(child.entity, child.visual);
+            applyRenderTransform(child, true);
+        } else if (child.entity != null) {
+            applyRenderTransform(child, false);
+        }
         syncAttachedChildren(childId);
     }
 

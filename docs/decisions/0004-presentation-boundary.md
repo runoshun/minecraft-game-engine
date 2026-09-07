@@ -22,6 +22,7 @@ Use a two-layer presentation boundary:
 Expose three broad runtime presentation capability families:
 
 - `render.spawn/update/remove/attach/detach` for world-space character/model/block/text projections, transforms, scale, billboard, interpolation, and simple translation-follow composition
+- runtime render nodes, not Minecraft entities, are the authoritative presentation state; backing render entities are transient/non-persistent and only materialized in already-loaded chunks, so presentation does not force-load the world
 - `ui.panel` for a persistent per-player informational panel
 - `menu.open/update/close/onAction` for interactive item-grid and choice UI
 

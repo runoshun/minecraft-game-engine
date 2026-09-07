@@ -106,11 +106,11 @@ Requires Java 25.
 
 The server mod is emitted locally to `build/libs/mc-game-runtime-<version>.jar`. Tagged builds publish the runtime JAR and its SHA-256 checksum as GitHub Release assets; built JARs are not kept in the source tree. Fabric API is also required on the server.
 
-For a tagged release such as `v0.2.2`, the stable download shape is `https://github.com/runoshun/minecraft-game-engine/releases/download/v0.2.2/mc-game-runtime-0.2.2.jar`.
+For a tagged release such as `v0.2.3`, the stable download shape is `https://github.com/runoshun/minecraft-game-engine/releases/download/v0.2.3/mc-game-runtime-0.2.3.jar`.
 
 ## Development rules
 
-See [`PROJECT_RULES.md`](PROJECT_RULES.md). In particular, architecture/API/ownership changes must update the design documentation in the same change.
+See [`PROJECT_RULES.md`](PROJECT_RULES.md). In particular, architecture/API/ownership changes must update the design documentation in the same change. Release and mc-mcp deployment procedures are recorded in [`docs/operations.md`](docs/operations.md).
 
 ## License
 

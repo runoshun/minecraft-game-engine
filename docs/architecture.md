@@ -116,9 +116,9 @@ Actors are currently implemented as `minecraft:mannequin` entities. The default 
 - `render.attach(childId, parentId, offset)`
 - `render.detach(childId)`
 
-`render` is the generic presentation projection API. It maps `character` to mannequins and `model` / `block` / `text` to Minecraft Display entities. Display projections support scale, offset, roll, billboard constraints, position/rotation interpolation, and transformation interpolation. Private Display setters are invoked through runtime Mixins rather than exposing Java objects to scripts.
+`render` is the generic presentation projection API. It maps `character` to mannequins and `model` / `block` / `text` to Minecraft Display entities. Display projections support scale, offset, roll, billboard constraints, position/rotation interpolation, and transformation interpolation. Runtime 0.2.3 treats each render node as logical projection state owned by the script instance: the backing Minecraft entity exists only while its target chunk is already loaded, is marked non-persistent, and is recreated from the logical node after chunk unload/reload. `render` therefore does not force-load distant chunks and its Java entity reference is never authoritative state. Private Display setters are invoked through runtime Mixins rather than exposing Java objects to scripts.
 
-`render.attach` is a translation-follow relationship for labels, overhead bars, and simple child projections. Attached children are repositioned from their parent each tick, follow dimension transfers, and are recursively removed when the parent is removed. It is not a full hierarchical rotation/scale transform graph.
+`render.attach` is a translation-follow relationship for labels, overhead bars, and simple child projections. Attached children derive their logical world position/dimension from the parent node each tick, independent of whether either Minecraft projection entity is currently materialized. Children are recursively removed when the parent is removed. It is not a full hierarchical rotation/scale transform graph.
 
 ### ui
 
@@ -160,7 +160,7 @@ Presentation follows ADR 0004 and `docs/presentation-api.md`. Game Core TypeScri
 
 ## Entity ownership
 
-Every runtime-created actor, render projection, and camera receives script ownership metadata/tags. Display projections retain their logical node metadata so runtime 0.2.1+ can reacquire the live Minecraft entity after a chunk unload/reload invalidates the previous Java object reference. Runtime 0.2.2 also explicitly loads the target chunk before direct actor/render spawn and clears any persisted projection with the same logical id before recreating it. When a script unloads, owned actors/render nodes are discarded, command-fallback/camera entities with the owner tag are killed, attached spectator views are detached, per-player panels are cleared, open menu state is closed where possible, and Dialog custom-click tokens are invalidated.
+Every runtime-created actor, render projection, and camera receives script ownership metadata/tags. `render` projections additionally carry a reserved `_r_` tag and are made non-saveable by a runtime Entity mixin: chunk unload removes the Minecraft projection while the `RenderNode` remains authoritative in memory, and a loaded target chunk causes the projection to be recreated. This avoids persistent stale/duplicate Display entities and avoids force-loading chunks solely for presentation. When a script unloads, owned actors/live render projections are discarded, command-fallback/camera entities with the owner tag are killed, attached spectator views are detached, per-player panels are cleared, open menu state is closed where possible, and Dialog custom-click tokens are invalidated.
 
 This is important for `/reload`: old runtime entities, UI, and action tokens must not leak into the newly loaded script instance.
 
@@ -198,7 +198,7 @@ An earlier external TCP/JSONL bridge PoC exists separately. The long-term design
 - `actors` remains a mannequin-specific compatibility API; new presentation code should prefer `render`
 - `render.attach` currently follows translation only; it does not compose parent rotation/scale into child transforms
 - `ui.panel` owns the vanilla sidebar channel while active and can be visually replaced by another system sending sidebar scoreboard packets
-- runtime 0.2.0/0.2.1 main-server smoke testing exposed lifecycle differences hidden by the local spawn-chunk test: cold `onStart` needed a separate startup budget, Display Java references can become stale across chunk unload/reload, and direct spawn must load its target chunk first; runtime 0.2.2 addresses all three and requires repeat main-server validation
+- runtime 0.2.0-0.2.2 main-server smoke testing exposed lifecycle differences hidden by the local spawn-chunk test: cold `onStart` needed a separate startup budget, and persistent Display entities/Java references do not provide a reliable projection lifecycle across empty-server pause and asynchronous entity chunk loading. Runtime 0.2.3 replaces reacquisition/force-loading with transient non-persistent render entities materialized only in already-loaded chunks; repeat main-server validation covers this model
 - menu/Dialog/container click behavior has compile-time coverage; open/render behavior is covered by main-server smoke testing, while semantic click delivery still needs a tool/client path that can click those GUI controls
 - camera detach does not restore the player's prior gamemode
 - camera operations, effects, and custom-texture actor fallback still translate through Minecraft commands; default actor transforms/removal and `world.setBlock` now use direct server APIs
