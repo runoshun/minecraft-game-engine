@@ -10,6 +10,22 @@ dependencies {
 
     compileOnly "org.graalvm.polyglot:polyglot:${project.graal_version}"
 
+    // Loom dev runs execute exploded classes rather than the Jar-in-Jar artifact, so mirror
+    // the embedded Graal dependencies onto the dev runtime classpath. These are not packed
+    // twice into the production JAR; the include declarations below remain authoritative.
+    runtimeOnly "org.graalvm.js:js-language:${project.graal_version}"
+    runtimeOnly "org.graalvm.regex:regex:${project.graal_version}"
+    runtimeOnly "org.graalvm.truffle:truffle-api:${project.graal_version}"
+    runtimeOnly "org.graalvm.truffle:truffle-runtime:${project.graal_version}"
+    runtimeOnly "org.graalvm.truffle:truffle-compiler:${project.graal_version}"
+    runtimeOnly "org.graalvm.polyglot:polyglot:${project.graal_version}"
+    runtimeOnly "org.graalvm.sdk:collections:${project.graal_version}"
+    runtimeOnly "org.graalvm.sdk:jniutils:${project.graal_version}"
+    runtimeOnly "org.graalvm.sdk:nativeimage:${project.graal_version}"
+    runtimeOnly "org.graalvm.sdk:word:${project.graal_version}"
+    runtimeOnly "org.graalvm.shadowed:icu4j:${project.graal_version}"
+    runtimeOnly "org.graalvm.shadowed:xz:${project.graal_version}"
+
     include "org.graalvm.js:js-language:${project.graal_version}"
     include "org.graalvm.regex:regex:${project.graal_version}"
     include "org.graalvm.truffle:truffle-api:${project.graal_version}"

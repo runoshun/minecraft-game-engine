@@ -1,0 +1,15 @@
+{
+  "required": true,
+  "package": "dev.mcgame.runtime.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "mixins": [
+    "DisplayAccessor",
+    "ItemDisplayAccessor",
+    "BlockDisplayAccessor",
+    "TextDisplayAccessor",
+    "ServerCommonPacketListenerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

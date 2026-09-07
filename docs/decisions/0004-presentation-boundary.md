@@ -2,35 +2,50 @@
 
 ## Status
 
-Accepted.
+Accepted and implemented in runtime 0.2.0.
 
 ## Context
 
-The TypeScript game is growing beyond movement/combat into HUD, bosses, richer visuals, audio, and effects. Minecraft provides useful primitives such as action bars, titles, boss bars, mannequins, and display entities, but making game rules depend directly on those concepts would make the TypeScript core Minecraft-specific and would force presentation decisions into gameplay code.
+The TypeScript game is growing beyond movement/combat into HUD, shops, reward chests, bosses, richer visuals, audio, and effects. Minecraft provides useful primitives such as scoreboards, dialogs, container menus, mannequins, and display entities, but making game rules depend directly on those concepts would make the TypeScript Core Minecraft-specific and would force presentation decisions into gameplay code.
 
-Display entities are especially useful for large bosses because they support arbitrary display transforms and client-side interpolation. Minecraft 26.1 has separate synchronized interpolation controls for entity position/rotation and display transformation, so the runtime can experiment with smoothing without changing authoritative game coordinates.
+Display entities are useful for large bosses and world-space UI because they support arbitrary scale/transforms and client interpolation. Minecraft 26.1 also provides Dialog custom-click actions and standard container screens that can be driven from a server-only mod with vanilla clients.
+
+The fixed top-down camera currently uses Spectator mode. Survival HUD elements such as hearts, hunger, and the normal XP bar are therefore not suitable as the primary HUD surface.
 
 ## Decision
 
 Use a two-layer presentation boundary:
 
-1. Portable game TypeScript depends on a game-owned `GamePresentation` interface expressed in semantic concepts such as actor appearance keys, status, messages, progress, audio cues, and FX cues.
+1. Portable game TypeScript depends on a game-owned presentation interface expressed in semantic concepts such as appearance keys, panels, menus, audio cues, and FX cues.
 2. A Minecraft TypeScript adapter maps those semantics to stable runtime capabilities and Minecraft resource identifiers.
 
-Add two broad runtime capability families rather than adding a new Mod API for each Minecraft feature:
+Expose three broad runtime presentation capability families:
 
-- `render.spawn/update/remove` for character/model/block/text visual projections, transforms, scale, billboard, and smoothing
-- `ui.status/message/progress` for semantic HUD channels
+- `render.spawn/update/remove/attach/detach` for world-space character/model/block/text projections, transforms, scale, billboard, interpolation, and simple translation-follow composition
+- `ui.panel` for a persistent per-player informational panel
+- `menu.open/update/close/onAction` for interactive item-grid and choice UI
 
-`render` may internally choose mannequins or Minecraft display entities. `ui` may internally choose action bars, titles/subtitles, and boss bars. Those choices are not part of game rules.
+Minecraft mappings are implementation details:
 
-Existing `actors` remains available during migration.
+- `character` -> mannequin
+- `model` -> item display
+- `block` -> block display
+- `text` -> text display
+- `ui.panel` -> packet-only scoreboard sidebar
+- `menu kind=items` -> virtual vanilla chest menu
+- `menu kind=choice` -> Minecraft Dialog with runtime-owned custom click tokens
+
+Do not expose hearts, hunger, XP, action bar, title, or boss bar as current public HUD capabilities. New HUD channels should only be added when an actual game need cannot be expressed through the panel, world-space render nodes, or menus.
+
+Existing `actors` remains available as a compatibility API while games migrate toward `render`.
 
 ## Consequences
 
-- Core combat/AI/room code can be tested without Minecraft.
-- Large bosses can use item-display custom models and arbitrary scale without introducing a boss-specific Mod API.
-- Display smoothing can be tuned in the Minecraft adapter without affecting logical positions or replay determinism.
+- Core combat/AI/room/economy logic can be tested without Minecraft.
+- Large bosses can use custom item models and arbitrary scale without a boss-specific Mod API.
+- Enemy labels and HP bars can be composed from attached world-space Display nodes.
+- Shops, reward chests, and choices can use one action-ID event model even though Minecraft renders them with different native screens.
+- Scoreboard sidebar state remains presentation-only and does not pollute the authoritative world scoreboard.
 - A future web/debug renderer can implement the same game-facing presentation interface.
-- The runtime gets a somewhat larger generic rendering/UI surface, but this is preferable to repeated narrow Minecraft-specific additions.
-- Resource identifiers and display implementation details still exist in the Minecraft adapter, where they are intentionally isolated.
+- `render.attach` is deliberately simpler than a full transform hierarchy; complex articulated bosses may need explicit adapter-side child transforms later.
+- Vanilla clients remain sufficient.

@@ -4,16 +4,23 @@
   "version": "${version}",
   "name": "MC Game Runtime",
   "description": "Embedded sandboxed TypeScript runtime for Minecraft datapack game prototypes.",
-  "authors": ["MC Game Runtime contributors"],
+  "authors": [
+    "MC Game Runtime contributors"
+  ],
   "license": "CC0-1.0",
   "environment": "server",
   "entrypoints": {
-    "main": ["dev.mcgame.runtime.McGameRuntimeMod"]
+    "main": [
+      "dev.mcgame.runtime.McGameRuntimeMod"
+    ]
   },
   "depends": {
     "fabricloader": ">=0.19.5",
     "minecraft": "~26.1",
     "java": ">=25",
     "fabric-api": "*"
-  }
+  },
+  "mixins": [
+    "mc-game-runtime.mixins.json"
+  ]
 }

@@ -25,7 +25,7 @@ Owns the script lifecycle and translation layer between scripts and Minecraft. I
 - create a sandboxed JavaScript context per script
 - snapshot player input once per server tick
 - invoke script lifecycle callbacks
-- expose capability-style APIs for projection/rendering, UI, camera, world, and effects; game rules should consume these through a TypeScript presentation adapter when portability matters
+- expose capability-style APIs for actors/rendering, per-player UI panels, interactive menus, camera, world, and effects; game rules should consume these through a TypeScript presentation adapter when portability matters
 - tag runtime-created entities so they can be cleaned up deterministically
 - disable failed scripts without deliberately terminating the whole server
 
@@ -108,6 +108,34 @@ Player snapshots currently expose:
 
 Actors are currently implemented as `minecraft:mannequin` entities. The default mannequin path is backed by direct server Entity APIs: the runtime keeps a Java reference per script actor, applies movement directly, and discards the entity directly on removal/reload. Custom resource-pack textures still use the command-backed spawn/move fallback until mannequin profile construction is moved to the direct path. The mannequin implementation remains an internal detail and may change.
 
+### render
+
+- `render.spawn(id, options)`
+- `render.update(id, options)`
+- `render.remove(id)`
+- `render.attach(childId, parentId, offset)`
+- `render.detach(childId)`
+
+`render` is the generic presentation projection API. It maps `character` to mannequins and `model` / `block` / `text` to Minecraft Display entities. Display projections support scale, offset, roll, billboard constraints, position/rotation interpolation, and transformation interpolation. Private Display setters are invoked through runtime Mixins rather than exposing Java objects to scripts.
+
+`render.attach` is a translation-follow relationship for labels, overhead bars, and simple child projections. Attached children are repositioned from their parent each tick, follow dimension transfers, and are recursively removed when the parent is removed. It is not a full hierarchical rotation/scale transform graph.
+
+### ui
+
+- `ui.panel(player, { title, rows })`
+- `ui.panel(player, null)`
+
+The current persistent HUD capability is a per-player informational panel rendered as the vanilla scoreboard sidebar. The runtime sends scoreboard packets directly to that player instead of creating objectives in the authoritative server scoreboard, so game HUD values remain presentation-only. Up to 15 rows are supported, row identity is stable through `row.id`, and updates send only changed/removed rows.
+
+### menu
+
+- `menu.onAction(callback)`
+- `menu.open(player, spec)`
+- `menu.update(player, spec)`
+- `menu.close(player, menuId?)`
+
+`kind: "items"` uses a virtual vanilla chest menu and converts UI-slot clicks into semantic `actionId` events without transferring the displayed ItemStacks. `kind: "choice"` uses Minecraft 26.1 Dialog buttons backed by runtime-owned custom-click tokens; a server packet hook validates the player/token and emits the same `menu.onAction` event shape. `menu.update` currently replaces/reopens the active menu rather than diffing widgets in place.
+
 ### camera
 
 - `camera.attach(player, options)`
@@ -128,13 +156,13 @@ Current detach behavior switches the player to Adventure mode; original gamemode
 
 The initial API intentionally stays small. New capabilities should be added deliberately rather than exposing raw command execution or raw Minecraft Java objects.
 
-The next presentation expansion follows ADR 0004 and `docs/presentation-api.md`. Game Core TypeScript must not depend on Minecraft primitives such as titles, boss bars, mannequins, or display entities. A game-owned presentation interface maps semantic appearance/HUD/audio/FX intent into the Minecraft adapter. The planned runtime additions are broad `render.spawn/update/remove` and semantic `ui.status/message/progress` capabilities, rather than one Mod API per Minecraft feature. `render` will use mannequins for character projections and Display entities for scalable model/block/text projections.
+Presentation follows ADR 0004 and `docs/presentation-api.md`. Game Core TypeScript should not depend on Minecraft primitives such as scoreboards, dialogs, mannequins, or Display entities. A game-owned presentation interface maps semantic appearance/panel/menu/audio/FX intent into the Minecraft adapter. Runtime 0.2.0 implements broad `render`, `ui.panel`, and `menu` capability families rather than one Mod API per Minecraft feature.
 
 ## Entity ownership
 
-Every runtime-created actor and camera receives both a script-specific owner tag and a resource-specific tag. When a script unloads, all entities with its owner tag are killed and attached spectator views are detached.
+Every runtime-created actor, render projection, and camera receives script ownership metadata/tags. When a script unloads, owned actors/render nodes are discarded, command-fallback/camera entities with the owner tag are killed, attached spectator views are detached, per-player panels are cleared, open menu state is closed where possible, and Dialog custom-click tokens are invalidated.
 
-This is important for `/reload`: old runtime state must not leak into the newly loaded script instance.
+This is important for `/reload`: old runtime entities, UI, and action tokens must not leak into the newly loaded script instance.
 
 ## Sandbox
 
@@ -146,7 +174,7 @@ Both the compiler context and game-script contexts currently disable:
 - native access
 - polyglot access
 
-Only explicitly installed proxy objects (`game`, `input`, `actors`, `camera`, `world`, `effects`) are visible as Minecraft capabilities.
+Only explicitly installed proxy objects (`game`, `input`, `actors`, `render`, `ui`, `menu`, `camera`, `world`, `effects`) are visible as Minecraft capabilities.
 
 The intended security boundary is capability-based: scripts should never receive a `MinecraftServer`, entity Java object, arbitrary command executor, filesystem handle, or network client.
 
@@ -167,7 +195,10 @@ An earlier external TCP/JSONL bridge PoC exists separately. The long-term design
 - no persistent script storage API
 - no generic runtime-level player HP/combat abstraction; game scripts currently own gameplay HP/damage state themselves
 - no collision/query abstraction
-- current `actors` compatibility API is mannequin-specific; planned `render` will support character/model/block/text projections behind one lifecycle
+- `actors` remains a mannequin-specific compatibility API; new presentation code should prefer `render`
+- `render.attach` currently follows translation only; it does not compose parent rotation/scale into child transforms
+- `ui.panel` owns the vanilla sidebar channel while active and can be visually replaced by another system sending sidebar scoreboard packets
+- menu/Dialog/container click behavior has compile-time coverage but still needs player-driven E2E validation on the main server for runtime 0.2.0
 - camera detach does not restore the player's prior gamemode
 - camera operations, effects, and custom-texture actor fallback still translate through Minecraft commands; default actor transforms/removal and `world.setBlock` now use direct server APIs
 - watchdog/resource limits need more validation

@@ -11,8 +11,8 @@ Verified in a standalone Fabric 26.1 server:
 - embedded GraalJS loads from the mod JAR
 - embedded TypeScript 5.9.2 transpiles datapack `main.ts`
 - `game.onStart` executes
-- runtime API calls can spawn/move/remove a mannequin and modify the world
-- default actor transforms/removal and `world.setBlock` use direct server APIs instead of command dispatch
+- runtime API calls can spawn/move/remove mannequins and Display projections, modify the world, open menus, and project a per-player sidebar
+- default actor/render transforms/removal and `world.setBlock` use direct server APIs instead of command dispatch where applicable
 - editing `main.ts` followed by `/reload` loads the new script
 
 ## Architecture
@@ -24,7 +24,7 @@ Vanilla Minecraft client
         v
 Fabric server + MC Game Runtime
   |  input snapshots
-  |  camera / actor / world / effects API
+  |  camera / actor / render / ui / menu / world / effects API
   |
   +--> sandboxed GraalJS
           ^
@@ -72,7 +72,7 @@ game.onTick(() => {
 });
 ```
 
-A minimal example lives under [`examples/demo-datapack`](examples/demo-datapack), and the validated two-room game loop lives under [`examples/topdown-roguelike`](examples/topdown-roguelike).
+A minimal example lives under [`examples/demo-datapack`](examples/demo-datapack), and the validated two-room game loop lives under [`examples/topdown-roguelike`](examples/topdown-roguelike). Presentation API details and adapter guidance are in [`docs/presentation-api.md`](docs/presentation-api.md).
 
 ## Current API
 
@@ -80,7 +80,10 @@ A minimal example lives under [`examples/demo-datapack`](examples/demo-datapack)
 - `game.onTick(callback)`
 - `game.log(...values)`
 - `input.players()` / `input.get(playerIdOrName)`
-- `actors.spawn(id, options)` / `move` / `remove`
+- `actors.spawn(id, options)` / `move` / `remove` (compatibility mannequin API)
+- `render.spawn(id, options)` / `update` / `remove` / `attach` / `detach`
+- `ui.panel(player, panelOrNull)` (per-player scoreboard sidebar projection)
+- `menu.open(player, spec)` / `update` / `close` / `onAction`
 - `camera.attach(player, options)` / `move` / `detach`
 - `world.setBlock(options)`
 - `effects.particle(options)` / `effects.sound(options)`
@@ -101,7 +104,9 @@ Requires Java 25.
 ./gradlew build
 ```
 
-The server mod is emitted to `build/libs/mc-game-runtime-<version>.jar`. Fabric API is also required on the server.
+The server mod is emitted locally to `build/libs/mc-game-runtime-<version>.jar`. Tagged builds publish the runtime JAR and its SHA-256 checksum as GitHub Release assets; built JARs are not kept in the source tree. Fabric API is also required on the server.
+
+For a tagged release such as `v0.2.0`, the stable download shape is `https://github.com/runoshun/minecraft-game-engine/releases/download/v0.2.0/mc-game-runtime-0.2.0.jar`.
 
 ## Development rules
 

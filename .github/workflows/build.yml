@@ -42,8 +42,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           RUNTIME_JAR=$(find build/libs -maxdepth 1 -name 'mc-game-runtime-*.jar' ! -name '*-sources.jar' -print -quit)
+          test -n "$RUNTIME_JAR"
+          sha256sum "$RUNTIME_JAR" > "$RUNTIME_JAR.sha256"
           gh release create "${GITHUB_REF_NAME}" \
             "$RUNTIME_JAR" \
+            "$RUNTIME_JAR.sha256" \
             --title "MC Game Runtime ${GITHUB_REF_NAME}" \
             --generate-notes
