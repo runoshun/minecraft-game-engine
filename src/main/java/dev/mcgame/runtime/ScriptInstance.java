@@ -339,11 +339,12 @@ final class ScriptInstance {
         String texture = memberResource(opts, "texture", "minecraft:entity/player/wide/steve");
 
         String tag = actorTag(actorId);
-        if (!removeActorEntity(actorId)) {
-            // Also clear an untracked custom-texture fallback with the same logical id.
-            exec(server, "kill @e[tag=" + tag + "]");
-        }
         ServerLevel level = requireLevel(server, dimension);
+        level.getChunkAt(BlockPos.containing(x, y, z));
+        if (!removeActorEntity(actorId)) {
+            // Also clear an untracked/custom-texture or chunk-reloaded entity with the same logical id.
+            exec(server, "execute in " + dimension + " run kill @e[tag=" + tag + "]");
+        }
 
         // The common/default mannequin path is fully direct. Keep the old command path only
         // for custom resource-pack textures until profile construction is exposed directly.
@@ -681,7 +682,11 @@ final class ScriptInstance {
     }
 
     private Entity createRenderEntity(MinecraftServer server, ServerLevel level, RenderNode node) {
+        level.getChunkAt(BlockPos.containing(node.x, node.y, node.z));
         String tag = renderTag(node.id);
+        // A prior process can leave a persisted projection behind if it stopped while this chunk was unloaded.
+        // Once the target chunk is loaded, clear that logical id before creating its new projection.
+        exec(server, "execute in " + node.dimension + " run kill @e[tag=" + tag + "]");
         Entity entity;
         switch (node.visual.kind) {
             case "character" -> {
