@@ -25,7 +25,7 @@ Owns the script lifecycle and translation layer between scripts and Minecraft. I
 - create a sandboxed JavaScript context per script
 - snapshot player input once per server tick
 - invoke script lifecycle callbacks
-- expose capability-style APIs for actors, camera, world, and effects
+- expose capability-style APIs for projection/rendering, UI, camera, world, and effects; game rules should consume these through a TypeScript presentation adapter when portability matters
 - tag runtime-created entities so they can be cleaned up deterministically
 - disable failed scripts without deliberately terminating the whole server
 
@@ -128,6 +128,8 @@ Current detach behavior switches the player to Adventure mode; original gamemode
 
 The initial API intentionally stays small. New capabilities should be added deliberately rather than exposing raw command execution or raw Minecraft Java objects.
 
+The next presentation expansion follows ADR 0004 and `docs/presentation-api.md`. Game Core TypeScript must not depend on Minecraft primitives such as titles, boss bars, mannequins, or display entities. A game-owned presentation interface maps semantic appearance/HUD/audio/FX intent into the Minecraft adapter. The planned runtime additions are broad `render.spawn/update/remove` and semantic `ui.status/message/progress` capabilities, rather than one Mod API per Minecraft feature. `render` will use mannequins for character projections and Display entities for scalable model/block/text projections.
+
 ## Entity ownership
 
 Every runtime-created actor and camera receives both a script-specific owner tag and a resource-specific tag. When a script unloads, all entities with its owner tag are killed and attached spectator views are detached.
@@ -165,7 +167,7 @@ An earlier external TCP/JSONL bridge PoC exists separately. The long-term design
 - no persistent script storage API
 - no generic runtime-level player HP/combat abstraction; game scripts currently own gameplay HP/damage state themselves
 - no collision/query abstraction
-- actor implementation is mannequin-specific
+- current `actors` compatibility API is mannequin-specific; planned `render` will support character/model/block/text projections behind one lifecycle
 - camera detach does not restore the player's prior gamemode
 - camera operations, effects, and custom-texture actor fallback still translate through Minecraft commands; default actor transforms/removal and `world.setBlock` now use direct server APIs
 - watchdog/resource limits need more validation
