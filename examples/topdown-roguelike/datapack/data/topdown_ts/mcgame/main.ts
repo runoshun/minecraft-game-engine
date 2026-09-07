@@ -26,11 +26,13 @@ type MenuEvent = {
 
 type GridPoint = { gx: number; gz: number };
 type Room = { x: number; z: number; w: number; h: number; cx: number; cz: number };
-type Enemy = GridPoint & { id: string; hp: number; maxHp: number };
+type EnemyKind = "zombie" | "skeleton";
+type Enemy = GridPoint & { id: string; kind: EnemyKind; hp: number; maxHp: number };
 type ItemKind = "potion" | "bomb";
 type Loot = GridPoint & { id: string; kind: ItemKind };
 type BlockWrite = { x: number; y: number; z: number; block: string };
 type DirectionButtons = { forward: boolean; backward: boolean; left: boolean; right: boolean };
+type FloatingText = { id: string; x: number; y: number; z: number; startTick: number; endTick: number };
 
 const MAP_WIDTH = 29;
 const MAP_HEIGHT = 37;
@@ -81,6 +83,8 @@ let floorSeed = BASE_SEED;
 let skipControllerInput = false;
 const cameraAttached = new Set<string>();
 const startTriggerConsumed = new Set<string>();
+let floatingTexts: FloatingText[] = [];
+let floatingTextCounter = 0;
 
 const player = {
   gx: 1,
@@ -324,8 +328,11 @@ function generateDungeon(seed: number): void {
     for (let j = 0; j < enemyCount; j++) {
       const position = randomFloorInRoom(room, rng, reserved);
       const maxHp = 2 + Math.floor((floorNumber - 1) / 2);
+      const skeletonChance = Math.min(0.55, 0.25 + floorNumber * 0.05);
+      const kind: EnemyKind = rng.next() < skeletonChance ? "skeleton" : "zombie";
       enemies.push({
         id: `enemy_${floorNumber}_${enemyCounter++}`,
+        kind,
         gx: position.gx,
         gz: position.gz,
         hp: maxHp,
@@ -392,8 +399,65 @@ function processBuildQueue(): void {
   if (buildIndex >= BUILD_WRITE_COUNT && !dungeonReady) finishDungeonBuild();
 }
 
+function enemyLabelId(enemy: Enemy): string {
+  return `label_${enemy.id}`;
+}
+
+function enemyEntityType(enemy: Enemy): string {
+  return enemy.kind === "skeleton" ? "minecraft:skeleton" : "minecraft:zombie";
+}
+
+function enemyDisplayName(enemy: Enemy): string {
+  return enemy.kind === "skeleton" ? "SKELETON" : "ZOMBIE";
+}
+
+function enemyDeathSound(enemy: Enemy): string {
+  return enemy.kind === "skeleton" ? "minecraft:entity.skeleton.death" : "minecraft:entity.zombie.death";
+}
+
+function enemyLabelText(enemy: Enemy): Array<{ text: string; tone?: "normal" | "muted" | "info" | "success" | "warning" | "danger"; bold?: boolean }> {
+  return [
+    { text: `${enemyDisplayName(enemy)} `, tone: "danger", bold: true },
+    { text: `${Math.max(0, enemy.hp)}/${enemy.maxHp}`, tone: enemy.hp <= 1 ? "warning" : "normal", bold: true },
+  ];
+}
+
+function spawnFloatingText(text: string, tone: "info" | "success" | "warning" | "danger", x: number, y: number, z: number): void {
+  const id = `combat_text_${floatingTextCounter++}`;
+  render.spawn(id, {
+    visual: { kind: "text", text: [{ text, tone, bold: true }] },
+    x, y, z,
+    scale: 0.6,
+    billboard: "center",
+  });
+  floatingTexts.push({ id, x, y, z, startTick: currentTick, endTick: currentTick + 14 });
+}
+
+function updateFloatingTexts(): void {
+  const survivors: FloatingText[] = [];
+  for (const effect of floatingTexts) {
+    if (currentTick >= effect.endTick) {
+      render.remove(effect.id);
+      continue;
+    }
+    const life = Math.max(1, effect.endTick - effect.startTick);
+    const progress = (currentTick - effect.startTick) / life;
+    render.update(effect.id, { y: effect.y + progress * 0.8 });
+    survivors.push(effect);
+  }
+  floatingTexts = survivors;
+}
+
+function clearFloatingTexts(): void {
+  for (const effect of floatingTexts) render.remove(effect.id);
+  floatingTexts = [];
+}
+
 function clearEnemies(): void {
-  for (const enemy of enemies) actors.remove(enemy.id);
+  for (const enemy of enemies) {
+    actors.remove(enemy.id);
+    render.remove(enemyLabelId(enemy));
+  }
 }
 
 function clearLoot(): void {
@@ -419,12 +483,36 @@ function spawnLoot(): void {
 function spawnEnemies(): void {
   for (const enemy of enemies) {
     actors.spawn(enemy.id, {
+      entityType: enemyEntityType(enemy),
       x: worldX(enemy.gx),
       y: ACTOR_Y,
       z: worldZ(enemy.gz),
       yaw: 180,
     });
+    render.spawn(enemyLabelId(enemy), {
+      visual: { kind: "text", text: enemyLabelText(enemy) },
+      x: worldX(enemy.gx),
+      y: ACTOR_Y + 2.15,
+      z: worldZ(enemy.gz),
+      scale: 0.42,
+      billboard: "center",
+    });
   }
+}
+
+function projectEnemy(enemy: Enemy, yaw: number): void {
+  actors.move(enemy.id, {
+    x: worldX(enemy.gx),
+    y: ACTOR_Y,
+    z: worldZ(enemy.gz),
+    yaw,
+  });
+  render.update(enemyLabelId(enemy), {
+    visual: { kind: "text", text: enemyLabelText(enemy) },
+    x: worldX(enemy.gx),
+    y: ACTOR_Y + 2.15,
+    z: worldZ(enemy.gz),
+  });
 }
 
 function projectPlayer(): void {
@@ -434,12 +522,19 @@ function projectPlayer(): void {
     z: worldZ(player.gz),
     yaw: player.yaw,
   });
+  render.update("hero_label", {
+    x: worldX(player.gx),
+    y: ACTOR_Y + 2.15,
+    z: worldZ(player.gz),
+  });
 }
 
 function startFloor(nextFloor: number): void {
   clearEnemies();
   clearLoot();
+  clearFloatingTexts();
   actors.remove("hero");
+  render.remove("hero_label");
   if (controllerId) menu.close(controllerId, "inventory");
   dungeonReady = false;
   floorNumber = nextFloor;
@@ -467,9 +562,24 @@ function finishDungeonBuild(): void {
     z: worldZ(player.gz),
     yaw: player.yaw,
   });
+  render.spawn("hero_label", {
+    visual: { kind: "text", text: [{ text: "YOU", tone: "info", bold: true }] },
+    x: worldX(player.gx),
+    y: ACTOR_Y + 2.15,
+    z: worldZ(player.gz),
+    scale: 0.5,
+    billboard: "center",
+  });
   spawnEnemies();
   spawnLoot();
   dungeonReady = true;
+  spawnFloatingText(`FLOOR ${floorNumber}`, "success", worldX(player.gx), ACTOR_Y + 2.8, worldZ(player.gz));
+  effects.particle({
+    particle: "minecraft:happy_villager",
+    x: worldX(player.gx),
+    y: ACTOR_Y + 0.8,
+    z: worldZ(player.gz),
+  });
   effects.sound({
     sound: "minecraft:block.amethyst_block.chime",
     x: worldX(player.gx),
@@ -507,19 +617,27 @@ function removeDeadEnemies(): void {
   for (const enemy of enemies) {
     if (enemy.hp <= 0) {
       actors.remove(enemy.id);
+      render.remove(enemyLabelId(enemy));
+      spawnFloatingText("DEFEATED", "success", worldX(enemy.gx), ACTOR_Y + 1.8, worldZ(enemy.gz));
       effects.particle({
         particle: "minecraft:poof",
         x: worldX(enemy.gx),
         y: ACTOR_Y + 0.7,
         z: worldZ(enemy.gz),
       });
+      effects.particle({
+        particle: "minecraft:soul",
+        x: worldX(enemy.gx),
+        y: ACTOR_Y + 1.0,
+        z: worldZ(enemy.gz),
+      });
       effects.sound({
-        sound: "minecraft:entity.zombie.death",
+        sound: enemyDeathSound(enemy),
         x: worldX(enemy.gx),
         y: ACTOR_Y,
         z: worldZ(enemy.gz),
-        volume: 0.6,
-        pitch: 1.25,
+        volume: 0.7,
+        pitch: 1.1,
       });
     } else {
       survivors.push(enemy);
@@ -530,6 +648,16 @@ function removeDeadEnemies(): void {
 
 function hitEnemy(enemy: Enemy, damage: number): void {
   enemy.hp -= damage;
+  spawnFloatingText(`-${damage}`, "danger", worldX(enemy.gx), ACTOR_Y + 2.25, worldZ(enemy.gz));
+  if (enemy.hp > 0) {
+    render.update(enemyLabelId(enemy), { visual: { kind: "text", text: enemyLabelText(enemy) } });
+  }
+  effects.particle({
+    particle: "minecraft:crit",
+    x: worldX(enemy.gx),
+    y: ACTOR_Y + 0.9,
+    z: worldZ(enemy.gz),
+  });
   effects.particle({
     particle: "minecraft:damage_indicator",
     x: worldX(enemy.gx),
@@ -570,7 +698,9 @@ function killPlayer(): void {
   player.dead = true;
   player.restartTicks = DEATH_RESTART_TICKS;
   dungeonReady = false;
+  spawnFloatingText("YOU DIED", "danger", worldX(player.gx), ACTOR_Y + 2.4, worldZ(player.gz));
   actors.remove("hero");
+  render.remove("hero_label");
   clearEnemies();
   clearLoot();
   effects.sound({
@@ -592,6 +722,7 @@ function killPlayer(): void {
 
 function damagePlayer(amount: number): void {
   player.hp -= amount;
+  spawnFloatingText(`-${amount} HP`, "danger", worldX(player.gx), ACTOR_Y + 2.3, worldZ(player.gz));
   effects.sound({
     sound: "minecraft:entity.player.hurt",
     x: worldX(player.gx),
@@ -659,12 +790,7 @@ function enemyTurn(): void {
     const dz = step.gz - enemy.gz;
     enemy.gx = step.gx;
     enemy.gz = step.gz;
-    actors.move(enemy.id, {
-      x: worldX(enemy.gx),
-      y: ACTOR_Y,
-      z: worldZ(enemy.gz),
-      yaw: yawForStep(dx, dz),
-    });
+    projectEnemy(enemy, yawForStep(dx, dz));
   }
 }
 
@@ -915,11 +1041,14 @@ game.onStart(() => {
   buildIndex = 0;
   enemies = [];
   loot = [];
+  floatingTexts = [];
+  floatingTextCounter = 0;
   game.log("ROGUELIKE_WAITING_FOR_CONTROLLER");
 });
 
 game.onTick((ctx: { tick: number }) => {
   currentTick = ctx.tick;
+  updateFloatingTexts();
   const players = input.players() as PlayerInput[];
 
   for (const id of Array.from(startTriggerConsumed)) {

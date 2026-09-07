@@ -9,12 +9,13 @@ Gameplay state and rules live in `datapack/data/topdown_ts/mcgame/main.ts`:
 - lazy incremental bulk world projection (up to `512` writes per `world.setBlocks` call) so generation does not issue thousands of block writes in one script tick
 - grid-based, one-action-per-turn movement
 - bump-to-attack melee combat
-- enemy turns with grid BFS pathfinding
+- zombie/skeleton enemy actors with grid BFS pathfinding
 - TypeScript-authoritative player HP and death/restart
 - floor-to-floor progression; the farthest reachable tile becomes the exit
 - generated potion and bomb pickups
 - inventory menu using the runtime `menu` capability
 - potions heal and consume a turn; bombs damage nearby enemies and consume a turn
+- text-display enemy HP/nameplates and floating combat feedback
 - per-player scoreboard HUD for HP, floor, turn, inventory, generation state, enemies, and seed
 - overhead fixed camera and single-player controller claiming
 

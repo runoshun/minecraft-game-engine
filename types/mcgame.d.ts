@@ -119,7 +119,7 @@ declare const input: {
 };
 
 declare const actors: {
-  spawn(id: string, options: McGamePosition & { texture?: string }): void;
+  spawn(id: string, options: McGamePosition & { texture?: string; entityType?: string }): void;
   move(id: string, options: McGamePosition): void;
   remove(id: string): void;
 };

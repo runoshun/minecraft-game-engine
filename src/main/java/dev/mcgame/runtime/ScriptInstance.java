@@ -50,6 +50,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.decoration.Mannequin;
 import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.level.Level;
@@ -105,7 +106,7 @@ final class ScriptInstance {
     private final Map<UUID, ButtonState> previous = new HashMap<>();
     private final Map<UUID, Map<InputActionRegistry.Action, Long>> previousActions = new HashMap<>();
     private final Map<UUID, Integer> previousHotbarSlots = new HashMap<>();
-    private final Map<String, Mannequin> actorEntities = new HashMap<>();
+    private final Map<String, Entity> actorEntities = new HashMap<>();
     private final Map<String, RenderNode> renderNodes = new HashMap<>();
     private final Map<String, Attachment> renderAttachments = new HashMap<>();
     private final Map<UUID, PanelState> panels = new HashMap<>();
@@ -164,6 +165,7 @@ final class ScriptInstance {
                 for (Value callback : List.copyOf(tickCallbacks)) callback.execute(tickContext);
             });
             syncRenderAttachments();
+            maintainActors();
             refreshPanelConnections(server);
         });
         long elapsedMicros = (System.nanoTime() - started) / 1_000;
@@ -187,7 +189,7 @@ final class ScriptInstance {
             if (player != null) exec(server, "execute as " + player.getGameProfile().name() + " run spectate");
         }
         attachedPlayers.clear();
-        for (Mannequin actor : actorEntities.values()) {
+        for (Entity actor : actorEntities.values()) {
             if (!actor.isRemoved()) actor.discard();
         }
         actorEntities.clear();
@@ -301,6 +303,15 @@ final class ScriptInstance {
         bindings.putMember("menu", ProxyObject.fromMap(menu));
     }
 
+    private void maintainActors() {
+        for (Entity actor : actorEntities.values()) {
+            if (actor.isRemoved()) continue;
+            actor.setDeltaMovement(0, 0, 0);
+            actor.clearFire();
+            if (actor instanceof Mob mob) mob.setNoAi(true);
+        }
+    }
+
     private void primeInputState(MinecraftServer server) {
         previousActions.clear();
         previousHotbarSlots.clear();
@@ -381,27 +392,46 @@ final class ScriptInstance {
         double x = memberDouble(opts, "x", 0), y = memberDouble(opts, "y", 0), z = memberDouble(opts, "z", 0);
         float yaw = (float) memberDouble(opts, "yaw", 0);
         float pitch = (float) memberDouble(opts, "pitch", 0);
+        String entityTypeId = memberResource(opts, "entityType", "minecraft:mannequin");
         String texture = memberResource(opts, "texture", "minecraft:entity/player/wide/steve");
+        boolean mannequin = "minecraft:mannequin".equals(entityTypeId);
+        if (!mannequin && opts.hasMember("texture")) {
+            throw new IllegalArgumentException("actors.spawn texture is only valid for minecraft:mannequin actors");
+        }
 
         String tag = actorTag(actorId);
         ServerLevel level = requireLevel(server, dimension);
         level.getChunkAt(BlockPos.containing(x, y, z));
         if (!removeActorEntity(actorId)) {
-            // Also clear an untracked/custom-texture or chunk-reloaded entity with the same logical id.
             exec(server, "execute in " + dimension + " run kill @e[tag=" + tag + "]");
         }
 
-        // The common/default mannequin path is fully direct. Keep the old command path only
-        // for custom resource-pack textures until profile construction is exposed directly.
-        if (!"minecraft:entity/player/wide/steve".equals(texture)) {
+        // Custom mannequin textures still use the command fallback until profile construction is direct.
+        if (mannequin && !"minecraft:entity/player/wide/steve".equals(texture)) {
             exec(server, String.format(Locale.ROOT,
                 "execute in %s run summon minecraft:mannequin %.4f %.4f %.4f {Tags:[\"%s\",\"%s\"],Invulnerable:1b,NoGravity:1b,Rotation:[%.2ff,%.2ff],profile:{texture:\"%s\"}}",
                 dimension, x, y, z, ownerTag, tag, yaw, pitch, texture));
             return;
         }
 
-        Mannequin actor = EntityType.MANNEQUIN.create(level, EntitySpawnReason.COMMAND);
-        if (actor == null) throw new IllegalStateException("failed to create mannequin actor " + actorId);
+        Entity actor;
+        if (mannequin) {
+            Mannequin created = EntityType.MANNEQUIN.create(level, EntitySpawnReason.COMMAND);
+            if (created == null) throw new IllegalStateException("failed to create mannequin actor " + actorId);
+            actor = created;
+        } else {
+            EntityType<?> entityType = BuiltInRegistries.ENTITY_TYPE.getOptional(Identifier.parse(entityTypeId))
+                .orElseThrow(() -> new IllegalArgumentException("unknown actor entity type: " + entityTypeId));
+            Entity created = entityType.create(level, EntitySpawnReason.COMMAND);
+            if (!(created instanceof Mob mob)) {
+                if (created != null) created.discard();
+                throw new IllegalArgumentException("actors.spawn entityType must be a mob: " + entityTypeId);
+            }
+            mob.setNoAi(true);
+            mob.setPersistenceRequired();
+            actor = mob;
+        }
+
         actor.setPos(x, y, z);
         actor.setYRot(yaw);
         actor.setXRot(pitch);
@@ -409,11 +439,13 @@ final class ScriptInstance {
         actor.noPhysics = true;
         actor.setDeltaMovement(0, 0, 0);
         actor.setInvulnerable(true);
+        actor.setSilent(true);
+        actor.clearFire();
         actor.addTag(ownerTag);
         actor.addTag(tag);
         if (!level.addFreshEntity(actor)) {
             actor.discard();
-            throw new IllegalStateException("failed to add mannequin actor " + actorId + " to " + dimension);
+            throw new IllegalStateException("failed to add actor " + actorId + " to " + dimension);
         }
         actorEntities.put(actorId, actor);
     }
@@ -422,7 +454,7 @@ final class ScriptInstance {
         MinecraftServer server = requireServer();
         String actorId = safeId(stringArg(args, 0, "actors.move"));
         Value opts = objectArg(args, 1, "actors.move");
-        Mannequin actor = actorEntities.get(actorId);
+        Entity actor = actorEntities.get(actorId);
         if (actor == null || actor.isRemoved()) {
             // Custom-texture fallback actors are not held as Java references.
             String dimension = memberResource(opts, "dimension", "minecraft:overworld");
@@ -430,7 +462,7 @@ final class ScriptInstance {
             float yaw = (float) memberDouble(opts, "yaw", 0);
             float pitch = (float) memberDouble(opts, "pitch", 0);
             exec(server, String.format(Locale.ROOT,
-                "execute in %s run tp @e[type=minecraft:mannequin,tag=%s,limit=1] %.4f %.4f %.4f %.2f %.2f",
+                "execute in %s run tp @e[tag=%s,limit=1] %.4f %.4f %.4f %.2f %.2f",
                 dimension, actorTag(actorId), x, y, z, yaw, pitch));
             return;
         }
@@ -466,7 +498,7 @@ final class ScriptInstance {
     }
 
     private boolean removeActorEntity(String actorId) {
-        Mannequin actor = actorEntities.remove(actorId);
+        Entity actor = actorEntities.remove(actorId);
         if (actor == null) return false;
         if (!actor.isRemoved()) actor.discard();
         return true;

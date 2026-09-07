@@ -112,7 +112,7 @@ The semantic action model is deliberately server-observable rather than physical
 - `actors.move(id, options)`
 - `actors.remove(id)`
 
-Actors are currently implemented as `minecraft:mannequin` entities. The default mannequin path is backed by direct server Entity APIs: the runtime keeps a Java reference per script actor, applies movement directly, and discards the entity directly on removal/reload. Custom resource-pack textures still use the command-backed spawn/move fallback until mannequin profile construction is moved to the direct path. The mannequin implementation remains an internal detail and may change.
+Actors are script-owned inert presentation entities. `actors.spawn(id, options)` defaults to `minecraft:mannequin`, and `options.entityType` may select a Minecraft `Mob` such as `minecraft:zombie` or `minecraft:skeleton`. The runtime disables Mob AI, gravity, collision physics, normal damage, sounds, and daylight fire so gameplay state remains authoritative in TypeScript rather than leaking into vanilla Mob simulation. Actor movement/removal uses direct server Entity APIs and tracked Java references. `texture` remains mannequin-only; custom resource-pack mannequin textures still use the command-backed spawn/move fallback until profile construction is moved to the direct path. Non-Mob entity types are rejected.
 
 ### render
 
