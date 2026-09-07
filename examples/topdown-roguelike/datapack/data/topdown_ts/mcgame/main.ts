@@ -55,7 +55,7 @@ const POTION_HEAL = 4;
 const BOMB_DAMAGE = 3;
 const BOMB_RADIUS = 2;
 const DEATH_RESTART_TICKS = 40;
-const BUILD_WRITES_PER_TICK = 64;
+const BUILD_WRITES_PER_TICK = 512;
 const BASE_SEED = 0x51f15eed;
 
 const ROOM_TARGET = 9;
@@ -382,7 +382,8 @@ function queueDungeonBuild(): void {
 
 function processBuildQueue(): void {
   const end = Math.min(buildQueue.length, buildIndex + BUILD_WRITES_PER_TICK);
-  while (buildIndex < end) world.setBlock(buildQueue[buildIndex++]);
+  world.setBlocks({ blocks: buildQueue.slice(buildIndex, end) });
+  buildIndex = end;
   if (buildIndex >= buildQueue.length && !dungeonReady) finishDungeonBuild();
 }
 

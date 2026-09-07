@@ -6,7 +6,7 @@ Gameplay state and rules live in `datapack/data/topdown_ts/mcgame/main.ts`:
 
 - deterministic seed-based procedural room-and-corridor generation
 - guaranteed connected start/exit path, with a fixed fallback layout if random room placement is too sparse
-- incremental world projection (`64` `world.setBlock` writes per tick) so generation does not issue thousands of block writes in one script tick
+- incremental bulk world projection (up to `512` writes per `world.setBlocks` call) so generation does not issue thousands of block writes in one script tick
 - grid-based, one-action-per-turn movement
 - bump-to-attack melee combat
 - enemy turns with grid BFS pathfinding
@@ -38,7 +38,7 @@ A run starts from `BASE_SEED`. Each floor derives its own deterministic seed. On
 
 The generator places non-overlapping rectangular rooms, connects each accepted room to the previous room with an L-shaped corridor, then runs BFS from the start room and chooses the farthest reachable floor tile as the exit. Generation asserts that the exit is reachable before the world is projected.
 
-The generated map is currently 29 x 37 tiles. Geometry is reconciled into the same fixed world footprint every floor/reload. Because the runtime currently exposes single-block writes rather than a batched fill capability, projection is deliberately amortized across ticks. Gameplay remains disabled until projection completes.
+The generated map is currently 29 x 37 tiles. Geometry is reconciled into the same fixed world footprint every floor/reload. The runtime exposes bounded bulk `world.setBlocks`; projection is still amortized across ticks so chunk acquisition and client-visible block updates stay within the tick budget. Gameplay remains disabled until projection completes.
 
 `topdown_ts:arena/build` is now optional cleanup/setup tooling for the example volume. It is useful when migrating from the old static two-room arena or when you want to erase the generated map, but it is not part of the ordinary floor-generation loop.
 

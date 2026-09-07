@@ -21,4 +21,4 @@ Custom-texture mannequin spawning remains command-backed temporarily because pro
 
 ## Consequences
 
-Per-tick actor movement and block writes no longer pay Brigadier command parsing and selector lookup costs. Runtime code must now own entity references carefully and clear them during reload/disable. `world.setBlock` performs normal server block updates and can synchronously obtain chunks, so this change does not make large unbounded world-edit loops free; a batched `world.fill`/bulk edit API remains the appropriate future primitive for map generation.
+Per-tick actor movement and block writes no longer pay Brigadier command parsing and selector lookup costs. Runtime code must now own entity references carefully and clear them during reload/disable. `world.setBlock` performs normal server block updates and can synchronously obtain chunks, so this change does not make large unbounded world-edit loops free. ADR 0007 subsequently adds bounded `world.setBlocks`/`world.fill` projection primitives while preserving this normal-update operation.

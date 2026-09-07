@@ -72,9 +72,10 @@ If datapack reload itself fails, existing scripts are kept. Script compilation/s
 The runtime runs from Fabric's end-of-server-tick event. For each active script it:
 
 1. snapshots all online players and `ServerPlayer.getLastClientInput()`
-2. derives rising-edge values for jump/sneak/sprint
-3. calls registered `game.onTick` callbacks
-4. stores current button state for edge detection on the next tick
+2. folds server-observable vanilla action packets into per-player semantic actions and derives rising edges for held movement buttons
+3. snapshots the selected hotbar slot and detects slot changes
+4. calls registered `game.onTick` callbacks
+5. advances per-script input baselines for the next tick
 
 Minecraft remains the clock source, nominally 20 TPS / 50 ms per tick.
 
@@ -92,13 +93,18 @@ A soft warning is logged for a script tick over 10 ms. Normal game ticks retain 
 
 - `input.players()`
 - `input.get(uuidOrName)`
+- `input.pressed(uuidOrName, action)`
 
-Player snapshots currently expose:
+Player snapshots expose:
 
 - identity: `id`, `name`
 - Minecraft location: `dimension`, `x`, `y`, `z`
 - held input: `forward`, `backward`, `left`, `right`, `jump`, `sneak`, `sprint`
-- rising edges: `jumpPressed`, `sneakPressed`, `sprintPressed`
+- compatibility rising edges: `jumpPressed`, `sneakPressed`, `sprintPressed`
+- hotbar state: zero-based `hotbarSlot` and `hotbarChanged`
+- `pressedActions`, containing semantic rising-edge/action names for the current tick
+
+The semantic action model is deliberately server-observable rather than physical-key based. It includes movement rising edges plus `attack`, `swing`, `use`, `swap_offhand`, `drop`, `drop_stack`, use-release/block-destroy phases, pick, stab, vehicle inventory, riding jump, fall-flying start, and `hotbar_changed`. This lets scripts use vanilla actions commonly bound to F, Q, mouse buttons, and hotbar selection without a client mod and continues to work when players rebind keys. A server-only mod cannot observe client-local keys such as ordinary E inventory open, Esc, Tab, F1, or F5. Hotbar slot changes are observable, but the server cannot distinguish number-key selection from mouse-wheel selection, nor detect pressing the already-selected number key.
 
 ### actors
 
@@ -149,10 +155,12 @@ Current detach behavior switches the player to Adventure mode; original gamemode
 ### world / effects
 
 - `world.setBlock(options)`
+- `world.setBlocks({ dimension?, blocks })`
+- `world.fill(options)`
 - `effects.particle(options)`
 - `effects.sound(options)`
 
-`world.setBlock` resolves the block through the server registry and calls the ServerLevel block API directly; it no longer invokes the command parser. This preserves the small capability surface while removing command parsing from block-write hot paths. Individual writes still perform normal block updates and can synchronously obtain target chunks, so large map generation should use a future batched/fill capability rather than thousands of per-tick `setBlock` calls. Until such a capability exists, script-owned procedural geometry may amortize a bounded number of writes across multiple ticks and keep gameplay disabled until projection completes; the grid roguelike example uses that pattern. Effects remain command-backed in the current PoC.
+`world.setBlock` preserves normal server block-update semantics through `ServerLevel.setBlock(..., Block.UPDATE_ALL)`. `world.setBlocks` and `world.fill` are bounded bulk projection primitives (maximum 32,768 writes per call) that cross the Graal/Java boundary once and use client-visible fast update flags without neighbor updates or block drops. They are intended for script-owned terrain/render projection such as floors, walls, and air clearing; redstone, gravity, or other neighbor-dependent mechanics should use normal updates instead. Bulk calls may still synchronously obtain chunks, so scripts should keep edits spatially bounded and may amortize large projections across ticks. Effects remain command-backed in the current PoC.
 
 The initial API intentionally stays small. New capabilities should be added deliberately rather than exposing raw command execution or raw Minecraft Java objects.
 
@@ -220,10 +228,10 @@ Testing caveats:
 
 - the development server pauses ticking when it has been empty for 60 seconds, so `onTick()` tests need an online player/bot or another reason for the server to tick
 - `mc-mcp` TestBot input has now been validated end-to-end: a `playtest_scenario` forward move sets `ServerPlayer.getLastClientInput().forward()`, `input.players().forward` becomes true in TypeScript, and script logic can move a runtime actor in response. This makes mc-mcp suitable for automated input-driven E2E tests of script games.
-- actor spawning still requires a usable target level/chunk context; `world.setBlock` now uses `ServerLevel.setBlock` directly, which may synchronously obtain the target chunk. Avoid distant/high-volume per-tick writes and prefer a future batched world-edit API for map generation
+- actor spawning and world edits still require usable target chunks; `world.setBlocks`/`world.fill` reduce script-boundary and neighbor-update overhead but may synchronously obtain chunks, so avoid unbounded distant edits in one tick
 - a standalone 0.1.1 smoke test verified direct actor spawn/move/remove, exact final actor transform `[2.5, 101, 0.5]` / yaw `60`, and direct gold/diamond block writes. After compiler warmup and `/reload`, that smoke run produced no script-tick warning above the 10 ms threshold.
 - the ADR 0005 grid/turn-based procedural roguelike rewrite has strict TypeScript compile coverage plus an off-server deterministic harness covering incremental map projection, one-action turn accounting, potion/bomb turn consumption, and 500 generated seeds across multiple floor difficulties; every tested exit was reachable and no tested enemy/loot spawn landed in a wall. Main-server mc-mcp E2E validation of the rewritten loop is still pending.
 
 ## Full game-loop example
 
-`examples/topdown-roguelike` is now a grid-based, turn-based procedural roguelike. TypeScript is authoritative for dungeon topology, grid collision, turn resolution, player HP/death/restart, bump combat, enemy BFS movement, inventory/loot, floor progression, and the deterministic dungeon seed. The script projects its generated 29 x 37 tile map into a fixed world footprint in small `world.setBlock` batches over multiple ticks, with gameplay disabled until projection finishes. `topdown_ts:arena/build` remains optional cleanup/setup tooling rather than the level source of truth. Hand-authored static maps still follow ADR 0002; script-owned procedural maps follow ADR 0005.
+`examples/topdown-roguelike` is now a grid-based, turn-based procedural roguelike. TypeScript is authoritative for dungeon topology, grid collision, turn resolution, player HP/death/restart, bump combat, enemy BFS movement, inventory/loot, floor progression, and the deterministic dungeon seed. The script projects its generated 29 x 37 tile map into a fixed world footprint with bounded `world.setBlocks` calls over multiple ticks, with gameplay disabled until projection finishes. `topdown_ts:arena/build` remains optional cleanup/setup tooling rather than the level source of truth. Hand-authored static maps still follow ADR 0002; script-owned procedural maps follow ADR 0005.
