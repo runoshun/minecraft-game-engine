@@ -6,7 +6,7 @@ Gameplay state and rules live in `datapack/data/topdown_ts/mcgame/main.ts`:
 
 - deterministic seed-based procedural room-and-corridor generation
 - guaranteed connected start/exit path, with a fixed fallback layout if random room placement is too sparse
-- incremental bulk world projection (up to `512` writes per `world.setBlocks` call) so generation does not issue thousands of block writes in one script tick
+- lazy incremental bulk world projection (up to `512` writes per `world.setBlocks` call) so generation does not issue thousands of block writes in one script tick
 - grid-based, one-action-per-turn movement
 - bump-to-attack melee combat
 - enemy turns with grid BFS pathfinding
@@ -28,9 +28,9 @@ Run `/function topdown_ts:start` as the player who should control the game. This
 | --- | --- |
 | W / A / S / D | Move one grid tile; moving into an enemy performs a melee attack |
 | Jump | Wait one turn |
-| Sneak | Open the inventory menu |
+| Ctrl / Sprint | Open the inventory menu |
 
-Movement uses rising edges implemented by the game script, so holding a direction does not spend multiple turns.
+Movement uses rising edges implemented by the game script, so holding a direction does not spend multiple turns. Inventory uses the sprint rising edge (normally Ctrl), which remains server-observable while the player is spectating the fixed camera. Spectator mode does not transmit the ordinary swap-offhand/F action, so F is not used by this example.
 
 ## Dungeon generation
 

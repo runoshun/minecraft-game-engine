@@ -56,6 +56,7 @@ const BOMB_DAMAGE = 3;
 const BOMB_RADIUS = 2;
 const DEATH_RESTART_TICKS = 40;
 const BUILD_WRITES_PER_TICK = 512;
+const BUILD_WRITE_COUNT = MAP_WIDTH * MAP_HEIGHT * 5;
 const BASE_SEED = 0x51f15eed;
 
 const ROOM_TARGET = 9;
@@ -70,7 +71,6 @@ let startTile: GridPoint = { gx: 1, gz: 1 };
 let exitTile: GridPoint = { gx: MAP_WIDTH - 2, gz: MAP_HEIGHT - 2 };
 let enemies: Enemy[] = [];
 let loot: Loot[] = [];
-let buildQueue: BlockWrite[] = [];
 let buildIndex = 0;
 let dungeonReady = false;
 let controllerId: string | null = null;
@@ -355,36 +355,41 @@ function generateDungeon(seed: number): void {
 }
 
 function queueDungeonBuild(): void {
-  buildQueue = [];
   buildIndex = 0;
-  for (let gz = 0; gz < MAP_HEIGHT; gz++) {
-    for (let gx = 0; gx < MAP_WIDTH; gx++) {
-      const x = ORIGIN_X + gx;
-      const z = ORIGIN_Z + gz;
-      const tile = tileAt(gx, gz);
-      const floorBlock = tile === EXIT
-        ? "minecraft:gold_block"
-        : tile === WALL
-          ? "minecraft:polished_deepslate"
-          : "minecraft:deepslate_tiles";
-      buildQueue.push({ x, y: FLOOR_Y, z, block: floorBlock });
-      for (let y = FLOOR_Y + 1; y <= FLOOR_Y + 4; y++) {
-        buildQueue.push({
-          x,
-          y,
-          z,
-          block: tile === WALL && y <= FLOOR_Y + 3 ? "minecraft:deepslate_bricks" : "minecraft:air",
-        });
-      }
-    }
+}
+
+function buildWriteAt(index: number): BlockWrite {
+  const cellIndex = Math.floor(index / 5);
+  const layer = index % 5;
+  const gx = cellIndex % MAP_WIDTH;
+  const gz = Math.floor(cellIndex / MAP_WIDTH);
+  const x = ORIGIN_X + gx;
+  const z = ORIGIN_Z + gz;
+  const tile = tileAt(gx, gz);
+
+  if (layer === 0) {
+    const block = tile === EXIT
+      ? "minecraft:gold_block"
+      : tile === WALL
+        ? "minecraft:polished_deepslate"
+        : "minecraft:deepslate_tiles";
+    return { x, y: FLOOR_Y, z, block };
   }
+
+  return {
+    x,
+    y: FLOOR_Y + layer,
+    z,
+    block: tile === WALL && layer <= 3 ? "minecraft:deepslate_bricks" : "minecraft:air",
+  };
 }
 
 function processBuildQueue(): void {
-  const end = Math.min(buildQueue.length, buildIndex + BUILD_WRITES_PER_TICK);
-  world.setBlocks({ blocks: buildQueue.slice(buildIndex, end) });
-  buildIndex = end;
-  if (buildIndex >= buildQueue.length && !dungeonReady) finishDungeonBuild();
+  const end = Math.min(BUILD_WRITE_COUNT, buildIndex + BUILD_WRITES_PER_TICK);
+  const writes: BlockWrite[] = [];
+  while (buildIndex < end) writes.push(buildWriteAt(buildIndex++));
+  world.setBlocks({ blocks: writes });
+  if (buildIndex >= BUILD_WRITE_COUNT && !dungeonReady) finishDungeonBuild();
 }
 
 function clearEnemies(): void {
@@ -452,7 +457,7 @@ function startFloor(nextFloor: number): void {
       pitch: 90,
     });
   }
-  game.log("ROGUELIKE_BUILD_START", `floor=${floorNumber}`, `writes=${buildQueue.length}`);
+  game.log("ROGUELIKE_BUILD_START", `floor=${floorNumber}`, `writes=${BUILD_WRITE_COUNT}`);
 }
 
 function finishDungeonBuild(): void {
@@ -805,7 +810,7 @@ function openInventory(playerId: string): void {
 
 function updateHud(): void {
   if (!controllerId) return;
-  const buildPercent = buildQueue.length === 0 ? 0 : Math.floor(buildIndex * 100 / buildQueue.length);
+  const buildPercent = Math.floor(buildIndex * 100 / BUILD_WRITE_COUNT);
   const state = player.dead
     ? `Dead (${player.restartTicks})`
     : dungeonReady
@@ -823,7 +828,7 @@ function updateHud(): void {
       { id: "state", label: "State", value: state },
       { id: "seed", label: "Seed", value: floorSeed.toString(16) },
       { id: "controls1", label: "WASD", value: "move / bump attack" },
-      { id: "controls2", label: "Sneak / Jump", value: "items / wait" },
+      { id: "controls2", label: "Ctrl / Jump", value: "items / wait" },
     ],
   });
 }
@@ -907,7 +912,6 @@ game.onStart(() => {
   player.inventory.potion = 1;
   player.inventory.bomb = 1;
   dungeonReady = false;
-  buildQueue = [];
   buildIndex = 0;
   enemies = [];
   loot = [];
@@ -937,7 +941,7 @@ game.onTick((ctx: { tick: number }) => {
   if (!controllerId) {
     const claimant = players.find(candidate =>
       candidate.forward || candidate.backward || candidate.left || candidate.right ||
-      candidate.jumpPressed || candidate.sneakPressed || candidate.sprintPressed
+      candidate.jumpPressed || candidate.sprintPressed
     );
     if (claimant) {
       claimController(claimant, true, false);
@@ -977,8 +981,7 @@ game.onTick((ctx: { tick: number }) => {
     return;
   }
 
-  if (p.sneakPressed) {
-    camera.attach(p.id, cameraOptions());
+  if (p.sprintPressed) {
     openInventory(p.id);
   } else {
     const action = directionAction(p);
