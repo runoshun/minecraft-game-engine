@@ -103,6 +103,8 @@ final class ScriptInstance {
     private final List<Value> tickCallbacks = new ArrayList<>();
     private final Set<UUID> attachedPlayers = new HashSet<>();
     private final Map<UUID, ButtonState> previous = new HashMap<>();
+    private final Map<UUID, Map<InputActionRegistry.Action, Long>> previousActions = new HashMap<>();
+    private final Map<UUID, Integer> previousHotbarSlots = new HashMap<>();
     private final Map<String, Mannequin> actorEntities = new HashMap<>();
     private final Map<String, RenderNode> renderNodes = new HashMap<>();
     private final Map<String, Attachment> renderAttachments = new HashMap<>();
@@ -145,6 +147,7 @@ final class ScriptInstance {
     boolean disabled() { return disabled; }
 
     void start(MinecraftServer server) {
+        primeInputState(server);
         withServer(server, 0, () -> runWithBudget(() -> {
             for (Value callback : List.copyOf(startCallbacks)) callback.execute();
         }, STARTUP_BUDGET_MS));
@@ -238,6 +241,14 @@ final class ScriptInstance {
             }
             return null;
         });
+        input.put("pressed", (ProxyExecutable) args -> {
+            String key = stringArg(args, 0, "input.pressed");
+            String action = stringArg(args, 1, "input.pressed");
+            for (PlayerSnapshot p : players) {
+                if (p.uuid().toString().equals(key) || p.name().equals(key)) return p.pressedActions().contains(action);
+            }
+            return false;
+        });
 
         Map<String, Object> actors = new HashMap<>();
         actors.put("spawn", (ProxyExecutable) args -> { spawnActor(args); return null; });
@@ -251,6 +262,8 @@ final class ScriptInstance {
 
         Map<String, Object> world = new HashMap<>();
         world.put("setBlock", (ProxyExecutable) args -> { setBlock(args); return null; });
+        world.put("setBlocks", (ProxyExecutable) args -> { setBlocks(args); return null; });
+        world.put("fill", (ProxyExecutable) args -> { fillBlocks(args); return null; });
 
         Map<String, Object> effects = new HashMap<>();
         effects.put("particle", (ProxyExecutable) args -> { particle(args); return null; });
@@ -288,24 +301,53 @@ final class ScriptInstance {
         bindings.putMember("menu", ProxyObject.fromMap(menu));
     }
 
+    private void primeInputState(MinecraftServer server) {
+        previousActions.clear();
+        previousHotbarSlots.clear();
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            UUID uuid = player.getUUID();
+            previousActions.put(uuid, InputActionRegistry.snapshot(uuid));
+            previousHotbarSlots.put(uuid, player.getInventory().getSelectedSlot());
+        }
+    }
+
     private void buildInputSnapshot(MinecraftServer server) {
         List<PlayerSnapshot> next = new ArrayList<>();
+        Set<UUID> online = new HashSet<>();
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            UUID uuid = player.getUUID();
+            online.add(uuid);
             Input input = player.getLastClientInput();
-            ButtonState now = new ButtonState(
-                input.forward(), input.backward(), input.left(), input.right(),
-                input.jump(), input.shift(), input.sprint()
-            );
-            ButtonState old = previous.getOrDefault(player.getUUID(), ButtonState.EMPTY);
-            next.add(new PlayerSnapshot(
-                player.getUUID(), player.getGameProfile().name(),
-                player.level().dimension().identifier().toString(),
-                player.getX(), player.getY(), player.getZ(), now,
-                now.jump() && !old.jump(),
-                now.shift() && !old.shift(),
-                now.sprint() && !old.sprint()
-            ));
+            ButtonState now = new ButtonState(input.forward(), input.backward(), input.left(), input.right(), input.jump(), input.shift(), input.sprint());
+            ButtonState old = previous.getOrDefault(uuid, ButtonState.EMPTY);
+            Set<String> pressed = new HashSet<>();
+            if (now.forward() && !old.forward()) pressed.add("forward");
+            if (now.backward() && !old.backward()) pressed.add("backward");
+            if (now.left() && !old.left()) pressed.add("left");
+            if (now.right() && !old.right()) pressed.add("right");
+            if (now.jump() && !old.jump()) pressed.add("jump");
+            if (now.shift() && !old.shift()) pressed.add("sneak");
+            if (now.sprint() && !old.sprint()) pressed.add("sprint");
+
+            Map<InputActionRegistry.Action, Long> actionNow = InputActionRegistry.snapshot(uuid);
+            Map<InputActionRegistry.Action, Long> actionOld = previousActions.getOrDefault(uuid, Map.of());
+            for (InputActionRegistry.Action action : InputActionRegistry.Action.values()) {
+                if (actionNow.getOrDefault(action, 0L) > actionOld.getOrDefault(action, 0L)) pressed.add(action.scriptName());
+            }
+            previousActions.put(uuid, actionNow);
+
+            int hotbarSlot = player.getInventory().getSelectedSlot();
+            Integer oldHotbarSlot = previousHotbarSlots.put(uuid, hotbarSlot);
+            boolean hotbarChanged = oldHotbarSlot != null && oldHotbarSlot != hotbarSlot;
+            if (hotbarChanged) pressed.add("hotbar_changed");
+
+            next.add(new PlayerSnapshot(uuid, player.getGameProfile().name(), player.level().dimension().identifier().toString(),
+                player.getX(), player.getY(), player.getZ(), now, now.jump() && !old.jump(), now.shift() && !old.shift(),
+                now.sprint() && !old.sprint(), hotbarSlot, hotbarChanged, Set.copyOf(pressed)));
         }
+        previousActions.keySet().retainAll(online);
+        previousHotbarSlots.keySet().retainAll(online);
+        InputActionRegistry.retainPlayers(online);
         players = List.copyOf(next);
     }
 
@@ -325,6 +367,9 @@ final class ScriptInstance {
         map.put("jumpPressed", p.jumpPressed());
         map.put("sneakPressed", p.sneakPressed());
         map.put("sprintPressed", p.sprintPressed());
+        map.put("hotbarSlot", p.hotbarSlot());
+        map.put("hotbarChanged", p.hotbarChanged());
+        map.put("pressedActions", ProxyArray.fromList(new ArrayList<>(p.pressedActions())));
         return ProxyObject.fromMap(map);
     }
 
@@ -484,6 +529,53 @@ final class ScriptInstance {
         BlockPos pos = new BlockPos(x, y, z);
         if (!level.isInWorldBounds(pos)) throw new IllegalArgumentException("block position is outside world bounds: " + pos);
         level.setBlock(pos, block.defaultBlockState(), Block.UPDATE_ALL);
+    }
+
+    private static final int FAST_BLOCK_FLAGS = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE | Block.UPDATE_SUPPRESS_DROPS;
+    private static final int MAX_BULK_BLOCKS = 32768;
+
+    private void setBlocks(Value[] args) {
+        MinecraftServer server = requireServer();
+        Value opts = objectArg(args, 0, "world.setBlocks");
+        String dimension = memberResource(opts, "dimension", "minecraft:overworld");
+        Value blocks = opts.hasMember("blocks") ? opts.getMember("blocks") : null;
+        if (blocks == null || !blocks.hasArrayElements()) throw new IllegalArgumentException("world.setBlocks blocks must be an array");
+        long count = blocks.getArraySize();
+        if (count > MAX_BULK_BLOCKS) throw new IllegalArgumentException("world.setBlocks exceeds max block count " + MAX_BULK_BLOCKS);
+        ServerLevel level = requireLevel(server, dimension);
+        Map<String, Block> resolved = new HashMap<>();
+        for (long i = 0; i < count; i++) {
+            Value write = blocks.getArrayElement(i);
+            if (write == null || !write.hasMembers()) throw new IllegalArgumentException("world.setBlocks block entry must be an object");
+            String blockId = memberResource(write, "block", null);
+            BlockPos pos = new BlockPos((int)Math.floor(memberDouble(write, "x", 0)), (int)Math.floor(memberDouble(write, "y", 0)), (int)Math.floor(memberDouble(write, "z", 0)));
+            if (!level.isInWorldBounds(pos)) throw new IllegalArgumentException("block position is outside world bounds: " + pos);
+            level.setBlock(pos, resolved.computeIfAbsent(blockId, this::requireBlock).defaultBlockState(), FAST_BLOCK_FLAGS);
+        }
+    }
+
+    private void fillBlocks(Value[] args) {
+        MinecraftServer server = requireServer();
+        Value opts = objectArg(args, 0, "world.fill");
+        String dimension = memberResource(opts, "dimension", "minecraft:overworld");
+        String blockId = memberResource(opts, "block", null);
+        int x1=(int)Math.floor(memberDouble(opts,"fromX",0)), x2=(int)Math.floor(memberDouble(opts,"toX",0));
+        int y1=(int)Math.floor(memberDouble(opts,"fromY",0)), y2=(int)Math.floor(memberDouble(opts,"toY",0));
+        int z1=(int)Math.floor(memberDouble(opts,"fromZ",0)), z2=(int)Math.floor(memberDouble(opts,"toZ",0));
+        int minX=Math.min(x1,x2), maxX=Math.max(x1,x2), minY=Math.min(y1,y2), maxY=Math.max(y1,y2), minZ=Math.min(z1,z2), maxZ=Math.max(z1,z2);
+        long volume=(long)(maxX-minX+1)*(maxY-minY+1)*(maxZ-minZ+1);
+        if (volume > MAX_BULK_BLOCKS) throw new IllegalArgumentException("world.fill exceeds max block count " + MAX_BULK_BLOCKS);
+        ServerLevel level=requireLevel(server, dimension);
+        Block block=requireBlock(blockId);
+        for (BlockPos pos : BlockPos.betweenClosed(minX,minY,minZ,maxX,maxY,maxZ)) {
+            if (!level.isInWorldBounds(pos)) throw new IllegalArgumentException("block position is outside world bounds: " + pos);
+            level.setBlock(pos, block.defaultBlockState(), FAST_BLOCK_FLAGS);
+        }
+    }
+
+    private Block requireBlock(String id) {
+        return BuiltInRegistries.BLOCK.getOptional(Identifier.parse(id))
+            .orElseThrow(() -> new IllegalArgumentException("unknown block: " + id));
     }
 
     private void particle(Value[] args) {
@@ -1420,6 +1512,7 @@ final class ScriptInstance {
 
     private record PlayerSnapshot(
         UUID uuid, String name, String dimension, double x, double y, double z,
-        ButtonState buttons, boolean jumpPressed, boolean sneakPressed, boolean sprintPressed
+        ButtonState buttons, boolean jumpPressed, boolean sneakPressed, boolean sprintPressed,
+        int hotbarSlot, boolean hotbarChanged, Set<String> pressedActions
     ) {}
 }

@@ -1,3 +1,10 @@
+type McGameInputAction =
+  | "forward" | "backward" | "left" | "right" | "jump" | "sneak" | "sprint"
+  | "attack" | "swing" | "use" | "swap_offhand" | "drop" | "drop_stack" | "use_release"
+  | "destroy_start" | "destroy_abort" | "destroy_stop" | "stab" | "pick"
+  | "vehicle_inventory" | "riding_jump_start" | "riding_jump_stop" | "fall_flying_start"
+  | "hotbar_changed";
+
 type McGamePlayerInput = {
   id: string;
   name: string;
@@ -15,6 +22,9 @@ type McGamePlayerInput = {
   jumpPressed: boolean;
   sneakPressed: boolean;
   sprintPressed: boolean;
+  hotbarSlot: number;
+  hotbarChanged: boolean;
+  pressedActions: McGameInputAction[];
 };
 
 type McGamePosition = {
@@ -105,6 +115,7 @@ declare const game: {
 declare const input: {
   players(): McGamePlayerInput[];
   get(playerIdOrName: string): McGamePlayerInput | null;
+  pressed(playerIdOrName: string, action: McGameInputAction): boolean;
 };
 
 declare const actors: {
@@ -138,8 +149,12 @@ declare const camera: {
   detach(playerIdOrName: string): void;
 };
 
+type McGameBlockWrite = { x: number; y: number; z: number; block: string };
+
 declare const world: {
   setBlock(options: { dimension?: string; x: number; y: number; z: number; block: string }): void;
+  setBlocks(options: { dimension?: string; blocks: McGameBlockWrite[] }): void;
+  fill(options: { dimension?: string; fromX: number; fromY: number; fromZ: number; toX: number; toY: number; toZ: number; block: string }): void;
 };
 
 declare const effects: {
