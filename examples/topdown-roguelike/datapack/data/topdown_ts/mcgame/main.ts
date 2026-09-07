@@ -1,6 +1,10 @@
 type PlayerInput = {
   id: string;
   name: string;
+  dimension: string;
+  x: number;
+  y: number;
+  z: number;
   forward: boolean;
   backward: boolean;
   left: boolean;
@@ -35,6 +39,12 @@ const ORIGIN_Z = -8;
 const FLOOR_Y = 100;
 const ACTOR_Y = FLOOR_Y + 1;
 const CAMERA_Y = 143;
+const CAMERA_X = ORIGIN_X + MAP_WIDTH / 2;
+const CAMERA_Z = ORIGIN_Z + MAP_HEIGHT / 2;
+const START_TRIGGER_X = 17.5;
+const START_TRIGGER_Y = 143;
+const START_TRIGGER_Z = 10.5;
+const POSITION_EPSILON = 0.2;
 const WALL = "#";
 const FLOOR = ".";
 const EXIT = ">";
@@ -70,6 +80,7 @@ let runSeed = BASE_SEED;
 let floorSeed = BASE_SEED;
 let skipControllerInput = false;
 const cameraAttached = new Set<string>();
+const startTriggerConsumed = new Set<string>();
 
 const player = {
   gx: 1,
@@ -433,9 +444,9 @@ function startFloor(nextFloor: number): void {
   queueDungeonBuild();
   if (controllerId && cameraAttached.has(controllerId)) {
     camera.move(controllerId, {
-      x: ORIGIN_X + MAP_WIDTH / 2,
+      x: CAMERA_X,
       y: CAMERA_Y,
-      z: ORIGIN_Z + MAP_HEIGHT / 2,
+      z: CAMERA_Z,
       yaw: 0,
       pitch: 90,
     });
@@ -833,6 +844,44 @@ function rememberDirections(p: PlayerInput): void {
   };
 }
 
+function cameraOptions(): { x: number; y: number; z: number; yaw: number; pitch: number } {
+  return { x: CAMERA_X, y: CAMERA_Y, z: CAMERA_Z, yaw: 0, pitch: 90 };
+}
+
+function near(value: number, expected: number): boolean {
+  return Math.abs(value - expected) <= POSITION_EPSILON;
+}
+
+function isStartTrigger(p: PlayerInput): boolean {
+  return p.dimension === "minecraft:overworld" &&
+    near(p.x, START_TRIGGER_X) && near(p.y, START_TRIGGER_Y) && near(p.z, START_TRIGGER_Z);
+}
+
+function isAtCameraAnchor(p: PlayerInput): boolean {
+  return p.dimension === "minecraft:overworld" &&
+    near(p.x, CAMERA_X) && near(p.y, CAMERA_Y) && near(p.z, CAMERA_Z);
+}
+
+function releaseControllerPresentation(playerId: string): void {
+  ui.panel(playerId, null);
+  menu.close(playerId, "inventory");
+  if (cameraAttached.has(playerId)) camera.detach(playerId);
+  cameraAttached.delete(playerId);
+}
+
+function claimController(p: PlayerInput, restartRun: boolean, resetCamera: boolean): void {
+  if (controllerId && controllerId !== p.id) releaseControllerPresentation(controllerId);
+  if (resetCamera && cameraAttached.has(p.id)) {
+    camera.detach(p.id);
+    cameraAttached.delete(p.id);
+  }
+  controllerId = p.id;
+  previousDirection = { forward: false, backward: false, left: false, right: false };
+  skipControllerInput = true;
+  game.log("ROGUELIKE_CONTROLLER", p.name);
+  if (restartRun) startNewRun(BASE_SEED);
+}
+
 menu.onAction((event: MenuEvent) => {
   if (!controllerId || event.playerId !== controllerId || event.menuId !== "inventory") return;
   menu.close(event.playerId, "inventory");
@@ -844,6 +893,7 @@ menu.onAction((event: MenuEvent) => {
 game.onStart(() => {
   controllerId = null;
   cameraAttached.clear();
+  startTriggerConsumed.clear();
   previousDirection = { forward: false, backward: false, left: false, right: false };
   currentTick = 0;
   runSeed = BASE_SEED;
@@ -867,6 +917,16 @@ game.onTick((ctx: { tick: number }) => {
   currentTick = ctx.tick;
   const players = input.players() as PlayerInput[];
 
+  for (const id of Array.from(startTriggerConsumed)) {
+    const current = players.find(candidate => candidate.id === id);
+    if (!current || !isStartTrigger(current)) startTriggerConsumed.delete(id);
+  }
+  const commandStart = players.find(candidate => isStartTrigger(candidate) && !startTriggerConsumed.has(candidate.id));
+  if (commandStart) {
+    startTriggerConsumed.add(commandStart.id);
+    claimController(commandStart, true, true);
+  }
+
   if (controllerId && !players.some(candidate => candidate.id === controllerId)) {
     cameraAttached.delete(controllerId);
     ui.panel(controllerId, null);
@@ -879,10 +939,8 @@ game.onTick((ctx: { tick: number }) => {
       candidate.jumpPressed || candidate.sneakPressed || candidate.sprintPressed
     );
     if (claimant) {
-      controllerId = claimant.id;
+      claimController(claimant, true, false);
       rememberDirections(claimant);
-      game.log("ROGUELIKE_CONTROLLER", claimant.name);
-      startNewRun(BASE_SEED);
     }
   }
 
@@ -890,14 +948,10 @@ game.onTick((ctx: { tick: number }) => {
   if (!p) return;
 
   if (!cameraAttached.has(p.id)) {
-    camera.attach(p.id, {
-      x: ORIGIN_X + MAP_WIDTH / 2,
-      y: CAMERA_Y,
-      z: ORIGIN_Z + MAP_HEIGHT / 2,
-      yaw: 0,
-      pitch: 90,
-    });
+    camera.attach(p.id, cameraOptions());
     cameraAttached.add(p.id);
+  } else if (!isAtCameraAnchor(p)) {
+    camera.attach(p.id, cameraOptions());
   }
 
   if (player.dead) {
@@ -923,6 +977,7 @@ game.onTick((ctx: { tick: number }) => {
   }
 
   if (p.sneakPressed) {
+    camera.attach(p.id, cameraOptions());
     openInventory(p.id);
   } else {
     const action = directionAction(p);

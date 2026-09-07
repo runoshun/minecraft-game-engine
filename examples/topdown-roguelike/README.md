@@ -18,6 +18,10 @@ Gameplay state and rules live in `datapack/data/topdown_ts/mcgame/main.ts`:
 - per-player scoreboard HUD for HP, floor, turn, inventory, generation state, enemies, and seed
 - overhead fixed camera and single-player controller claiming
 
+## Start
+
+Run `/function topdown_ts:start` as the player who should control the game. This starts or restarts the run and reattaches the fixed overhead camera. The first gameplay input still acts as a fallback start trigger. From console/RCON, use `execute as <player> run function topdown_ts:start`.
+
 ## Controls
 
 | Input | Action |
