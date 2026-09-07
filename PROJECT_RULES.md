@@ -30,6 +30,10 @@ For a significant architectural choice, also add or supersede an ADR under `docs
 7. A bad game script should be isolated/disabled rather than intentionally crashing the whole server where feasible.
 8. Keep `mc-mcp` compatible: it is the development, inspection, capture, world-editing, and E2E-test control plane; it is not the gameplay logic owner.
 
+## Operational documentation
+
+Release, GitHub Release asset, mc-mcp deployment, and main-server validation procedures are documented in `docs/operations.md`. Update that document in the same change whenever the artifact distribution path, deployment tooling, server validation workflow, or required post-deploy checks change.
+
 ## Repository hygiene
 
 - Keep generated Gradle output out of Git.
