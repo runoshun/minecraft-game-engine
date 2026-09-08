@@ -443,6 +443,7 @@ final class ScriptInstance {
         actor.clearFire();
         actor.addTag(ownerTag);
         actor.addTag(tag);
+        actor.addTag(RuntimeEntityTags.ACTOR);
         if (!level.addFreshEntity(actor)) {
             actor.discard();
             throw new IllegalStateException("failed to add actor " + actorId + " to " + dimension);

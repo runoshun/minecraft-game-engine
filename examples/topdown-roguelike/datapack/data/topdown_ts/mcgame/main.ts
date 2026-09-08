@@ -233,24 +233,48 @@ function ensureFallbackRooms(): void {
 }
 
 function bfsDistances(origin: GridPoint): number[] {
-  const distances = new Array(MAP_WIDTH * MAP_HEIGHT).fill(-1);
-  const queue: number[] = [tileIndex(origin.gx, origin.gz)];
-  distances[queue[0]] = 0;
+  const cellCount = MAP_WIDTH * MAP_HEIGHT;
+  const distances = new Array(cellCount).fill(-1);
+  const queue = new Array<number>(cellCount);
+  const start = origin.gz * MAP_WIDTH + origin.gx;
+  distances[start] = 0;
+  queue[0] = start;
   let head = 0;
-  const directions = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  let tail = 1;
 
-  while (head < queue.length) {
+  while (head < tail) {
     const index = queue[head++];
     const gx = index % MAP_WIDTH;
-    const gz = Math.floor(index / MAP_WIDTH);
-    for (const [dx, dz] of directions) {
-      const nx = gx + dx;
-      const nz = gz + dz;
-      if (!isWalkable(nx, nz)) continue;
-      const nextIndex = tileIndex(nx, nz);
-      if (distances[nextIndex] >= 0) continue;
-      distances[nextIndex] = distances[index] + 1;
-      queue.push(nextIndex);
+    const nextDistance = distances[index] + 1;
+    let next: number;
+
+    if (gx + 1 < MAP_WIDTH) {
+      next = index + 1;
+      if (distances[next] < 0 && tiles[next] !== WALL) {
+        distances[next] = nextDistance;
+        queue[tail++] = next;
+      }
+    }
+    if (gx > 0) {
+      next = index - 1;
+      if (distances[next] < 0 && tiles[next] !== WALL) {
+        distances[next] = nextDistance;
+        queue[tail++] = next;
+      }
+    }
+    if (index + MAP_WIDTH < cellCount) {
+      next = index + MAP_WIDTH;
+      if (distances[next] < 0 && tiles[next] !== WALL) {
+        distances[next] = nextDistance;
+        queue[tail++] = next;
+      }
+    }
+    if (index >= MAP_WIDTH) {
+      next = index - MAP_WIDTH;
+      if (distances[next] < 0 && tiles[next] !== WALL) {
+        distances[next] = nextDistance;
+        queue[tail++] = next;
+      }
     }
   }
   return distances;
@@ -742,36 +766,59 @@ function damagePlayer(amount: number): void {
 }
 
 function pathStepToward(enemy: Enemy): GridPoint | null {
-  const start = tileIndex(enemy.gx, enemy.gz);
-  const target = tileIndex(player.gx, player.gz);
-  const previous = new Array(MAP_WIDTH * MAP_HEIGHT).fill(-1);
-  const visited = new Array(MAP_WIDTH * MAP_HEIGHT).fill(false);
-  const queue: number[] = [start];
-  visited[start] = true;
+  const cellCount = MAP_WIDTH * MAP_HEIGHT;
+  const start = enemy.gz * MAP_WIDTH + enemy.gx;
+  const target = player.gz * MAP_WIDTH + player.gx;
+  const previous = new Array(cellCount).fill(-1);
+  const blocked = new Array(cellCount).fill(false);
+  for (const other of enemies) {
+    if (other.id !== enemy.id && other.hp > 0) blocked[other.gz * MAP_WIDTH + other.gx] = true;
+  }
+  const queue = new Array<number>(cellCount);
+  previous[start] = start;
+  queue[0] = start;
   let head = 0;
-  const directions = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  let tail = 1;
 
-  while (head < queue.length && !visited[target]) {
+  while (head < tail && previous[target] < 0) {
     const index = queue[head++];
     const gx = index % MAP_WIDTH;
-    const gz = Math.floor(index / MAP_WIDTH);
-    for (const [dx, dz] of directions) {
-      const nx = gx + dx;
-      const nz = gz + dz;
-      if (!isWalkable(nx, nz)) continue;
-      if (enemyOccupies(nx, nz, enemy.id) && !(nx === player.gx && nz === player.gz)) continue;
-      const next = tileIndex(nx, nz);
-      if (visited[next]) continue;
-      visited[next] = true;
-      previous[next] = index;
-      queue.push(next);
+    let next: number;
+
+    if (gx + 1 < MAP_WIDTH) {
+      next = index + 1;
+      if (previous[next] < 0 && tiles[next] !== WALL && (next === target || !blocked[next])) {
+        previous[next] = index;
+        queue[tail++] = next;
+      }
+    }
+    if (gx > 0) {
+      next = index - 1;
+      if (previous[next] < 0 && tiles[next] !== WALL && (next === target || !blocked[next])) {
+        previous[next] = index;
+        queue[tail++] = next;
+      }
+    }
+    if (index + MAP_WIDTH < cellCount) {
+      next = index + MAP_WIDTH;
+      if (previous[next] < 0 && tiles[next] !== WALL && (next === target || !blocked[next])) {
+        previous[next] = index;
+        queue[tail++] = next;
+      }
+    }
+    if (index >= MAP_WIDTH) {
+      next = index - MAP_WIDTH;
+      if (previous[next] < 0 && tiles[next] !== WALL && (next === target || !blocked[next])) {
+        previous[next] = index;
+        queue[tail++] = next;
+      }
     }
   }
 
-  if (!visited[target]) return null;
+  if (previous[target] < 0) return null;
   let cursor = target;
-  while (previous[cursor] !== start && previous[cursor] !== -1) cursor = previous[cursor];
-  if (previous[cursor] === -1) return null;
+  while (previous[cursor] !== start && previous[cursor] !== cursor) cursor = previous[cursor];
+  if (previous[cursor] !== start) return null;
   return { gx: cursor % MAP_WIDTH, gz: Math.floor(cursor / MAP_WIDTH) };
 }
 
@@ -1059,6 +1106,7 @@ game.onTick((ctx: { tick: number }) => {
   if (commandStart) {
     startTriggerConsumed.add(commandStart.id);
     claimController(commandStart, true, true);
+    return;
   }
 
   if (controllerId && !players.some(candidate => candidate.id === controllerId)) {
@@ -1075,6 +1123,7 @@ game.onTick((ctx: { tick: number }) => {
     if (claimant) {
       claimController(claimant, true, false);
       rememberDirections(claimant);
+      return;
     }
   }
 
@@ -1084,8 +1133,14 @@ game.onTick((ctx: { tick: number }) => {
   if (!cameraAttached.has(p.id)) {
     camera.attach(p.id, cameraOptions());
     cameraAttached.add(p.id);
+    rememberDirections(p);
+    updateHud();
+    return;
   } else if (!isAtCameraAnchor(p)) {
     camera.attach(p.id, cameraOptions());
+    rememberDirections(p);
+    updateHud();
+    return;
   }
 
   if (player.dead) {
