@@ -81,6 +81,7 @@ let floorNumber = 1;
 let runSeed = BASE_SEED;
 let floorSeed = BASE_SEED;
 let skipControllerInput = false;
+let pendingRunSeed: number | null = null;
 const cameraAttached = new Set<string>();
 const startTriggerConsumed = new Set<string>();
 let floatingTexts: FloatingText[] = [];
@@ -1036,11 +1037,6 @@ function isStartTrigger(p: PlayerInput): boolean {
     near(p.x, START_TRIGGER_X) && near(p.y, START_TRIGGER_Y) && near(p.z, START_TRIGGER_Z);
 }
 
-function isAtCameraAnchor(p: PlayerInput): boolean {
-  return p.dimension === "minecraft:overworld" &&
-    near(p.x, CAMERA_X) && near(p.y, CAMERA_Y) && near(p.z, CAMERA_Z);
-}
-
 function releaseControllerPresentation(playerId: string): void {
   ui.panel(playerId, null);
   menu.close(playerId, "inventory");
@@ -1058,7 +1054,7 @@ function claimController(p: PlayerInput, restartRun: boolean, resetCamera: boole
   previousDirection = { forward: false, backward: false, left: false, right: false };
   skipControllerInput = true;
   game.log("ROGUELIKE_CONTROLLER", p.name);
-  if (restartRun) startNewRun(BASE_SEED);
+  if (restartRun) pendingRunSeed = BASE_SEED;
 }
 
 menu.onAction((event: MenuEvent) => {
@@ -1090,6 +1086,7 @@ game.onStart(() => {
   loot = [];
   floatingTexts = [];
   floatingTextCounter = 0;
+  pendingRunSeed = null;
   game.log("ROGUELIKE_WAITING_FOR_CONTROLLER");
 });
 
@@ -1130,17 +1127,18 @@ game.onTick((ctx: { tick: number }) => {
   const p = controllerId ? players.find(candidate => candidate.id === controllerId) : undefined;
   if (!p) return;
 
+  if (pendingRunSeed !== null) {
+    const seed = pendingRunSeed;
+    pendingRunSeed = null;
+    startNewRun(seed);
+    rememberDirections(p);
+    updateHud();
+    return;
+  }
+
   if (!cameraAttached.has(p.id)) {
     camera.attach(p.id, cameraOptions());
     cameraAttached.add(p.id);
-    rememberDirections(p);
-    updateHud();
-    return;
-  } else if (!isAtCameraAnchor(p)) {
-    camera.attach(p.id, cameraOptions());
-    rememberDirections(p);
-    updateHud();
-    return;
   }
 
   if (player.dead) {
