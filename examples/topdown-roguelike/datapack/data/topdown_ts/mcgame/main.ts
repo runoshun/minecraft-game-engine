@@ -1112,17 +1112,6 @@ game.onTick((ctx: { tick: number }) => {
     controllerId = null;
   }
 
-  if (!controllerId) {
-    const claimant = players.find(candidate =>
-      candidate.forward || candidate.backward || candidate.left || candidate.right ||
-      candidate.jumpPressed || candidate.sprintPressed
-    );
-    if (claimant) {
-      claimController(claimant, true, false);
-      rememberDirections(claimant);
-      return;
-    }
-  }
 
   const p = controllerId ? players.find(candidate => candidate.id === controllerId) : undefined;
   if (!p) return;

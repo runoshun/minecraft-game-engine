@@ -112,7 +112,7 @@ The semantic action model is deliberately server-observable rather than physical
 - `actors.move(id, options)`
 - `actors.remove(id)`
 
-Actors are script-owned inert presentation entities. `actors.spawn(id, options)` defaults to `minecraft:mannequin`, and `options.entityType` may select a Minecraft `Mob` such as `minecraft:zombie` or `minecraft:skeleton`. The runtime disables Mob AI, gravity, collision physics, normal damage, sounds, and daylight fire so gameplay state remains authoritative in TypeScript rather than leaking into vanilla Mob simulation. Script-owned Mob actors also bypass vanilla `Mob.checkDespawn`, including the hostile-mob removal performed in Peaceful difficulty, so actor presentation does not depend on the server difficulty. Actor movement/removal uses direct server Entity APIs and tracked Java references. `texture` remains mannequin-only; custom resource-pack mannequin textures still use the command-backed spawn/move fallback until profile construction is moved to the direct path. Non-Mob entity types are rejected.
+Actors are script-owned inert presentation entities. `actors.spawn(id, options)` defaults to `minecraft:mannequin`, and `options.entityType` may select a Minecraft `Mob` such as `minecraft:zombie` or `minecraft:skeleton`. The runtime disables Mob AI, gravity, collision physics, normal damage, sounds, and daylight fire so gameplay state remains authoritative in TypeScript rather than leaking into vanilla Mob simulation. Script-owned Mob actors also bypass vanilla `Mob.checkDespawn`, including the hostile-mob removal performed in Peaceful difficulty, so actor presentation does not depend on the server difficulty. Actor movement/removal uses tracked Java references and Minecraft's teleport synchronization path so same-dimension movement is propagated to vanilla clients. `texture` remains mannequin-only; custom resource-pack mannequin textures still use the command-backed spawn/move fallback until profile construction is moved to the direct path. Non-Mob entity types are rejected.
 
 ### render
 
@@ -122,7 +122,7 @@ Actors are script-owned inert presentation entities. `actors.spawn(id, options)`
 - `render.attach(childId, parentId, offset)`
 - `render.detach(childId)`
 
-`render` is the generic presentation projection API. It maps `character` to mannequins and Display projections. Display projections support scale, offset, roll, billboard constraints, position/rotation interpolation, and transformation interpolation. Private Display setters are invoked through runtime Mixins rather than exposing Java objects to scripts.
+`render` is the generic presentation projection API. It maps `character` to mannequins and Display projections. Display projections support scale, offset, roll, billboard constraints, position/rotation interpolation, and transformation interpolation. Position/rotation updates use Minecraft's teleport synchronization path so high-frequency script motion reaches vanilla clients while preserving Display teleport interpolation. Private Display setters are invoked through runtime Mixins rather than exposing Java objects to scripts.
 
 `render.attach` is a translation-follow relationship for labels, overhead bars, and simple child projections. Attached children are repositioned from their parent each tick, follow dimension transfers, and are recursively removed when the parent is removed. It is not a full hierarchical rotation/scale transform graph.
 

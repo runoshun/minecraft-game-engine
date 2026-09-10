@@ -21,7 +21,7 @@ Gameplay state and rules live in `datapack/data/topdown_ts/mcgame/main.ts`:
 
 ## Start
 
-Run `/function topdown_ts:start` as the player who should control the game. This starts or restarts the run and reattaches the fixed overhead camera. The first gameplay input still acts as a fallback start trigger. From console/RCON, use `execute as <player> run function topdown_ts:start`.
+Run `/function topdown_ts:start` as the player who should control the game. This starts or restarts the run and reattaches the fixed overhead camera. From console/RCON, use `execute as <player> run function topdown_ts:start`.
 
 ## Controls
 
@@ -48,8 +48,8 @@ Typical development loop:
 ```text
 /function topdown_ts:arena/build   # optional: clear legacy/generated geometry
 /reload                            # reload TypeScript game state
-# press a gameplay key to claim the controller and start the run
+# run /function topdown_ts:start to claim the controller and start the run
 play / mc-mcp E2E test
 ```
 
-The single-player controller is claimed by the first player who sends gameplay input rather than the first online player, so capture/observer clients do not steal the session. Disconnecting releases the controller.
+The single-player controller is claimed only through `/function topdown_ts:start`, so unrelated gameplay input from other enabled examples or observer clients cannot steal the session. Disconnecting releases the controller.

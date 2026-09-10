@@ -478,9 +478,11 @@ final class ScriptInstance {
 
         if (dimension.equals(currentDimension)) {
             actor.setDeltaMovement(0, 0, 0);
-            actor.setPos(x, y, z);
-            actor.setYRot(yaw);
-            actor.setXRot(pitch);
+            ServerLevel level = (ServerLevel) actor.level();
+            if (!actor.teleportTo(level, x, y, z, Set.of(), yaw, pitch, false)) {
+                actorEntities.remove(actorId);
+                throw new IllegalStateException("actor position update failed for " + actorId);
+            }
         } else {
             ServerLevel target = requireLevel(server, dimension);
             if (!actor.teleportTo(target, x, y, z, Set.of(), yaw, pitch, false)) {
@@ -910,9 +912,16 @@ final class ScriptInstance {
     private void applyRenderTransform(RenderNode node, boolean initial) {
         Entity entity = node.entity;
         entity.setDeltaMovement(0, 0, 0);
-        entity.setPos(node.x, node.y, node.z);
-        entity.setYRot(node.yaw);
-        entity.setXRot(node.pitch);
+        if (initial) {
+            entity.setPos(node.x, node.y, node.z);
+            entity.setYRot(node.yaw);
+            entity.setXRot(node.pitch);
+        } else {
+            ServerLevel level = (ServerLevel) entity.level();
+            if (!entity.teleportTo(level, node.x, node.y, node.z, Set.of(), node.yaw, node.pitch, false)) {
+                throw new IllegalStateException("render position update failed for " + node.id);
+            }
+        }
         if (entity instanceof Display display) {
             DisplayAccessor access = (DisplayAccessor) display;
             access.mcgame$setPosRotInterpolationDuration(node.positionTicks);
