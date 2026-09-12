@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -141,7 +142,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(4, program.version());
+        assertEquals(5, program.version());
         assertEquals(2, program.initialState().size());
         assertEquals(1, program.initialInputs().size());
         assertEquals(1, program.vanillaProjections().size());
@@ -193,7 +194,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(4, program.version());
+        assertEquals(5, program.version());
         assertEquals(2, program.initialInputs().size());
         assertEquals(1, program.vanillaCameras().size());
         assertEquals(1, program.vanillaParticles().size());
@@ -265,7 +266,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(4, program.version());
+        assertEquals(5, program.version());
         assertEquals(1, program.vanillaTexts().size());
         assertEquals(1, program.vanillaSounds().size());
         assertEquals(1, program.vanillaHuds().size());
@@ -283,7 +284,8 @@ class PortableCompilerTest {
 
         String load = Files.readString(output.resolve("data/portable_v4/function/portable/load.mcfunction"));
         assertTrue(load.contains("summon minecraft:text_display"));
-        assertTrue(load.contains("PORTABLE V4"));
+        assertTrue(load.contains("text:{text:\"PORTABLE V4\"}"));
+        assertFalse(load.contains("text:\"{\\\"text\\\":\\\"PORTABLE V4\\\"}\""));
         assertTrue(load.contains("summon minecraft:marker"));
 
         String tick = Files.readString(output.resolve("data/portable_v4/function/portable/tick.mcfunction"));
@@ -297,6 +299,68 @@ class PortableCompilerTest {
         String cleanup = Files.readString(output.resolve("data/portable_v4/function/portable/cleanup.mcfunction"));
         assertTrue(cleanup.contains("title @s actionbar"));
         assertTrue(cleanup.contains("kill @e[tag=mcg_t_"));
+    }
+
+    @Test
+    void versionFiveDslCompilesRepeatVisibilityAndCircleCollision() throws Exception {
+        String source = """
+            portableDsl({ fixedPoint: 1000 }, game => {
+              const x = game.state("x", 0);
+              const y = game.state("y", 0);
+              const hit = game.state("hit", 0);
+              const visible = game.state("visible", 1);
+              const ball = game.circle("ball", { x, y, radius: 0.25 });
+              const bumper = game.circle("bumper", { x: 0.4, y: 0, radius: 0.25 });
+
+              const bricks = game.repeat(3, i => {
+                const alive = game.state("brick" + i, 1);
+                game.block("brick" + i, {
+                  block: "minecraft:red_concrete",
+                  x: 10 + i,
+                  y: 64,
+                  z: 0,
+                  scale: { x: 0.9, y: 0.4, z: 0.2 },
+                  when: alive.eq(1)
+                });
+                return alive;
+              });
+
+              game.text("label", {
+                text: "VISIBLE",
+                x: 10, y: 66, z: 0,
+                when: visible.eq(1)
+              });
+
+              game.tick(() => {
+                hit.set(0);
+                game.whenColliding(ball, bumper, () => hit.set(1));
+                game.when(hit.eq(1), () => bricks[0].set(0));
+              });
+            });
+            """;
+
+        PortableProgram program = extract(source);
+        assertEquals(5, program.version());
+        assertEquals(3, program.vanillaProjections().size());
+        assertEquals(1, program.vanillaTexts().size());
+        assertTrue(program.tickActions().stream().anyMatch(PortableProgram.CircleIfAction.class::isInstance));
+        assertTrue(program.vanillaProjections().stream().allMatch(p -> p.condition() != null));
+        assertTrue(program.vanillaTexts().getFirst().condition() != null);
+
+        PortableStateMachine machine = new PortableStateMachine(program);
+        machine.tick();
+        assertEquals(1.0, machine.get("hit"), 0.0001);
+        assertEquals(0.0, machine.get("brick0"), 0.0001);
+
+        Path output = Files.createTempDirectory("mcgame-portable-v5-test");
+        PortableDatapackCompiler.Result result = new PortableDatapackCompiler().compile(program, "portable_v5", output);
+        assertEquals(3, result.projectionCount());
+        String load = Files.readString(output.resolve("data/portable_v5/function/portable/load.mcfunction"));
+        String tick = Files.readString(output.resolve("data/portable_v5/function/portable/tick.mcfunction"));
+        assertTrue(load.contains("transformation.scale set value"));
+        assertTrue(tick.contains("transformation.scale set value [0f,0f,0f]"));
+        assertTrue(tick.contains(" *= #q"));
+        assertTrue(tick.contains(" <= #c"));
     }
 
     @Test

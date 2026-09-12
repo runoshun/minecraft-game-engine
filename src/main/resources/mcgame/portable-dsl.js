@@ -3,6 +3,7 @@
   const CONDITION = Symbol("mcgame.portableDsl.condition");
   const COORDINATE = Symbol("mcgame.portableDsl.coordinate");
   const BOX = Symbol("mcgame.portableDsl.box");
+  const CIRCLE = Symbol("mcgame.portableDsl.circle");
 
   function fail(message) {
     throw new Error("portableDsl: " + message);
@@ -157,6 +158,14 @@
       tickActions = captureActions(callback, "tick");
     }
 
+    function repeat(count, callback) {
+      const total = finiteInteger(count, "repeat count", 0, 256);
+      if (typeof callback !== "function") fail("repeat callback is required");
+      const out = [];
+      for (let i = 0; i < total; i++) out.push(callback(i));
+      return Object.freeze(out);
+    }
+
     function at(state, base = 0) {
       if (!state || state[REF] !== "state") fail("at(...) requires a state reference");
       return Object.freeze({
@@ -196,18 +205,49 @@
       });
     }
 
+    function circle(id, spec) {
+      if (typeof id !== "string" || id.length === 0) fail("circle id must be a non-empty string");
+      if (spec == null || typeof spec !== "object") fail("circle " + id + " spec must be an object");
+      const radius = finiteNumber(spec.radius, "circle " + id + " radius");
+      if (radius <= 0 || radius > 1000) fail("circle " + id + " radius must be > 0 and <= 1000");
+      return Object.freeze({
+        [CIRCLE]: true,
+        id,
+        x: normalizeBoxValue(spec.x, "circle " + id + " x"),
+        y: normalizeBoxValue(spec.y, "circle " + id + " y"),
+        radius,
+      });
+    }
+
     function serializeBox(value, label) {
       if (!value || value[BOX] !== true) fail(label + " must be created by box(...)");
       return { x: value.x, y: value.y, width: value.width, height: value.height };
     }
 
+    function serializeCircle(value, label) {
+      if (!value || value[CIRCLE] !== true) fail(label + " must be created by circle(...)");
+      return { x: value.x, y: value.y, radius: value.radius };
+    }
+
     function whenColliding(a, b, thenCallback, elseCallback) {
-      const action = {
-        op: "if_aabb",
-        a: serializeBox(a, "whenColliding first box"),
-        b: serializeBox(b, "whenColliding second box"),
-        then: captureActions(thenCallback, "whenColliding then"),
-      };
+      let action;
+      if (a && b && a[BOX] === true && b[BOX] === true) {
+        action = {
+          op: "if_aabb",
+          a: serializeBox(a, "whenColliding first box"),
+          b: serializeBox(b, "whenColliding second box"),
+          then: captureActions(thenCallback, "whenColliding then"),
+        };
+      } else if (a && b && a[CIRCLE] === true && b[CIRCLE] === true) {
+        action = {
+          op: "if_circle",
+          a: serializeCircle(a, "whenColliding first circle"),
+          b: serializeCircle(b, "whenColliding second circle"),
+          then: captureActions(thenCallback, "whenColliding then"),
+        };
+      } else {
+        fail("whenColliding currently requires box/box or circle/circle shapes");
+      }
       if (elseCallback !== undefined) action.else = captureActions(elseCallback, "whenColliding else");
       emit(action);
     }
@@ -226,6 +266,7 @@
       };
       if (spec.scale !== undefined) projection.scale = spec.scale;
       if (spec.translation !== undefined) projection.translation = spec.translation;
+      if (spec.when !== undefined) projection.when = serializedCondition(spec.when, "block " + id + " when");
       projections.push(projection);
     }
 
@@ -250,6 +291,7 @@
       if (projection.scale.x <= 0 || projection.scale.y <= 0 || projection.scale.z <= 0) {
         fail("text " + id + " scale components must be > 0");
       }
+      if (spec.when !== undefined) projection.when = serializedCondition(spec.when, "text " + id + " when");
       texts.push(projection);
     }
 
@@ -335,10 +377,12 @@
       state: makeState,
       input(name, initial = 0, binding) { return makeInput(name, initial, binding); },
       tick,
+      repeat,
       when,
       whenColliding,
       at,
       box,
+      circle,
       block,
       text: textProjection,
       camera: cameraProjection,
@@ -352,7 +396,7 @@
     if (Object.keys(stateValues).length === 0) fail("at least one state(...) is required");
 
     const spec = {
-      version: 4,
+      version: 5,
       fixedPoint,
       state: stateValues,
       tick: tickActions,
@@ -403,25 +447,38 @@
 
     if (projections.length > 0) {
       const renderId = projection => "pdsl_" + projection.id;
-      game.onStart(() => {
-        for (const projection of projections) {
-          const renderOptions = {
-            visual: { kind: "block", block: projection.block },
-            dimension: projection.dimension,
-            x: runtimeCoordinate(projection.x),
-            y: runtimeCoordinate(projection.y),
-            z: runtimeCoordinate(projection.z),
-          };
-          if (projection.scale !== undefined) renderOptions.scale = projection.scale;
-          if (projection.translation !== undefined) renderOptions.offset = projection.translation;
-          if (typeof projection.x !== "number" || typeof projection.y !== "number" || typeof projection.z !== "number") {
-            renderOptions.smoothing = { positionTicks: 1 };
-          }
-          render.spawn(renderId(projection), renderOptions);
+      const visible = new Set();
+      const shouldShow = projection => projection.when === undefined || runtimeTest(projection.when);
+      const spawnProjection = projection => {
+        const renderOptions = {
+          visual: { kind: "block", block: projection.block },
+          dimension: projection.dimension,
+          x: runtimeCoordinate(projection.x),
+          y: runtimeCoordinate(projection.y),
+          z: runtimeCoordinate(projection.z),
+        };
+        if (projection.scale !== undefined) renderOptions.scale = projection.scale;
+        if (projection.translation !== undefined) renderOptions.offset = projection.translation;
+        if (typeof projection.x !== "number" || typeof projection.y !== "number" || typeof projection.z !== "number") {
+          renderOptions.smoothing = { positionTicks: 1 };
         }
+        render.spawn(renderId(projection), renderOptions);
+        visible.add(projection.id);
+      };
+      game.onStart(() => {
+        for (const projection of projections) if (shouldShow(projection)) spawnProjection(projection);
       });
       game.onTick(() => {
         for (const projection of projections) {
+          const show = shouldShow(projection);
+          const isVisible = visible.has(projection.id);
+          if (show && !isVisible) spawnProjection(projection);
+          if (!show && isVisible) {
+            render.remove(renderId(projection));
+            visible.delete(projection.id);
+            continue;
+          }
+          if (!show) continue;
           if (typeof projection.x === "number" && typeof projection.y === "number" && typeof projection.z === "number") continue;
           render.update(renderId(projection), {
             x: runtimeCoordinate(projection.x),
@@ -434,21 +491,34 @@
 
     if (texts.length > 0) {
       const renderTextId = text => "pdsl_text_" + text.id;
+      const visible = new Set();
+      const shouldShow = text => text.when === undefined || runtimeTest(text.when);
+      const spawnText = text => {
+        render.spawn(renderTextId(text), {
+          visual: { kind: "text", text: text.text },
+          dimension: text.dimension,
+          x: runtimeCoordinate(text.x),
+          y: runtimeCoordinate(text.y),
+          z: runtimeCoordinate(text.z),
+          scale: text.scale,
+          billboard: text.billboard,
+        });
+        visible.add(text.id);
+      };
       game.onStart(() => {
-        for (const text of texts) {
-          render.spawn(renderTextId(text), {
-            visual: { kind: "text", text: text.text },
-            dimension: text.dimension,
-            x: runtimeCoordinate(text.x),
-            y: runtimeCoordinate(text.y),
-            z: runtimeCoordinate(text.z),
-            scale: text.scale,
-            billboard: text.billboard,
-          });
-        }
+        for (const text of texts) if (shouldShow(text)) spawnText(text);
       });
       game.onTick(() => {
         for (const text of texts) {
+          const show = shouldShow(text);
+          const isVisible = visible.has(text.id);
+          if (show && !isVisible) spawnText(text);
+          if (!show && isVisible) {
+            render.remove(renderTextId(text));
+            visible.delete(text.id);
+            continue;
+          }
+          if (!show) continue;
           if (typeof text.x === "number" && typeof text.y === "number" && typeof text.z === "number") continue;
           render.update(renderTextId(text), {
             x: runtimeCoordinate(text.x),

@@ -115,16 +115,18 @@ type PortableComparison = {
   right: PortableValue;
 };
 type PortableAabb = { x: PortableValue; y: PortableValue; width: number; height: number };
+type PortableCircle = { x: PortableValue; y: PortableValue; radius: number };
 type PortableAction =
   | { op: "set" | "add" | "sub"; target: string; value: PortableValue }
   | { op: "negate"; target: string }
   | { op: "if"; condition: PortableComparison; then: PortableAction[]; else?: PortableAction[] }
-  | { op: "if_aabb"; a: PortableAabb; b: PortableAabb; then: PortableAction[]; else?: PortableAction[] };
+  | { op: "if_aabb"; a: PortableAabb; b: PortableAabb; then: PortableAction[]; else?: PortableAction[] }
+  | { op: "if_circle"; a: PortableCircle; b: PortableCircle; then: PortableAction[]; else?: PortableAction[] };
 type PortableProgramSpecV1 = {
   version?: 1;
   fixedPoint?: number;
   state: Record<string, number>;
-  tick: Exclude<PortableAction, { op: "if_aabb" }>[];
+  tick: Exclude<PortableAction, { op: "if_aabb" } | { op: "if_circle" }>[];
 };
 type PortableVanillaInputBindingV2 = { source: "first_player_hotbar_slot" };
 type PortableVanillaInputSource =
@@ -147,6 +149,7 @@ type PortableVanillaBlockProjection = {
   z: PortableVanillaCoordinate;
   scale?: number | { x: number; y: number; z: number };
   translation?: { x: number; y: number; z: number };
+  when?: PortableComparison;
 };
 type PortableVanillaTextProjection = {
   id: string;
@@ -157,6 +160,7 @@ type PortableVanillaTextProjection = {
   z: PortableVanillaCoordinate;
   scale?: number | { x: number; y: number; z: number };
   billboard?: "fixed" | "vertical" | "horizontal" | "center";
+  when?: PortableComparison;
 };
 type PortableVanillaCamera = {
   id: string;
@@ -200,9 +204,9 @@ type PortableProgramSpecV2 = {
   inputs?: Record<string, number>;
   vanilla?: {
     inputs?: Record<string, PortableVanillaInputBindingV2>;
-    projections?: PortableVanillaBlockProjection[];
+    projections?: Array<Omit<PortableVanillaBlockProjection, "when">>;
   };
-  tick: Exclude<PortableAction, { op: "if_aabb" }>[];
+  tick: Exclude<PortableAction, { op: "if_aabb" } | { op: "if_circle" }>[];
 };
 type PortableProgramSpecV3 = {
   version: 3;
@@ -211,14 +215,30 @@ type PortableProgramSpecV3 = {
   inputs?: Record<string, number>;
   vanilla?: {
     inputs?: Record<string, PortableVanillaInputBinding>;
-    projections?: PortableVanillaBlockProjection[];
+    projections?: Array<Omit<PortableVanillaBlockProjection, "when">>;
     cameras?: PortableVanillaCamera[];
     particles?: PortableVanillaParticleEmitter[];
   };
-  tick: Exclude<PortableAction, { op: "if_aabb" }>[];
+  tick: Exclude<PortableAction, { op: "if_aabb" } | { op: "if_circle" }>[];
 };
 type PortableProgramSpecV4 = {
   version: 4;
+  fixedPoint?: number;
+  state: Record<string, number>;
+  inputs?: Record<string, number>;
+  vanilla?: {
+    inputs?: Record<string, PortableVanillaInputBinding>;
+    projections?: Array<Omit<PortableVanillaBlockProjection, "when">>;
+    texts?: Array<Omit<PortableVanillaTextProjection, "when">>;
+    cameras?: PortableVanillaCamera[];
+    particles?: PortableVanillaParticleEmitter[];
+    sounds?: PortableVanillaSoundEmitter[];
+    huds?: PortableVanillaHud[];
+  };
+  tick: Exclude<PortableAction, { op: "if_circle" }>[];
+};
+type PortableProgramSpecV5 = {
+  version: 5;
   fixedPoint?: number;
   state: Record<string, number>;
   inputs?: Record<string, number>;
@@ -233,7 +253,7 @@ type PortableProgramSpecV4 = {
   };
   tick: PortableAction[];
 };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4;
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -271,6 +291,7 @@ type PortableDslBlockSpec = {
   z: PortableDslCoordinate;
   scale?: number | { x: number; y: number; z: number };
   translation?: { x: number; y: number; z: number };
+  when?: PortableDslCondition;
 };
 type PortableDslTextSpec = {
   dimension?: string;
@@ -280,6 +301,7 @@ type PortableDslTextSpec = {
   z: PortableDslCoordinate;
   scale?: number | { x: number; y: number; z: number };
   billboard?: "fixed" | "vertical" | "horizontal" | "center";
+  when?: PortableDslCondition;
 };
 type PortableDslCameraSpec = {
   dimension?: string;
@@ -313,14 +335,20 @@ type PortableDslSoundSpec = {
 };
 type PortableDslBox = { readonly __portableDslBox?: never };
 type PortableDslBoxSpec = { x: PortableDslValue; y: PortableDslValue; width: number; height: number };
+type PortableDslCircle = { readonly __portableDslCircle?: never };
+type PortableDslCircleSpec = { x: PortableDslValue; y: PortableDslValue; radius: number };
+type PortableDslCollider = PortableDslBox | PortableDslCircle;
 type PortableDslHudSpec = { text: string | Array<string | PortableDslState | PortableDslInput> };
 type PortableDsl = {
   state(name: string, initial: number): PortableDslState;
   input(name: string, initial?: number, binding?: PortableDslInputBinding): PortableDslInput;
   tick(callback: () => void): void;
+  repeat<T>(count: number, callback: (index: number) => T): readonly T[];
   when(condition: PortableDslCondition, thenCallback: () => void, elseCallback?: () => void): void;
   box(id: string, spec: PortableDslBoxSpec): PortableDslBox;
+  circle(id: string, spec: PortableDslCircleSpec): PortableDslCircle;
   whenColliding(a: PortableDslBox, b: PortableDslBox, thenCallback: () => void, elseCallback?: () => void): void;
+  whenColliding(a: PortableDslCircle, b: PortableDslCircle, thenCallback: () => void, elseCallback?: () => void): void;
   at(state: PortableDslState, base?: number): PortableDslCoordinate;
   block(id: string, spec: PortableDslBlockSpec): void;
   text(id: string, spec: PortableDslTextSpec): void;

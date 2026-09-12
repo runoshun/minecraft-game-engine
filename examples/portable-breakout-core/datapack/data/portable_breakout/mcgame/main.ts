@@ -3,6 +3,16 @@ const BOARD_Y = 112;
 const BOARD_Z = 0.6;
 const PADDLE_Y = -5.0;
 const SERVE_Y = -4.35;
+const BRICK_ROWS = 5;
+const BRICK_COLS = 8;
+const BRICK_COUNT = BRICK_ROWS * BRICK_COLS;
+const BRICK_COLORS = [
+  "minecraft:red_concrete",
+  "minecraft:orange_concrete",
+  "minecraft:yellow_concrete",
+  "minecraft:lime_concrete",
+  "minecraft:light_blue_concrete",
+];
 
 portableDsl({ fixedPoint: 1000 }, game => {
   const left = game.input("left", 0, { source: "first_player_left" });
@@ -19,6 +29,9 @@ portableDsl({ fixedPoint: 1000 }, game => {
   const previousJump = game.state("previousJump", 0);
   const hitFx = game.state("hitFx", 0);
   const score = game.state("score", 0);
+  const lives = game.state("lives", 3);
+  const bricksLeft = game.state("bricksLeft", BRICK_COUNT);
+  const brickHit = game.state("brickHit", 0);
 
   const paddleHitbox = game.box("paddle", {
     x: paddleX,
@@ -31,6 +44,32 @@ portableDsl({ fixedPoint: 1000 }, game => {
     y: ballY,
     width: 0.45,
     height: 0.45,
+  });
+
+  const bricks = game.repeat(BRICK_COUNT, index => {
+    const row = Math.floor(index / BRICK_COLS);
+    const col = index % BRICK_COLS;
+    const x = -5.25 + col * 1.5;
+    const y = 5.5 - row * 0.8;
+    const alive = game.state("brick" + index, 1);
+    const collider = game.box("brick_" + index, {
+      x,
+      y,
+      width: 1.35,
+      height: 0.55,
+    });
+
+    game.block("brick_" + String(index).padStart(2, "0"), {
+      block: BRICK_COLORS[row],
+      x: BOARD_X + x,
+      y: BOARD_Y + y,
+      z: BOARD_Z - 0.05,
+      scale: { x: 1.35, y: 0.55, z: 0.3 },
+      translation: { x: -0.675, y: -0.275, z: -0.15 },
+      when: alive.eq(1),
+    });
+
+    return { alive, collider, points: BRICK_ROWS - row };
   });
 
   game.camera("main", {
@@ -68,14 +107,14 @@ portableDsl({ fixedPoint: 1000 }, game => {
   game.text("title", {
     text: "PORTABLE BREAKOUT",
     x: BOARD_X,
-    y: BOARD_Y + 6.5,
+    y: BOARD_Y + 7.1,
     z: BOARD_Z - 0.25,
     scale: 1.15,
     billboard: "center",
   });
 
   game.hud("main", {
-    text: ["SCORE ", score, "   A/D MOVE   SPACE LAUNCH"],
+    text: ["SCORE ", score, "   LIVES ", lives, "   BRICKS ", bricksLeft, "   A/D MOVE  SPACE LAUNCH"],
   });
 
   game.particle("trail", {
@@ -112,6 +151,7 @@ portableDsl({ fixedPoint: 1000 }, game => {
 
   game.tick(() => {
     hitFx.set(0);
+    brickHit.set(0);
     paddleDelta.set(0);
     game.when(left.eq(1), () => paddleDelta.sub(0.32));
     game.when(right.eq(1), () => paddleDelta.add(0.32));
@@ -150,14 +190,42 @@ portableDsl({ fixedPoint: 1000 }, game => {
         game.whenColliding(ballHitbox, paddleHitbox, () => {
           ballY.set(PADDLE_Y + 0.425);
           ballVy.negate();
-          score.add(1);
           hitFx.set(1);
         });
       });
 
-      game.when(ballY.lte(-7.0), () => {
+      for (const brick of bricks) {
+        game.when(brick.alive.eq(1), () => {
+          game.when(brickHit.eq(0), () => {
+            game.whenColliding(ballHitbox, brick.collider, () => {
+              brick.alive.set(0);
+              brickHit.set(1);
+              bricksLeft.sub(1);
+              score.add(brick.points);
+              ballVy.negate();
+              hitFx.set(1);
+            });
+          });
+        });
+      }
+
+      game.when(bricksLeft.eq(0), () => {
+        for (const brick of bricks) brick.alive.set(1);
+        bricksLeft.set(BRICK_COUNT);
+        ballY.set(SERVE_Y);
+        ballX.set(paddleX);
         playing.set(0);
-        score.set(0);
+      });
+
+      game.when(ballY.lte(-7.0), () => {
+        lives.sub(1);
+        playing.set(0);
+        game.when(lives.lte(0), () => {
+          lives.set(3);
+          score.set(0);
+          bricksLeft.set(BRICK_COUNT);
+          for (const brick of bricks) brick.alive.set(1);
+        });
       });
     });
 

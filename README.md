@@ -1,39 +1,39 @@
 # MC Game Runtime
 
-A server-side Fabric mod for **rapid game prototyping inside Minecraft**. Minecraft provides the view, input, world, entities, sound, and particles; game logic is authored as TypeScript inside a datapack and hot-reloaded with `/reload`.
+A TypeScript DSL and compiler for **building game prototypes as vanilla Minecraft datapacks**. Minecraft provides the view, input, world, entities, sound, and particles; portable game logic is authored in TypeScript, lowered to a deterministic IR, and compiled to scoreboard/mcfunction/Display resources. A Fabric runtime remains as an optional compatibility and rapid-iteration backend while the project works toward removing the server mod entirely.
 
 ## Status
 
 Early PoC targeting Minecraft Java Edition 26.1.
 
-Verified in a standalone Fabric 26.1 server:
+Verified against Minecraft 26.1:
 
-- embedded GraalJS loads from the mod JAR
-- embedded TypeScript 5.9.2 transpiles datapack `main.ts`
-- `game.onStart` executes
-- runtime API calls can spawn/move/remove mannequins and Display projections, modify the world, open menus, and project a per-player sidebar
-- default actor/render transforms/removal and `world.setBlock` use direct server APIs instead of command dispatch where applicable
-- editing `main.ts` followed by `/reload` loads the new script
+- `portableDsl(...)` TypeScript lowers to versioned Portable IR at build time
+- generated datapacks run on a mod-free vanilla server
+- held input, spectator camera, block/text displays, particles, sound, actionbar HUD, fixed-point state, AABB collision, conditional projection visibility, and circle/circle collision are supported by the vanilla backend
+- compile-time `repeat(...)` expands bounded static object fields such as brick grids
+- the optional Fabric backend still executes the same portable declarations for development and compatibility
 
 ## Architecture
 
 ```text
-Vanilla Minecraft client
+TypeScript portableDsl source
         |
-        | normal player input
         v
-Fabric server + MC Game Runtime
-  |  input snapshots
-  |  portable fixed-point rules + camera / actor / render / ui / menu / world / effects API
-  |
-  +--> sandboxed GraalJS
-          ^
-          | transpiled by bundled TypeScript 5.9.2
-          |
-world/datapacks/<game>/data/<namespace>/mcgame/main.ts
+build-time TS transpile + DSL extraction
+        |
+        v
+Portable IR
+   |                 \
+   | primary          \ optional / transitional
+   v                   v
+Vanilla datapack     Fabric runtime
+   |
+   v
+Minecraft 26.1 vanilla server + client
 ```
 
-No client mod, Node.js process, or external game server is required for the embedded-runtime path.
+The deployment target for supported portable games needs no Fabric, GraalJS, TypeScript, Node.js, or MC Game Runtime mod. Those are build/development concerns only. ADR 0013 defines the vanilla-first direction and Fabric retirement gates.
 
 See [`docs/architecture.md`](docs/architecture.md) for the design contract.
 
@@ -50,25 +50,24 @@ my_game/
 
 The PoC currently discovers `*/mcgame/main.ts` resources. It intentionally supports a single TypeScript file per namespace; module/import support is future work.
 
-## Minimal example
+## Minimal portable example
 
 ```ts
-const state = { x: 0.5, y: 101, z: 0.5 };
+portableDsl({ fixedPoint: 1000 }, game => {
+  const x = game.state("x", 0);
+  const vx = game.state("vx", 0.2);
 
-game.onStart(() => {
-  actors.spawn("hero", state);
-});
+  game.block("ball", {
+    block: "minecraft:sea_lantern",
+    x: game.at(x, 10), y: 64, z: 0,
+    scale: 0.4,
+  });
 
-game.onTick(() => {
-  const p = input.players()[0];
-  if (!p) return;
-
-  if (p.forward) state.z += 0.12;
-  if (p.backward) state.z -= 0.12;
-  if (p.left) state.x += 0.12;
-  if (p.right) state.x -= 0.12;
-
-  actors.move("hero", state);
+  game.tick(() => {
+    x.add(vx);
+    game.when(x.gte(3), () => vx.negate());
+    game.when(x.lte(-3), () => vx.negate());
+  });
 });
 ```
 
@@ -76,7 +75,7 @@ A minimal example lives under [`examples/demo-datapack`](examples/demo-datapack)
 
 ## Current API
 
-- `portableDsl(...)` (experimental TS-style frontend; portable v4 includes held input, block/text projections, one spectator camera, particles, sounds, actionbar HUD, and 2D AABB collision)
+- `portableDsl(...)` (primary TS authoring frontend; portable v5 adds compile-time static collections, conditional block/text visibility, and circle/circle collision to the v4 arcade feature set)
 - `portable.define(spec)` / `portable.get(state)` / `portable.raw(state)` / input register access (low-level portable API)
 - `game.onStart(callback)` / `game.onBeforeTick(callback)` / `game.onTick(callback)`
 - `game.log(...values)`
@@ -106,7 +105,7 @@ Requires Java 25.
 ./gradlew build
 ```
 
-The experimental portable subset can also be compiled to a standalone vanilla datapack. A DSL-only source using supported portable primitives needs no Fabric mod on the target server. The current v4 backend supports normal held player input (W/A/S/D, jump, sneak, sprint), block/text-display projections, one spectator camera, bounded particle/sound emitters, one actionbar HUD, and deterministic 2D AABB collision in addition to fixed-point game logic:
+The primary deployment path compiles supported portable DSL programs to standalone vanilla datapacks. The current v5 backend supports normal held player input (W/A/S/D, jump, sneak, sprint), block/text-display projections with optional state-controlled visibility, one spectator camera, bounded particle/sound emitters, one actionbar HUD, deterministic 2D AABB and circle/circle collision, and compile-time static collection expansion in addition to fixed-point game logic:
 
 ```bash
 ./gradlew compilePortable \
@@ -115,9 +114,9 @@ The experimental portable subset can also be compiled to a standalone vanilla da
   -PportableOutput=build/portable/portable_breakout
 ```
 
-The reference Breakout uses A/D to move, Space to launch, AABB paddle collision, a generated fixed camera, a world-space title, an actionbar score HUD, end-rod/cloud particles, and bounce sound. On a vanilla target the compiler emits player-input predicates, scoreboard/mcfunction logic, owned display/camera/marker entities, `particle`/`playsound`, and actionbar commands; the TypeScript source itself is not shipped or executed.
+The reference Breakout uses A/D to move, Space to launch, a compile-time-expanded brick field with per-brick alive state/AABB/conditional Display visibility, lives and scoring, a generated fixed camera, world-space title, actionbar HUD, particles, and sound. On a vanilla target the compiler emits player-input predicates, scoreboard/mcfunction logic, owned display/camera/marker entities, `particle`/`playsound`, and actionbar commands; the TypeScript source itself is not shipped or executed.
 
-The server mod is emitted locally to `build/libs/mc-game-runtime-<version>.jar`. Tagged builds publish the runtime JAR and its SHA-256 checksum as GitHub Release assets; built JARs are not kept in the source tree. Fabric API is also required on the server.
+The Fabric server mod is still emitted locally to `build/libs/mc-game-runtime-<version>.jar` as an optional development/compatibility backend. ADR 0013 defines the conditions for retiring it.
 
 For a tagged release such as `v0.3.0`, the stable download shape is `https://github.com/runoshun/minecraft-game-engine/releases/download/v0.3.0/mc-game-runtime-0.3.0.jar`.
 

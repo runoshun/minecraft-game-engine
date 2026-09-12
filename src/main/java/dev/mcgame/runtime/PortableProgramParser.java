@@ -124,7 +124,12 @@ final class PortableProgramParser {
                     PortableProgram.VanillaCoordinate z = parseVanillaCoordinate(requiredMember(projection, "z", path), initialState.keySet(), fixedPoint, path + ".z");
                     PortableProgram.VanillaVec3 scale = memberVanillaVec3(projection, "scale", new PortableProgram.VanillaVec3(1, 1, 1), path, true);
                     PortableProgram.VanillaVec3 translation = memberVanillaVec3(projection, "translation", new PortableProgram.VanillaVec3(0, 0, 0), path, false);
-                    vanillaProjections.add(new PortableProgram.VanillaBlockProjection(id, dimension, block, x, y, z, scale, translation));
+                    PortableProgram.Condition condition = null;
+                    if (projection.hasMember("when")) {
+                        if (version < PortableProgram.VERSION_5) throw new IllegalArgumentException(path + ".when requires portable version 5");
+                        condition = parseCondition(requiredObject(projection, "when", path), initialState.keySet(), initialInputs.keySet(), fixedPoint, path + ".when");
+                    }
+                    vanillaProjections.add(new PortableProgram.VanillaBlockProjection(id, dimension, block, x, y, z, scale, translation, condition));
                 }
             }
 
@@ -150,7 +155,12 @@ final class PortableProgramParser {
                     if (!Set.of("fixed", "vertical", "horizontal", "center").contains(billboard)) {
                         throw new IllegalArgumentException(path + ".billboard must be fixed, vertical, horizontal, or center");
                     }
-                    vanillaTexts.add(new PortableProgram.VanillaTextProjection(id, dimension, content, x, y, z, scale, billboard));
+                    PortableProgram.Condition condition = null;
+                    if (text.hasMember("when")) {
+                        if (version < PortableProgram.VERSION_5) throw new IllegalArgumentException(path + ".when requires portable version 5");
+                        condition = parseCondition(requiredObject(text, "when", path), initialState.keySet(), initialInputs.keySet(), fixedPoint, path + ".when");
+                    }
+                    vanillaTexts.add(new PortableProgram.VanillaTextProjection(id, dimension, content, x, y, z, scale, billboard, condition));
                 }
             }
 
@@ -352,6 +362,17 @@ final class PortableProgramParser {
                     }
                     yield new PortableProgram.AabbIfAction(a, b, thenActions, elseActions);
                 }
+                case "if_circle" -> {
+                    if (version < PortableProgram.VERSION_5) throw new IllegalArgumentException(actionPath + ".op requires portable version 5");
+                    PortableProgram.Circle2d a = parseCircle(requiredObject(action, "a", actionPath), states, inputs, fixedPoint, actionPath + ".a");
+                    PortableProgram.Circle2d b = parseCircle(requiredObject(action, "b", actionPath), states, inputs, fixedPoint, actionPath + ".b");
+                    List<PortableProgram.Action> thenActions = parseActions(requiredArray(action, "then", actionPath), states, inputs, fixedPoint, version, depth + 1, counter, actionPath + ".then");
+                    List<PortableProgram.Action> elseActions = List.of();
+                    if (action.hasMember("else")) {
+                        elseActions = parseActions(requiredArray(action, "else", actionPath), states, inputs, fixedPoint, version, depth + 1, counter, actionPath + ".else");
+                    }
+                    yield new PortableProgram.CircleIfAction(a, b, thenActions, elseActions);
+                }
                 default -> throw new IllegalArgumentException(actionPath + ".op unsupported portable operation: " + op);
             });
         }
@@ -369,6 +390,16 @@ final class PortableProgramParser {
         int halfHeight = scale(height / 2.0, fixedPoint, path + ".height");
         if (halfWidth < 1 || halfHeight < 1) throw new IllegalArgumentException(path + " dimensions are below fixed-point resolution");
         return new PortableProgram.Aabb2d(x, y, halfWidth, halfHeight);
+    }
+
+    private static PortableProgram.Circle2d parseCircle(Value value, Set<String> states, Set<String> inputs, int fixedPoint, String path) {
+        PortableProgram.ValueRef x = parseValue(requiredMember(value, "x", path), states, inputs, fixedPoint, path + ".x");
+        PortableProgram.ValueRef y = parseValue(requiredMember(value, "y", path), states, inputs, fixedPoint, path + ".y");
+        double radius = requiredNumber(value, "radius", path);
+        if (radius <= 0 || radius > 1000) throw new IllegalArgumentException(path + ".radius must be > 0 and <= 1000");
+        int raw = scale(radius, fixedPoint, path + ".radius");
+        if (raw < 1) throw new IllegalArgumentException(path + ".radius is below fixed-point resolution");
+        return new PortableProgram.Circle2d(x, y, raw);
     }
 
     private static PortableProgram.Condition parseCondition(Value value, Set<String> states, Set<String> inputs, int fixedPoint, String path) {

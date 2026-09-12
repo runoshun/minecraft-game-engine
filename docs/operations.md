@@ -2,11 +2,13 @@
 
 This document records operational knowledge that should survive individual development sessions. It complements `docs/architecture.md`; gameplay/runtime design belongs there, while release and deployment procedures belong here.
 
-## Canonical binary distribution
+## Canonical artifacts
 
 The source repository is public at `runoshun/minecraft-game-engine`.
 
-Built runtime JARs are **not** committed to the source tree. Tagged builds publish the runtime JAR and its SHA-256 checksum as GitHub Release assets.
+For a portable game, the canonical deployment artifact is the directory emitted by `compilePortable`; copy it to the target world's `datapacks/` directory. The target may be a vanilla Minecraft 26.1 server. Generated game packs belong under `build/` and are not committed.
+
+The Fabric runtime is now an optional compatibility/development backend. Built runtime JARs are **not** committed to the source tree. When a Fabric-runtime release is needed, tagged builds publish the runtime JAR and its SHA-256 checksum as GitHub Release assets.
 
 For version `X.Y.Z`, the canonical download URL is:
 
@@ -16,7 +18,7 @@ https://github.com/runoshun/minecraft-game-engine/releases/download/vX.Y.Z/mc-ga
 
 The release asset, rather than a file under `dist/`, is the deployable artifact of record.
 
-Before publishing a runtime release:
+Before publishing an optional Fabric-runtime release:
 
 1. update the project/runtime version consistently;
 2. run a clean Gradle build;
@@ -28,7 +30,7 @@ Before publishing a runtime release:
 
 Do not place GitHub tokens, deploy keys, RCON credentials, `.env` files, or server-local secrets in repository resources or release artifacts. The GitHub Actions workflow's `${{ github.token }}` is an execution-time reference, not a committed credential value.
 
-## Deploying the runtime with mc-mcp
+## Deploying the optional Fabric runtime with mc-mcp
 
 `mc-mcp` is the deployment/test control plane for the development server. The runtime is a custom GitHub-hosted JAR rather than a Modrinth project.
 
@@ -73,11 +75,11 @@ Known unrelated reload noise from the `athletic` datapack (`body08`, `body09`, `
 
 Local Fabric dev-server smoke tests are useful but are not sufficient for entity lifecycle or cold-start behavior. `main` has exposed behavior hidden by a warm/local spawn-chunk test, including GraalJS cold initialization cost and Minecraft entity/chunk lifecycle differences when the server is empty or paused.
 
-Therefore, changes involving script startup, watchdogs, render entities, chunk behavior, UI packets, menus, or player interaction must get a `main`-server validation pass before the release is considered finished.
+Therefore, changes involving the optional Fabric backend's script startup, watchdogs, render entities, chunk behavior, UI packets, menus, or player interaction must get a `main`-server validation pass before a Fabric release is considered finished. Portable compiler/backend changes must also get a mod-free `second` validation pass; vanilla behavior is now the primary acceptance path.
 
 ## Compiling the portable subset to a vanilla datapack
 
-The experimental ADR 0009/0010/0011/0012 path compiles one portable program from a TypeScript `main.ts` into a dedicated vanilla datapack directory. The source may use low-level `portable.define(...)` or the bundled `portableDsl(...)` frontend. Use Java 25 and provide all three Gradle properties explicitly:
+The ADR 0009/0010/0011/0012/0013 path compiles one portable program from a TypeScript `main.ts` into a dedicated vanilla datapack directory. The source may use low-level `portable.define(...)` or the bundled `portableDsl(...)` frontend. Use Java 25 and provide all three Gradle properties explicitly:
 
 ```bash
 ./gradlew compilePortable \
@@ -86,8 +88,8 @@ The experimental ADR 0009/0010/0011/0012 path compiles one portable program from
   -PportableOutput=build/portable/portable_breakout
 ```
 
-For a DSL-only source that uses only implemented portable primitives, the generated output is the deployment artifact: copy that directory into a Minecraft 26.1 world's `datapacks/` directory. Fabric, Fabric API, GraalJS, TypeScript, and MC Game Runtime are not required on that target server. They are build/runtime-development dependencies only. Portable v4 currently emits held player-input predicates, block/text-display projections, one spectator camera, particle/sound emitters, one actionbar HUD, and 2D AABB collision rules.
+For a DSL-only source that uses only implemented portable primitives, the generated output is the deployment artifact: copy that directory into a Minecraft 26.1 world's `datapacks/` directory. Fabric, Fabric API, GraalJS, TypeScript, and MC Game Runtime are not required on that target server. They are build/runtime-development dependencies only. Portable v5 currently emits held player-input predicates, conditionally visible block/text-display projections, one spectator camera, particle/sound emitters, one actionbar HUD, 2D AABB/circle collision rules, and declarations expanded by compile-time `repeat`.
 
 The output directory is treated as generated content and contains `.mcgame-portable-generated`. Re-running the compiler may replace a directory carrying that marker; it refuses to delete a non-empty directory without the marker. Generated output belongs under `build/` and is not committed.
 
-Validation for compiler changes should include both `./gradlew test` and loading a generated pack on Minecraft 26.1. For camera/input changes, use a real 26.1 client: verify that the generated camera attaches, the view stays fixed, and held input predicates continue changing portable state while the player is spectating. For particle/sound changes, load the generated commands and capture a short run where the emitter condition becomes true. For text/HUD changes, verify the text display and actionbar on a real client. For collision changes, inspect the generated score state after a known overlap and a known miss. Keep a player/bot online while observing `minecraft:tick` behavior because the development server can pause while empty. Run `portable/cleanup` before deleting a generated pack so spectator state, generated entities, and the objective are removed, then remove temporary generated smoke packs from shared development worlds.
+Validation for compiler changes should include both `./gradlew test` and loading a generated pack on Minecraft 26.1. For camera/input changes, use a real 26.1 client: verify that the generated camera attaches, the view stays fixed, and held input predicates continue changing portable state while the player is spectating. For particle/sound changes, load the generated commands and capture a short run where the emitter condition becomes true. For text/HUD changes, verify the text display and actionbar on a real client. For collision changes, inspect generated state after a known overlap and a known miss for every affected shape family. For visibility changes, inspect the Display transformation before and after its `when` condition changes. Keep a player/bot online while observing `minecraft:tick` behavior because the development server can pause while empty. Run `portable/cleanup` before deleting a generated pack so spectator state, generated entities, and the objective are removed, then remove temporary generated smoke packs from shared development worlds.

@@ -59,6 +59,7 @@ final class PortableStateMachine {
                 case PortableProgram.NegateAction negate -> state.put(negate.target(), Math.negateExact(raw(negate.target())));
                 case PortableProgram.IfAction branch -> execute(test(branch.condition()) ? branch.thenActions() : branch.elseActions());
                 case PortableProgram.AabbIfAction branch -> execute(overlaps(branch.a(), branch.b()) ? branch.thenActions() : branch.elseActions());
+                case PortableProgram.CircleIfAction branch -> execute(overlaps(branch.a(), branch.b()) ? branch.thenActions() : branch.elseActions());
             }
         }
     }
@@ -85,6 +86,14 @@ final class PortableStateMachine {
             && ax + a.halfWidthRaw() >= bx - b.halfWidthRaw()
             && ay - a.halfHeightRaw() <= by + b.halfHeightRaw()
             && ay + a.halfHeightRaw() >= by - b.halfHeightRaw();
+    }
+
+    private boolean overlaps(PortableProgram.Circle2d a, PortableProgram.Circle2d b) {
+        long divisor = program.collisionDivisor();
+        long dx = (resolve(a.x()) - (long) resolve(b.x())) / divisor;
+        long dy = (resolve(a.y()) - (long) resolve(b.y())) / divisor;
+        long radius = (a.radiusRaw() + (long) b.radiusRaw()) / divisor;
+        return dx * dx + dy * dy <= radius * radius;
     }
 
     private int resolve(PortableProgram.ValueRef value) {

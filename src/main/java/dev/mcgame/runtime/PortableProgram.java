@@ -10,7 +10,8 @@ final class PortableProgram {
     static final int VERSION_2 = 2;
     static final int VERSION_3 = 3;
     static final int VERSION_4 = 4;
-    static final int CURRENT_VERSION = VERSION_4;
+    static final int VERSION_5 = 5;
+    static final int CURRENT_VERSION = VERSION_5;
 
     sealed interface ValueRef permits StateValue, InputValue, ConstantValue {}
     record StateValue(String name) implements ValueRef {}
@@ -50,7 +51,8 @@ final class PortableProgram {
         VanillaCoordinate y,
         VanillaCoordinate z,
         VanillaVec3 scale,
-        VanillaVec3 translation
+        VanillaVec3 translation,
+        Condition condition
     ) {}
 
     record VanillaTextProjection(
@@ -61,7 +63,8 @@ final class PortableProgram {
         VanillaCoordinate y,
         VanillaCoordinate z,
         VanillaVec3 scale,
-        String billboard
+        String billboard,
+        Condition condition
     ) {}
 
     record VanillaCamera(
@@ -110,8 +113,9 @@ final class PortableProgram {
     }
 
     record Aabb2d(ValueRef x, ValueRef y, int halfWidthRaw, int halfHeightRaw) {}
+    record Circle2d(ValueRef x, ValueRef y, int radiusRaw) {}
 
-    sealed interface Action permits SetAction, AddAction, SubAction, NegateAction, IfAction, AabbIfAction {}
+    sealed interface Action permits SetAction, AddAction, SubAction, NegateAction, IfAction, AabbIfAction, CircleIfAction {}
     record SetAction(String target, ValueRef value) implements Action {}
     record AddAction(String target, ValueRef value) implements Action {}
     record SubAction(String target, ValueRef value) implements Action {}
@@ -124,6 +128,12 @@ final class PortableProgram {
     }
     record AabbIfAction(Aabb2d a, Aabb2d b, List<Action> thenActions, List<Action> elseActions) implements Action {
         AabbIfAction {
+            thenActions = List.copyOf(thenActions);
+            elseActions = List.copyOf(elseActions);
+        }
+    }
+    record CircleIfAction(Circle2d a, Circle2d b, List<Action> thenActions, List<Action> elseActions) implements Action {
+        CircleIfAction {
             thenActions = List.copyOf(thenActions);
             elseActions = List.copyOf(elseActions);
         }
@@ -191,6 +201,10 @@ final class PortableProgram {
 
     double logicalValue(int raw) {
         return ((double) raw) / fixedPoint;
+    }
+
+    int collisionDivisor() {
+        return Math.max(1, (fixedPoint + 99) / 100);
     }
 
     int scale(double logical) {

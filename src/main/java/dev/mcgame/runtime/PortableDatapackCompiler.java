@@ -42,7 +42,7 @@ final class PortableDatapackCompiler {
             throw new IllegalArgumentException("portable namespace must match " + NAMESPACE.pattern());
         }
         String objective = objectiveName(namespace);
-        CompileContext context = new CompileContext(namespace, objective);
+        CompileContext context = new CompileContext(namespace, objective, program.collisionDivisor());
         List<String> tick = new ArrayList<>();
 
         compileVanillaCameraAttach(program, tick, context);
@@ -220,6 +220,7 @@ final class PortableDatapackCompiler {
             lines.add(String.format(Locale.ROOT,
                 "execute in %s run summon minecraft:block_display %.6f %.6f %.6f %s",
                 projection.dimension(), x, y, z, snbt));
+            compileVisibility(projection.dimension(), tag, projection.scale(), projection.condition(), lines, context);
             lines.add("execute in " + projection.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
         }
     }
@@ -232,11 +233,8 @@ final class PortableDatapackCompiler {
             double z = logicalCoordinate(program, text.z());
             int chunkBlockX = (int) Math.floor(x);
             int chunkBlockZ = (int) Math.floor(z);
-            JsonObject component = new JsonObject();
-            component.addProperty("text", text.text());
-            String textJson = COMPACT_GSON.toJson(component);
             PortableProgram.VanillaVec3 scale = text.scale();
-            String snbt = "{Tags:[\"" + tag + "\"],text:" + snbtQuoted(textJson)
+            String snbt = "{Tags:[\"" + tag + "\"],text:{text:" + snbtQuoted(text.text()) + "}"
                 + ",billboard:\"" + text.billboard() + "\",transformation:{translation:[0f,0f,0f],left_rotation:[0f,0f,0f,1f],scale:["
                 + floatLiteral(scale.x()) + "," + floatLiteral(scale.y()) + "," + floatLiteral(scale.z())
                 + "],right_rotation:[0f,0f,0f,1f]}}";
@@ -245,6 +243,7 @@ final class PortableDatapackCompiler {
             lines.add(String.format(Locale.ROOT,
                 "execute in %s run summon minecraft:text_display %.6f %.6f %.6f %s",
                 text.dimension(), x, y, z, snbt));
+            compileVisibility(text.dimension(), tag, text.scale(), text.condition(), lines, context);
             lines.add("execute in " + text.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
         }
     }
@@ -364,6 +363,7 @@ final class PortableDatapackCompiler {
             compileEntityAxis(projection.dimension(), tag, "Pos[0]", projection.x(), storeScale, lines, context);
             compileEntityAxis(projection.dimension(), tag, "Pos[1]", projection.y(), storeScale, lines, context);
             compileEntityAxis(projection.dimension(), tag, "Pos[2]", projection.z(), storeScale, lines, context);
+            compileVisibility(projection.dimension(), tag, projection.scale(), projection.condition(), lines, context);
         }
     }
 
@@ -374,7 +374,26 @@ final class PortableDatapackCompiler {
             compileEntityAxis(text.dimension(), tag, "Pos[0]", text.x(), storeScale, lines, context);
             compileEntityAxis(text.dimension(), tag, "Pos[1]", text.y(), storeScale, lines, context);
             compileEntityAxis(text.dimension(), tag, "Pos[2]", text.z(), storeScale, lines, context);
+            compileVisibility(text.dimension(), tag, text.scale(), text.condition(), lines, context);
         }
+    }
+
+    private void compileVisibility(
+        String dimension,
+        String tag,
+        PortableProgram.VanillaVec3 scale,
+        PortableProgram.Condition visibility,
+        List<String> lines,
+        CompileContext context
+    ) {
+        if (visibility == null) return;
+        String selector = "@e[tag=" + tag + ",limit=1]";
+        String shown = "[" + floatLiteral(scale.x()) + "," + floatLiteral(scale.y()) + "," + floatLiteral(scale.z()) + "]";
+        String hidden = "[0f,0f,0f]";
+        lines.add("execute " + condition(visibility, true, context) + " in " + dimension
+            + " run data modify entity " + selector + " transformation.scale set value " + shown);
+        lines.add("execute " + condition(visibility, false, context) + " in " + dimension
+            + " run data modify entity " + selector + " transformation.scale set value " + hidden);
     }
 
     private void compileVanillaCameraUpdates(PortableProgram program, List<String> lines, CompileContext context) {
@@ -581,6 +600,7 @@ final class PortableDatapackCompiler {
                     }
                 }
                 case PortableProgram.AabbIfAction branch -> compileAabbIf(branch, lines, context);
+                case PortableProgram.CircleIfAction branch -> compileCircleIf(branch, lines, context);
             }
         }
     }
@@ -614,6 +634,57 @@ final class PortableDatapackCompiler {
             compileActions(branch.elseActions(), body, context);
             context.functions.put(function, body);
             lines.add("execute unless score " + flag + " " + context.objective + " matches 1 run function " + context.namespace + ":portable/" + function);
+        }
+    }
+
+    private void compileCircleIf(PortableProgram.CircleIfAction branch, List<String> lines, CompileContext context) {
+        int divisor = Math.max(1, context.fixedPointDivisor);
+        String dx = context.nextCollisionTemp();
+        lines.add("scoreboard players operation " + dx + " " + context.objective + " = " + holder(branch.a().x(), context) + " " + context.objective);
+        lines.add("scoreboard players operation " + dx + " " + context.objective + " -= " + holder(branch.b().x(), context) + " " + context.objective);
+        if (divisor > 1) lines.add("scoreboard players operation " + dx + " " + context.objective + " /= " + context.constantHolder(divisor) + " " + context.objective);
+        lines.add("scoreboard players operation " + dx + " " + context.objective + " *= " + dx + " " + context.objective);
+
+        String dy = context.nextCollisionTemp();
+        lines.add("scoreboard players operation " + dy + " " + context.objective + " = " + holder(branch.a().y(), context) + " " + context.objective);
+        lines.add("scoreboard players operation " + dy + " " + context.objective + " -= " + holder(branch.b().y(), context) + " " + context.objective);
+        if (divisor > 1) lines.add("scoreboard players operation " + dy + " " + context.objective + " /= " + context.constantHolder(divisor) + " " + context.objective);
+        lines.add("scoreboard players operation " + dy + " " + context.objective + " *= " + dy + " " + context.objective);
+        lines.add("scoreboard players operation " + dx + " " + context.objective + " += " + dy + " " + context.objective);
+
+        long radiusUnits = (branch.a().radiusRaw() + (long) branch.b().radiusRaw()) / divisor;
+        long radiusSquared = radiusUnits * radiusUnits;
+        if (radiusSquared > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("portable circle collision radius exceeds scoreboard squared range");
+        }
+        String radius = context.constantHolder((int) radiusSquared);
+        compileCollisionBranches(dx, "<=", radius, branch.thenActions(), branch.elseActions(), lines, context);
+    }
+
+    private void compileCollisionBranches(
+        String left,
+        String comparator,
+        String right,
+        List<PortableProgram.Action> thenActions,
+        List<PortableProgram.Action> elseActions,
+        List<String> lines,
+        CompileContext context
+    ) {
+        if (!thenActions.isEmpty()) {
+            String function = context.nextBranchFunctionName();
+            List<String> body = new ArrayList<>();
+            compileActions(thenActions, body, context);
+            context.functions.put(function, body);
+            lines.add("execute if score " + left + " " + context.objective + " " + comparator + " " + right + " " + context.objective
+                + " run function " + context.namespace + ":portable/" + function);
+        }
+        if (!elseActions.isEmpty()) {
+            String function = context.nextBranchFunctionName();
+            List<String> body = new ArrayList<>();
+            compileActions(elseActions, body, context);
+            context.functions.put(function, body);
+            lines.add("execute unless score " + left + " " + context.objective + " " + comparator + " " + right + " " + context.objective
+                + " run function " + context.namespace + ":portable/" + function);
         }
     }
 
@@ -683,6 +754,7 @@ final class PortableDatapackCompiler {
     private static final class CompileContext {
         final String namespace;
         final String objective;
+        final int fixedPointDivisor;
         final Map<Integer, String> constantHolders = new LinkedHashMap<>();
         final Map<String, List<String>> functions = new LinkedHashMap<>();
         int nextConstant;
@@ -692,9 +764,10 @@ final class PortableDatapackCompiler {
         int nextCollisionTemp;
         boolean usesNegate;
 
-        CompileContext(String namespace, String objective) {
+        CompileContext(String namespace, String objective, int fixedPointDivisor) {
             this.namespace = namespace;
             this.objective = objective;
+            this.fixedPointDivisor = fixedPointDivisor;
         }
 
         String constantHolder(int raw) {

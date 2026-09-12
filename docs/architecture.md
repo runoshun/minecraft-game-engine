@@ -2,13 +2,15 @@
 
 ## Goal
 
-MC Game Runtime turns a Minecraft Java server into a fast game-prototyping host. Minecraft supplies rendering, player input, world geometry, entities, particles, audio, networking, and a convenient level editor. Gameplay logic is written in TypeScript carried by datapacks.
+MC Game Runtime is evolving into a TypeScript-to-vanilla-datapack game compiler. Minecraft supplies rendering, player input, world geometry, entities, particles, audio, networking, and a convenient level editor. Portable gameplay is authored with `portableDsl`, lowered to versioned IR, and compiled to ordinary datapack resources.
 
-The intended iteration loop is:
+The primary portable loop is:
 
 ```text
-edit main.ts -> /reload -> play -> inspect/capture/test -> edit main.ts
+edit main.ts -> compilePortable -> copy/reload generated datapack -> play/test/capture -> edit main.ts
 ```
+
+The Fabric runtime keeps the older `/reload`-direct TypeScript loop as an optional development/compatibility backend while the retirement gates in ADR 0013 remain open.
 
 ## Responsibility boundaries
 
@@ -16,21 +18,15 @@ edit main.ts -> /reload -> play -> inspect/capture/test -> edit main.ts
 
 Owns the authoritative Minecraft world and networking. Vanilla clients connect normally.
 
-### MC Game Runtime mod
+### Portable compiler / vanilla backend
 
-Owns the script lifecycle and translation layer between scripts and Minecraft. Its responsibilities are:
+This is the primary backend for new portable games. It transpiles TypeScript for build-time DSL evaluation, captures versioned Portable IR, validates bounded declarations, and emits standalone Minecraft datapack resources. The generated pack owns its scoreboards, functions, predicates, Display/marker/camera entities, HUD projection, and cleanup function. The target server does not need the runtime mod.
 
-- discover script resources during datapack load/reload
-- transpile TypeScript to JavaScript
-- create a sandboxed JavaScript context per script
-- snapshot player input once per server tick
-- invoke script lifecycle callbacks
-- expose capability-style APIs for actors/rendering, per-player UI panels, interactive menus, camera, world, and effects; game rules should consume these through a TypeScript presentation adapter when portability matters
-- validate and execute the experimental `portable` fixed-point rule IR before ordinary TypeScript tick callbacks
-- tag runtime-created entities so they can be cleaned up deterministically
-- disable failed scripts without deliberately terminating the whole server
+### MC Game Runtime Fabric backend (transitional)
 
-The runtime should not become the place where individual game rules are implemented.
+The Fabric mod remains an optional development/compatibility backend. It discovers `mcgame/main.ts`, executes TypeScript/GraalJS, interprets the same portable IR, and exposes legacy host capabilities such as generic render, actors, menus, panels, and world mutation that are not all portable yet. New game-facing semantics should be added to Portable IR and the vanilla compiler first unless vanilla cannot represent them.
+
+The Fabric backend should not become the place where new individual game rules are implemented; ADR 0013 defines explicit gates for retiring it.
 
 ### TypeScript game scripts
 
@@ -102,19 +98,21 @@ Authoring frontend:
 - `builder.state(name, initial)` returns a mutable fixed-point state reference with `set/add/sub/negate` and comparison helpers
 - `builder.input(name, initial?, binding?)` returns a read-only input reference
 - `builder.tick(fn)` records deterministic per-tick rules
+- `builder.repeat(count, fn)` executes only while building the DSL and statically expands bounded repeated declarations
 - `builder.when(condition, thenFn, elseFn?)` records nested branches
 - `builder.at(state, base?)` binds a state value to a projected coordinate
-- `builder.block(id, spec)` declares a block-display projection supported by both backends
+- `builder.block(id, spec)` declares a block-display projection supported by both backends; v5 `when` controls visibility from portable state
 - `builder.camera(id, spec)` declares the single portable controller camera
 - `builder.particle(id, spec)` declares a per-tick particle emitter, optionally guarded by a portable condition
 - `builder.sound(id, spec)` declares a conditional sound emitter
-- `builder.text(id, spec)` declares static-content world text with fixed or state-backed position
+- `builder.text(id, spec)` declares static-content world text with fixed or state-backed position; v5 `when` controls visibility
 - `builder.hud(id, spec)` declares the single-line actionbar HUD
-- `builder.box(id, spec)` and `builder.whenColliding(a, b, ...)` declare deterministic logic-space 2D AABB collision
+- `builder.box(id, spec)` and box/box `builder.whenColliding(...)` declare deterministic logic-space 2D AABB collision
+- `builder.circle(id, spec)` and circle/circle `builder.whenColliding(...)` declare bounded deterministic circle collision
 
-ADR 0009 defines the IR and ADR 0010 defines the DSL as a pure frontend to that IR. Version 1 remains compatible with fixed-point scalar state and basic arithmetic/conditions. Version 2 adds fixed-point input registers, `first_player_hotbar_slot`, and bounded block-display projection metadata. Version 3 adds held player-input bindings (`forward/backward/left/right/jump/sneak/sprint`), one portable spectator camera, and bounded declarative particle emitters. Version 4 adds conditional sounds, static-content world text, one actionbar HUD, and deterministic 2D AABB collision. Values may be numeric constants, state references, or input references. The portable rule machine itself still does not execute arbitrary TypeScript. ADR 0011 defines the v3 input/camera/particle semantics and ADR 0012 defines the v4 sound/text/HUD/collision semantics.
+ADR 0009 defines the IR and ADR 0010 defines the DSL as a pure frontend to that IR. Version 1 remains compatible with fixed-point scalar state and basic arithmetic/conditions. Version 2 adds fixed-point input registers, `first_player_hotbar_slot`, and bounded block-display projection metadata. Version 3 adds held player-input bindings (`forward/backward/left/right/jump/sneak/sprint`), one portable spectator camera, and bounded declarative particle emitters. Version 4 adds conditional sounds, static-content world text, one actionbar HUD, and deterministic 2D AABB collision. Version 5 adds compile-time static collection expansion, conditional block/text visibility, and quantized deterministic circle/circle collision. Values may be numeric constants, state references, or input references. The portable rule machine itself still does not execute arbitrary TypeScript. ADR 0011 defines v3, ADR 0012 defines v4, and ADR 0013 defines v5 plus the vanilla-first backend direction.
 
-The bundled DSL prelude automatically registers equivalent Fabric host adapters for the currently supported portable declarations. Therefore a DSL-only source can be run under the Fabric runtime for rapid iteration, or compiled into a datapack whose deployment target is vanilla Minecraft 26.1 with no runtime mod. Menus, sidebar panels, dynamic world-text content, arbitrary `render` calls, and other undeclared host capabilities remain Fabric-only until an explicit portable primitive is added.
+The bundled DSL prelude also registers equivalent Fabric host adapters for supported portable declarations, but this is now the secondary compatibility path. The normal deployment artifact for a portable game is the generated vanilla Minecraft 26.1 datapack. Menus, sidebar panels, dynamic world-text content, arbitrary `render` calls, and other undeclared host capabilities remain Fabric-only until an explicit portable primitive is added.
 
 ### game
 
@@ -204,7 +202,7 @@ Presentation follows ADR 0004 and `docs/presentation-api.md`. Game Core TypeScri
 
 ## Portable vanilla-datapack compilation
 
-ADR 0009 adds the vanilla backend for the restricted portable IR, ADR 0010 adds `portableDsl` as an ergonomic TypeScript authoring frontend, ADR 0011 defines the v3 held-input/camera/particle mappings, and ADR 0012 defines the v4 sound/text/HUD/collision mappings. `./gradlew compilePortable` transpiles the selected `main.ts`, installs the same bundled DSL prelude used by the Fabric runtime, evaluates top-level initialization in a sandbox with registration-only host stubs, captures the resulting `portable.define`, and emits a standalone datapack. The current backend maps:
+ADR 0009 adds the vanilla backend for the restricted portable IR, ADR 0010 adds `portableDsl` as its TypeScript authoring frontend, ADR 0011 defines v3 held-input/camera/particle mappings, ADR 0012 defines v4 sound/text/HUD/collision mappings, and ADR 0013 makes this backend primary while defining v5 static collections/visibility/circle collision. `./gradlew compilePortable` transpiles the selected `main.ts`, installs the same bundled DSL prelude used by the Fabric runtime, evaluates top-level initialization in a sandbox with registration-only host stubs, captures the resulting `portable.define`, and emits a standalone datapack. The current backend maps:
 
 - fixed-point state and input registers -> fake scoreboard players on a namespace-derived objective;
 - program initialization -> a `minecraft:load`-tagged function;
@@ -214,13 +212,15 @@ ADR 0009 adds the vanilla backend for the restricted portable IR, ADR 0010 adds 
 - multi-action branches -> generated branch functions;
 - `first_player_hotbar_slot` -> `SelectedItemSlot` sampled from the controller;
 - v3 held input bindings -> Minecraft 26.1 `minecraft:entity_properties` player `type_specific.input` predicates evaluated every tick;
-- `builder.block(...)` -> owned-tag `block_display` entities whose dynamic coordinates are updated from scoreboard state;
+- `builder.block(...)` -> owned-tag `block_display` entities whose dynamic coordinates are updated from scoreboard state; v5 `when` toggles the Display scale between its declaration and zero;
 - `builder.camera(...)` -> one owned invisible marker armor stand plus `gamemode spectator` / `spectate`; while a camera is active, that tagged spectator remains the portable input controller;
 - `builder.particle(...)` -> vanilla `particle` commands; dynamic emitter coordinates use owned marker entities whose positions are updated from scoreboard state;
 - `builder.sound(...)` -> vanilla `playsound`; dynamic emitter coordinates use owned marker entities;
-- `builder.text(...)` -> owned `text_display` entities with static content and fixed/state-backed coordinates;
+- `builder.text(...)` -> owned `text_display` entities with static content and fixed/state-backed coordinates; v5 `when` uses the same visibility projection;
 - `builder.hud(...)` -> per-tick actionbar JSON composed from literals and scratch scoreboard values divided back to logical integers;
-- `builder.whenColliding(...)` -> scoreboard-computed inclusive 2D AABB edge tests followed by generated branch functions;
+- box/box `builder.whenColliding(...)` -> scoreboard-computed inclusive 2D AABB edge tests followed by generated branch functions;
+- circle/circle `builder.whenColliding(...)` -> scoreboard squared-distance tests after bounded fixed-point quantization to approximately 0.01-block units;
+- `builder.repeat(...)` -> build-time declaration expansion only; no runtime loop is emitted;
 - generated entity initialization -> temporary chunk force-loading for deterministic replacement, plus a generated `portable/cleanup` function that clears the HUD, detaches the camera, returns its controller to Adventure mode, removes generated entities, and removes the objective.
 
 Ordinary arbitrary callback bodies and Minecraft host APIs are still not compiled. A DSL-only program using only supported portable primitives does not need the Fabric mod on the deployment server; the compiler/build environment still needs this repository's Java/Graal toolchain. `examples/portable-breakout-core` is the reference held-input + fixed-point physics + AABB collision + camera + block/text display + actionbar HUD + particle + sound example.
@@ -258,14 +258,14 @@ An earlier external TCP/JSONL bridge PoC exists separately. The long-term design
 ## Known PoC limitations
 
 - single-file TypeScript only
-- portable IR v4 covers fixed-point scalar state/input, hotbar and held player-input bindings, block/text projections, one spectator camera, particle/sound emitters, one actionbar HUD, and 2D AABB collision; swept/3D collision, dynamic collections, randomness, event dispatch, menus, and sidebar panels are not portable yet
+- portable IR v5 covers fixed-point scalar state/input, hotbar and held input, block/text projections with conditional visibility, one spectator camera, particle/sound emitters, one actionbar HUD, 2D AABB and circle/circle collision, plus compile-time static collection expansion; mixed-shape, segment/capsule/swept/3D collision, runtime dynamic collections, randomness, event dispatch, menus, and sidebar panels are not portable yet
 - generated vanilla play remains single-controller-oriented: without a camera it chooses the first non-spectator player; with a camera it tags that first controller and continues reading that player's input while spectating
 - generated dynamic projections are designed around bounded arcade scenes; cleanup/reload guarantees are strongest for their declared initial chunks and do not yet form a general moving-entity ownership system
 - ordinary arbitrary TypeScript callbacks and Minecraft host capabilities remain mod-only; only semantics represented in portable IR are emitted to vanilla datapacks
 - no stable versioned script API yet
 - no persistent script storage API
 - no generic runtime-level player HP/combat abstraction; game scripts currently own gameplay HP/damage state themselves
-- portable collision is deterministic 2D AABB only; there is still no Minecraft block/entity query abstraction
+- portable collision is deterministic logic-space AABB or circle/circle only; circle distance is quantized for scoreboard-safe squaring, and there is still no Minecraft block/entity query abstraction
 - `actors` remains a mannequin-specific compatibility API; new presentation code should prefer `render`
 - `render.attach` currently follows translation only; it does not compose parent rotation/scale into child transforms
 - `ui.panel` owns the vanilla sidebar channel while active and can be visually replaced by another system sending sidebar scoreboard packets
@@ -292,6 +292,7 @@ Testing caveats:
 - the development server pauses ticking when it has been empty for 60 seconds, so `onTick()` tests need an online player/bot or another reason for the server to tick
 - portable v3 camera/input was validated on `main` with a pure smoke datapack: a player spectating an invisible armor stand continued to report `left`, `jump`, and `right` through Minecraft 26.1 player-input predicates. The generated DSL Breakout was then validated on the mod-free `second` server (`loader=vanilla`, no installed jars): A/D moved the paddle, Space launched the ball, the generated spectator camera remained fixed, and generated particle commands loaded alongside the display projection.
 - portable v4 was validated on a fresh mod-free `second` world with the generated Breakout datapack: `text_display` title and actionbar HUD rendered on a real 26.1 client, generated `playsound`/particle commands loaded without datapack errors, A/D and Space advanced portable state, and the score reached 2 through actual paddle overlaps. A frozen-tick deterministic check then produced score `1` for a known overlapping ball/paddle AABB and `0` for a known horizontal miss.
+- portable v5 was validated on a fresh mod-free `second` world. The generated smoke datapack covered circle overlap/miss and `when`-controlled Display visibility. The full 40-brick reference Breakout was then compiled to a standalone vanilla datapack (53 scalar states, 43 block projections) and played with the real 26.1 render client: A/D moved the paddle, Space launched the ball while using the generated fixed camera, an actual brick collision changed `brick38` from 1 to 0, reduced `bricksLeft` from 40 to 39, increased score from 0 to 1, zero-scaled that brick Display, and updated the actionbar HUD. A later drain reduced lives from 3 to 2 and returned to serve; an all-clear tick restored all 40 brick states/Displays and returned to serve. Particle/sound commands loaded and executed from the same hit condition. A text-display E2E check also caught and fixed double-encoded component SNBT so world text now renders as `PORTABLE BREAKOUT` rather than a literal JSON object. This satisfies the reference Breakout E2E retirement gate; the representative pinball gate remains open.
 - `mc-mcp` TestBot input has now been validated end-to-end: a `playtest_scenario` forward move sets `ServerPlayer.getLastClientInput().forward()`, `input.players().forward` becomes true in TypeScript, and script logic can move a runtime actor in response. This makes mc-mcp suitable for automated input-driven E2E tests of script games.
 - actor spawning and world edits still require usable target chunks; `world.setBlocks`/`world.fill` reduce script-boundary and neighbor-update overhead but may synchronously obtain chunks, so avoid unbounded distant edits in one tick
 - a standalone 0.1.1 smoke test verified direct actor spawn/move/remove, exact final actor transform `[2.5, 101, 0.5]` / yaw `60`, and direct gold/diamond block writes. After compiler warmup and `/reload`, that smoke run produced no script-tick warning above the 10 ms threshold.
