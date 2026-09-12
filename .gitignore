@@ -41,3 +41,9 @@ replay_*.log
 
 # release artifacts
 dist/
+
+# local runtime/compiler logs
+logs/
+
+# local capture scratch
+.tmp-video/

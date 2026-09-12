@@ -26,6 +26,7 @@ Owns the script lifecycle and translation layer between scripts and Minecraft. I
 - snapshot player input once per server tick
 - invoke script lifecycle callbacks
 - expose capability-style APIs for actors/rendering, per-player UI panels, interactive menus, camera, world, and effects; game rules should consume these through a TypeScript presentation adapter when portability matters
+- validate and execute the experimental `portable` fixed-point rule IR before ordinary TypeScript tick callbacks
 - tag runtime-created entities so they can be cleaned up deterministically
 - disable failed scripts without deliberately terminating the whole server
 
@@ -53,6 +54,8 @@ Each discovered `main.ts` becomes an independent script instance and JavaScript 
 
 Current limitation: TypeScript module/import resolution is not implemented. Scripts are single-file programs.
 
+A `main.ts` may declare one experimental portable program either directly with `portable.define(...)` or through the `portableDsl(...)` authoring frontend. The DSL is bundled by the runtime/compiler and lowers to the same versioned portable IR; it is not a second execution engine. The IR can be interpreted by the Fabric runtime or extracted at build time and compiled to a standalone vanilla datapack.
+
 ## Reload lifecycle
 
 At server start and after a successful datapack reload:
@@ -74,8 +77,10 @@ The runtime runs from Fabric's end-of-server-tick event. For each active script 
 1. snapshots all online players and `ServerPlayer.getLastClientInput()`
 2. folds server-observable vanilla action packets into per-player semantic actions and derives rising edges for held movement buttons
 3. snapshots the selected hotbar slot and detects slot changes
-4. calls registered `game.onTick` callbacks
-5. advances per-script input baselines for the next tick
+4. calls registered `game.onBeforeTick` callbacks so host input adapters can update portable input registers
+5. executes the script's `portable` fixed-point rule list, if declared
+6. calls registered `game.onTick` callbacks
+7. advances per-script input baselines for the next tick
 
 Minecraft remains the clock source, nominally 20 TPS / 50 ms per tick.
 
@@ -83,9 +88,34 @@ A soft warning is logged for a script tick over 10 ms. Normal game ticks retain 
 
 ## Public script API
 
+### portable / portableDsl (experimental)
+
+Low-level IR API:
+
+- `portable.define(spec)`; initialization-only, at most once per script
+- `portable.get(state)` / `portable.raw(state)`
+- `portable.setInput(input, value)` / `portable.input(input)`
+
+Authoring frontend:
+
+- `portableDsl(options?, builder)`
+- `builder.state(name, initial)` returns a mutable fixed-point state reference with `set/add/sub/negate` and comparison helpers
+- `builder.input(name, initial?, binding?)` returns a read-only input reference
+- `builder.tick(fn)` records deterministic per-tick rules
+- `builder.when(condition, thenFn, elseFn?)` records nested branches
+- `builder.at(state, base?)` binds a state value to a projected coordinate
+- `builder.block(id, spec)` declares a block-display projection supported by both backends
+- `builder.camera(id, spec)` declares the single portable controller camera
+- `builder.particle(id, spec)` declares a per-tick particle emitter, optionally guarded by a portable condition
+
+ADR 0009 defines the IR and ADR 0010 defines the DSL as a pure frontend to that IR. Version 1 remains compatible with fixed-point scalar state and basic arithmetic/conditions. Version 2 adds fixed-point input registers, `first_player_hotbar_slot`, and bounded block-display projection metadata. Version 3 adds held player-input bindings (`forward/backward/left/right/jump/sneak/sprint`), one portable spectator camera, and bounded declarative particle emitters. Values may be numeric constants, state references, or input references. The portable rule machine itself still does not execute arbitrary TypeScript. ADR 0011 defines the v3 camera/input/particle backend semantics.
+
+The bundled DSL prelude automatically registers equivalent Fabric host adapters for the currently supported input, projection, camera, and particle declarations. Therefore a DSL-only source can be run under the Fabric runtime for rapid iteration, or compiled into a datapack whose deployment target is vanilla Minecraft 26.1 with no runtime mod. Menus, generic UI, sound, arbitrary `render` calls, and other host capabilities remain Fabric-only until an explicit portable primitive is added.
+
 ### game
 
 - `game.onStart(fn)`
+- `game.onBeforeTick(fn)`; receives `{ tick }` and runs after input snapshotting but before portable rules
 - `game.onTick(fn)`; receives `{ tick }`
 - `game.log(...)`
 
@@ -160,11 +190,31 @@ Current detach behavior switches the player to Adventure mode; original gamemode
 - `effects.particle(options)`
 - `effects.sound(options)`
 
-`world.setBlock` preserves normal server block-update semantics through `ServerLevel.setBlock(..., Block.UPDATE_ALL)`. `world.setBlocks` and `world.fill` are bounded bulk projection primitives (maximum 32,768 writes per call) that cross the Graal/Java boundary once and use client-visible fast update flags without neighbor updates or block drops. They are intended for script-owned terrain/render projection such as floors, walls, and air clearing; redstone, gravity, or other neighbor-dependent mechanics should use normal updates instead. Bulk calls may still synchronously obtain chunks, so scripts should keep edits spatially bounded and may amortize large projections across ticks. Effects remain command-backed in the current PoC.
+`world.setBlock` preserves normal server block-update semantics through `ServerLevel.setBlock(..., Block.UPDATE_ALL)`. `world.setBlocks` and `world.fill` are bounded bulk projection primitives (maximum 32,768 writes per call) that cross the Graal/Java boundary once and use client-visible fast update flags without neighbor updates or block drops. They are intended for script-owned terrain/render projection such as floors, walls, and air clearing; redstone, gravity, or other neighbor-dependent mechanics should use normal updates instead. Bulk calls may still synchronously obtain chunks, so scripts should keep edits spatially bounded and may amortize large projections across ticks. Effects remain command-backed in the current PoC. `effects.particle` accepts optional `delta`, `speed`, `count`, and `force` parameters in addition to particle id and position; portable DSL particle emitters lower to the same shape on the Fabric adapter.
 
 The initial API intentionally stays small. New capabilities should be added deliberately rather than exposing raw command execution or raw Minecraft Java objects.
 
 Presentation follows ADR 0004 and `docs/presentation-api.md`. Game Core TypeScript should not depend on Minecraft primitives such as scoreboards, dialogs, mannequins, or Display entities. A game-owned presentation interface maps semantic appearance/panel/menu/audio/FX intent into the Minecraft adapter. Runtime 0.2.0 implements broad `render`, `ui.panel`, and `menu` capability families rather than one Mod API per Minecraft feature.
+
+
+## Portable vanilla-datapack compilation
+
+ADR 0009 adds the vanilla backend for the restricted portable IR, ADR 0010 adds `portableDsl` as an ergonomic TypeScript authoring frontend, and ADR 0011 defines the v3 held-input/camera/particle mappings. `./gradlew compilePortable` transpiles the selected `main.ts`, installs the same bundled DSL prelude used by the Fabric runtime, evaluates top-level initialization in a sandbox with registration-only host stubs, captures the resulting `portable.define`, and emits a standalone datapack. The current backend maps:
+
+- fixed-point state and input registers -> fake scoreboard players on a namespace-derived objective;
+- program initialization -> a `minecraft:load`-tagged function;
+- per-tick actions -> a `minecraft:tick`-tagged function;
+- state arithmetic -> scoreboard set/add/remove/operation commands;
+- conditions -> `execute if/unless score`;
+- multi-action branches -> generated branch functions;
+- `first_player_hotbar_slot` -> `SelectedItemSlot` sampled from the controller;
+- v3 held input bindings -> Minecraft 26.1 `minecraft:entity_properties` player `type_specific.input` predicates evaluated every tick;
+- `builder.block(...)` -> owned-tag `block_display` entities whose dynamic coordinates are updated from scoreboard state;
+- `builder.camera(...)` -> one owned invisible marker armor stand plus `gamemode spectator` / `spectate`; while a camera is active, that tagged spectator remains the portable input controller;
+- `builder.particle(...)` -> vanilla `particle` commands; dynamic emitter coordinates use owned marker entities whose positions are updated from scoreboard state;
+- generated entity initialization -> temporary chunk force-loading for deterministic replacement, plus a generated `portable/cleanup` function that detaches the camera, returns its controller to Adventure mode, removes generated entities, and removes the objective.
+
+Ordinary arbitrary callback bodies and Minecraft host APIs are still not compiled. A DSL-only program using only supported portable primitives does not need the Fabric mod on the deployment server; the compiler/build environment still needs this repository's Java/Graal toolchain. `examples/portable-breakout-core` is the reference held-input + physics + fixed-camera + display + particle example.
 
 ## Entity ownership
 
@@ -182,7 +232,7 @@ Both the compiler context and game-script contexts currently disable:
 - native access
 - polyglot access
 
-Only explicitly installed proxy objects (`game`, `input`, `actors`, `render`, `ui`, `menu`, `camera`, `world`, `effects`) are visible as Minecraft capabilities.
+Only explicitly installed proxy objects (`portable`, `game`, `input`, `actors`, `render`, `ui`, `menu`, `camera`, `world`, `effects`) are visible. `portable` is a deterministic rule/state capability; the remaining objects are Minecraft host capabilities.
 
 The intended security boundary is capability-based: scripts should never receive a `MinecraftServer`, entity Java object, arbitrary command executor, filesystem handle, or network client.
 
@@ -190,7 +240,7 @@ This PoC has not been security-audited and should not yet be treated as safe for
 
 ## Embedded dependencies
 
-The mod JAR embeds the GraalJS runtime through Fabric Jar-in-Jar metadata. TypeScript's `typescript.js` is also bundled as a mod resource. Therefore a production server only needs the runtime mod, Fabric API, and Java 25; Node.js is not required.
+The mod JAR embeds the GraalJS runtime through Fabric Jar-in-Jar metadata. TypeScript's `typescript.js` and the portable DSL prelude are bundled as mod resources. For the embedded-TypeScript execution path, a production server needs the runtime mod, Fabric API, and Java 25; Node.js is not required. A generated portable vanilla datapack is different: its target server needs only compatible vanilla Minecraft because GraalJS/TypeScript/DSL execution happened at build time.
 
 ## External bridge
 
@@ -199,6 +249,10 @@ An earlier external TCP/JSONL bridge PoC exists separately. The long-term design
 ## Known PoC limitations
 
 - single-file TypeScript only
+- portable IR v3 covers fixed-point scalar state/input, hotbar and held player-input bindings, block-display projections, one spectator camera, and declarative particle emitters; portable collision primitives, dynamic collections, randomness, event dispatch, UI, and sound are not implemented yet
+- generated vanilla play remains single-controller-oriented: without a camera it chooses the first non-spectator player; with a camera it tags that first controller and continues reading that player's input while spectating
+- generated dynamic projections are designed around bounded arcade scenes; cleanup/reload guarantees are strongest for their declared initial chunks and do not yet form a general moving-entity ownership system
+- ordinary arbitrary TypeScript callbacks and Minecraft host capabilities remain mod-only; only semantics represented in portable IR are emitted to vanilla datapacks
 - no stable versioned script API yet
 - no persistent script storage API
 - no generic runtime-level player HP/combat abstraction; game scripts currently own gameplay HP/damage state themselves
@@ -227,6 +281,7 @@ Validated on the `main` development server with Minecraft 26.1, Fabric Loader 0.
 Testing caveats:
 
 - the development server pauses ticking when it has been empty for 60 seconds, so `onTick()` tests need an online player/bot or another reason for the server to tick
+- portable v3 camera/input was validated on `main` with a pure smoke datapack: a player spectating an invisible armor stand continued to report `left`, `jump`, and `right` through Minecraft 26.1 player-input predicates. The generated DSL Breakout was then validated on the mod-free `second` server (`loader=vanilla`, no installed jars): A/D moved the paddle, Space launched the ball, the generated spectator camera remained fixed, and generated particle commands loaded alongside the display projection.
 - `mc-mcp` TestBot input has now been validated end-to-end: a `playtest_scenario` forward move sets `ServerPlayer.getLastClientInput().forward()`, `input.players().forward` becomes true in TypeScript, and script logic can move a runtime actor in response. This makes mc-mcp suitable for automated input-driven E2E tests of script games.
 - actor spawning and world edits still require usable target chunks; `world.setBlocks`/`world.fill` reduce script-boundary and neighbor-update overhead but may synchronously obtain chunks, so avoid unbounded distant edits in one tick
 - a standalone 0.1.1 smoke test verified direct actor spawn/move/remove, exact final actor transform `[2.5, 101, 0.5]` / yaw `60`, and direct gold/diamond block writes. After compiler warmup and `/reload`, that smoke run produced no script-tick warning above the 10 ms threshold.

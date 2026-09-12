@@ -74,3 +74,20 @@ Known unrelated reload noise from the `athletic` datapack (`body08`, `body09`, `
 Local Fabric dev-server smoke tests are useful but are not sufficient for entity lifecycle or cold-start behavior. `main` has exposed behavior hidden by a warm/local spawn-chunk test, including GraalJS cold initialization cost and Minecraft entity/chunk lifecycle differences when the server is empty or paused.
 
 Therefore, changes involving script startup, watchdogs, render entities, chunk behavior, UI packets, menus, or player interaction must get a `main`-server validation pass before the release is considered finished.
+
+## Compiling the portable subset to a vanilla datapack
+
+The experimental ADR 0009/0010/0011 path compiles one portable program from a TypeScript `main.ts` into a dedicated vanilla datapack directory. The source may use low-level `portable.define(...)` or the bundled `portableDsl(...)` frontend. Use Java 25 and provide all three Gradle properties explicitly:
+
+```bash
+./gradlew compilePortable \
+  -PportableSource=examples/portable-breakout-core/datapack/data/portable_breakout/mcgame/main.ts \
+  -PportableNamespace=portable_breakout \
+  -PportableOutput=build/portable/portable_breakout
+```
+
+For a DSL-only source that uses only implemented portable primitives, the generated output is the deployment artifact: copy that directory into a Minecraft 26.1 world's `datapacks/` directory. Fabric, Fabric API, GraalJS, TypeScript, and MC Game Runtime are not required on that target server. They are build/runtime-development dependencies only. Portable v3 currently emits held player-input predicates, block-display projections, one spectator camera, and particle emitters.
+
+The output directory is treated as generated content and contains `.mcgame-portable-generated`. Re-running the compiler may replace a directory carrying that marker; it refuses to delete a non-empty directory without the marker. Generated output belongs under `build/` and is not committed.
+
+Validation for compiler changes should include both `./gradlew test` and loading a generated pack on Minecraft 26.1. For camera/input changes, use a real 26.1 client: verify that the generated camera attaches, the view stays fixed, and held input predicates continue changing portable state while the player is spectating. For particle changes, load the generated commands and capture a short run where the emitter condition becomes true. Keep a player/bot online while observing `minecraft:tick` behavior because the development server can pause while empty. Run `portable/cleanup` before deleting a generated pack so spectator state, generated entities, and the objective are removed, then remove temporary generated smoke packs from shared development worlds.

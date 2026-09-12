@@ -101,6 +101,7 @@ final class ScriptInstance {
     private final String ownerTag;
     private final Context context;
     private final List<Value> startCallbacks = new ArrayList<>();
+    private final List<Value> beforeTickCallbacks = new ArrayList<>();
     private final List<Value> tickCallbacks = new ArrayList<>();
     private final Set<UUID> attachedPlayers = new HashSet<>();
     private final Map<UUID, ButtonState> previous = new HashMap<>();
@@ -119,6 +120,8 @@ final class ScriptInstance {
     private long currentTick;
     private boolean disabled;
     private boolean closed;
+    private boolean initializing = true;
+    private PortableStateMachine portableMachine;
 
     ScriptInstance(Identifier id, String javascript, Logger logger) {
         this.id = id;
@@ -137,7 +140,9 @@ final class ScriptInstance {
 
         installBindings();
         try {
+            PortableDslSupport.install(context);
             runWithBudget(() -> context.eval(Source.newBuilder("js", javascript, id.toString()).buildLiteral()), STARTUP_BUDGET_MS);
+            initializing = false;
         } catch (RuntimeException e) {
             context.close(true);
             throw e;
@@ -149,6 +154,7 @@ final class ScriptInstance {
 
     void start(MinecraftServer server) {
         primeInputState(server);
+        if (portableMachine != null) portableMachine.reset();
         withServer(server, 0, () -> runWithBudget(() -> {
             for (Value callback : List.copyOf(startCallbacks)) callback.execute();
         }, STARTUP_BUDGET_MS));
@@ -160,8 +166,10 @@ final class ScriptInstance {
         long started = System.nanoTime();
         withServer(server, tick, () -> {
             runWithBudget(() -> {
-                deliverMenuActions();
                 ProxyObject tickContext = ProxyObject.fromMap(Map.of("tick", tick));
+                for (Value callback : List.copyOf(beforeTickCallbacks)) callback.execute(tickContext);
+                if (portableMachine != null) portableMachine.tick();
+                deliverMenuActions();
                 for (Value callback : List.copyOf(tickCallbacks)) callback.execute(tickContext);
             });
             syncRenderAttachments();
@@ -213,6 +221,11 @@ final class ScriptInstance {
         game.put("onStart", (ProxyExecutable) args -> {
             requireFunction(args, 0, "game.onStart");
             startCallbacks.add(args[0]);
+            return null;
+        });
+        game.put("onBeforeTick", (ProxyExecutable) args -> {
+            requireFunction(args, 0, "game.onBeforeTick");
+            beforeTickCallbacks.add(args[0]);
             return null;
         });
         game.put("onTick", (ProxyExecutable) args -> {
@@ -291,6 +304,37 @@ final class ScriptInstance {
         menu.put("update", (ProxyExecutable) args -> { openMenu(args); return null; });
         menu.put("close", (ProxyExecutable) args -> { closeMenu(args); return null; });
 
+        Map<String, Object> portable = new HashMap<>();
+        portable.put("define", (ProxyExecutable) args -> {
+            if (!initializing) throw new IllegalStateException("portable.define may only be called during script initialization");
+            if (portableMachine != null) throw new IllegalStateException("portable.define may only be called once");
+            if (args.length < 1) throw new IllegalArgumentException("portable.define requires a program object");
+            portableMachine = new PortableStateMachine(PortableProgramParser.parse(args[0], "portable.define"));
+            return null;
+        });
+        portable.put("get", (ProxyExecutable) args -> {
+            String name = stringArg(args, 0, "portable.get");
+            if (portableMachine == null) throw new IllegalStateException("portable.define must be called before portable.get");
+            return portableMachine.get(name);
+        });
+        portable.put("raw", (ProxyExecutable) args -> {
+            String name = stringArg(args, 0, "portable.raw");
+            if (portableMachine == null) throw new IllegalStateException("portable.define must be called before portable.raw");
+            return portableMachine.raw(name);
+        });
+        portable.put("setInput", (ProxyExecutable) args -> {
+            String name = stringArg(args, 0, "portable.setInput");
+            double value = numberArg(args, 1, "portable.setInput");
+            if (portableMachine == null) throw new IllegalStateException("portable.define must be called before portable.setInput");
+            portableMachine.setInput(name, value);
+            return null;
+        });
+        portable.put("input", (ProxyExecutable) args -> {
+            String name = stringArg(args, 0, "portable.input");
+            if (portableMachine == null) throw new IllegalStateException("portable.define must be called before portable.input");
+            return portableMachine.input(name);
+        });
+
         Value bindings = context.getBindings("js");
         bindings.putMember("game", ProxyObject.fromMap(game));
         bindings.putMember("input", ProxyObject.fromMap(input));
@@ -301,6 +345,7 @@ final class ScriptInstance {
         bindings.putMember("render", ProxyObject.fromMap(render));
         bindings.putMember("ui", ProxyObject.fromMap(ui));
         bindings.putMember("menu", ProxyObject.fromMap(menu));
+        bindings.putMember("portable", ProxyObject.fromMap(portable));
     }
 
     private void maintainActors() {
@@ -619,9 +664,24 @@ final class ScriptInstance {
         String dimension = memberResource(opts, "dimension", "minecraft:overworld");
         String particle = memberResource(opts, "particle", null);
         double x = memberDouble(opts, "x", 0), y = memberDouble(opts, "y", 0), z = memberDouble(opts, "z", 0);
+        double dx = 0, dy = 0, dz = 0;
+        if (opts.hasMember("delta")) {
+            Value delta = opts.getMember("delta");
+            if (delta == null || delta.isNull() || !delta.hasMembers()) throw new IllegalArgumentException("delta must be a vec3 object");
+            dx = memberDouble(delta, "x", 0);
+            dy = memberDouble(delta, "y", 0);
+            dz = memberDouble(delta, "z", 0);
+        }
+        if (dx < 0 || dy < 0 || dz < 0 || dx > 100 || dy > 100 || dz > 100) {
+            throw new IllegalArgumentException("particle delta components must be between 0 and 100");
+        }
+        double speed = memberDouble(opts, "speed", 0);
+        if (speed < 0 || speed > 100) throw new IllegalArgumentException("particle speed must be between 0 and 100");
+        int count = memberBoundedInt(opts, "count", 1, 1, 1000);
+        boolean force = memberBoolean(opts, "force", false);
         exec(server, String.format(Locale.ROOT,
-            "execute in %s run particle %s %.4f %.4f %.4f 0 0 0 0 1 force",
-            dimension, particle, x, y, z));
+            "execute in %s run particle %s %.4f %.4f %.4f %.4f %.4f %.4f %.4f %d%s",
+            dimension, particle, x, y, z, dx, dy, dz, speed, count, force ? " force" : ""));
     }
 
     private void sound(Value[] args) {
@@ -1512,6 +1572,13 @@ final class ScriptInstance {
     private static String stringArg(Value[] args, int index, String api) {
         if (args.length <= index || !args[index].isString()) throw new IllegalArgumentException(api + " requires string argument " + index);
         return args[index].asString();
+    }
+
+    private static double numberArg(Value[] args, int index, String api) {
+        if (args.length <= index || !args[index].isNumber()) throw new IllegalArgumentException(api + " requires numeric argument " + index);
+        double value = args[index].asDouble();
+        if (!Double.isFinite(value)) throw new IllegalArgumentException(api + " requires finite numeric argument " + index);
+        return value;
     }
 
     private static Value objectArg(Value[] args, int index, String api) {

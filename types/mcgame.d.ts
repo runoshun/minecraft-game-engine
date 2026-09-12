@@ -106,8 +106,168 @@ type MenuActionEvent = {
   actionId: string;
 };
 
+type PortableStateRef = { state: string };
+type PortableInputRef = { input: string };
+type PortableValue = number | PortableStateRef | PortableInputRef;
+type PortableComparison = {
+  op: "eq" | "ne" | "lt" | "lte" | "gt" | "gte";
+  left: PortableValue;
+  right: PortableValue;
+};
+type PortableAction =
+  | { op: "set" | "add" | "sub"; target: string; value: PortableValue }
+  | { op: "negate"; target: string }
+  | { op: "if"; condition: PortableComparison; then: PortableAction[]; else?: PortableAction[] };
+type PortableProgramSpecV1 = {
+  version?: 1;
+  fixedPoint?: number;
+  state: Record<string, number>;
+  tick: PortableAction[];
+};
+type PortableVanillaInputBindingV2 = { source: "first_player_hotbar_slot" };
+type PortableVanillaInputSourceV3 =
+  | "first_player_hotbar_slot"
+  | "first_player_forward"
+  | "first_player_backward"
+  | "first_player_left"
+  | "first_player_right"
+  | "first_player_jump"
+  | "first_player_sneak"
+  | "first_player_sprint";
+type PortableVanillaInputBindingV3 = { source: PortableVanillaInputSourceV3 };
+type PortableVanillaCoordinate = number | { state: string; base?: number };
+type PortableVanillaBlockProjection = {
+  id: string;
+  dimension?: string;
+  block: string;
+  x: PortableVanillaCoordinate;
+  y: PortableVanillaCoordinate;
+  z: PortableVanillaCoordinate;
+  scale?: number | { x: number; y: number; z: number };
+  translation?: { x: number; y: number; z: number };
+};
+type PortableVanillaCamera = {
+  id: string;
+  dimension?: string;
+  x: PortableVanillaCoordinate;
+  y: PortableVanillaCoordinate;
+  z: PortableVanillaCoordinate;
+  yaw?: number;
+  pitch?: number;
+};
+type PortableVanillaParticleEmitter = {
+  id: string;
+  dimension?: string;
+  particle: string;
+  x: PortableVanillaCoordinate;
+  y: PortableVanillaCoordinate;
+  z: PortableVanillaCoordinate;
+  delta?: number | { x: number; y: number; z: number };
+  speed?: number;
+  count?: number;
+  force?: boolean;
+  when?: PortableComparison;
+};
+type PortableProgramSpecV2 = {
+  version: 2;
+  fixedPoint?: number;
+  state: Record<string, number>;
+  inputs?: Record<string, number>;
+  vanilla?: {
+    inputs?: Record<string, PortableVanillaInputBindingV2>;
+    projections?: PortableVanillaBlockProjection[];
+  };
+  tick: PortableAction[];
+};
+type PortableProgramSpecV3 = {
+  version: 3;
+  fixedPoint?: number;
+  state: Record<string, number>;
+  inputs?: Record<string, number>;
+  vanilla?: {
+    inputs?: Record<string, PortableVanillaInputBindingV3>;
+    projections?: PortableVanillaBlockProjection[];
+    cameras?: PortableVanillaCamera[];
+    particles?: PortableVanillaParticleEmitter[];
+  };
+  tick: PortableAction[];
+};
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3;
+
+declare const portable: {
+  define(spec: PortableProgramSpec): void;
+  get(state: string): number;
+  raw(state: string): number;
+  setInput(input: string, value: number): void;
+  input(input: string): number;
+};
+
+type PortableDslComparable = {
+  eq(value: PortableDslValue): PortableDslCondition;
+  ne(value: PortableDslValue): PortableDslCondition;
+  lt(value: PortableDslValue): PortableDslCondition;
+  lte(value: PortableDslValue): PortableDslCondition;
+  gt(value: PortableDslValue): PortableDslCondition;
+  gte(value: PortableDslValue): PortableDslCondition;
+};
+type PortableDslState = PortableDslComparable & {
+  readonly name: string;
+  set(value: PortableDslValue): void;
+  add(value: PortableDslValue): void;
+  sub(value: PortableDslValue): void;
+  negate(): void;
+};
+type PortableDslInput = PortableDslComparable & { readonly name: string };
+type PortableDslValue = number | PortableDslState | PortableDslInput;
+type PortableDslCondition = { readonly __portableDslCondition?: never };
+type PortableDslCoordinate = number | PortableDslState | { readonly __portableDslCoordinate?: never };
+type PortableDslInputBinding = { source: PortableVanillaInputSourceV3 };
+type PortableDslBlockSpec = {
+  dimension?: string;
+  block: string;
+  x: PortableDslCoordinate;
+  y: PortableDslCoordinate;
+  z: PortableDslCoordinate;
+  scale?: number | { x: number; y: number; z: number };
+  translation?: { x: number; y: number; z: number };
+};
+type PortableDslCameraSpec = {
+  dimension?: string;
+  x: PortableDslCoordinate;
+  y: PortableDslCoordinate;
+  z: PortableDslCoordinate;
+  yaw?: number;
+  pitch?: number;
+};
+type PortableDslParticleSpec = {
+  dimension?: string;
+  particle: string;
+  x: PortableDslCoordinate;
+  y: PortableDslCoordinate;
+  z: PortableDslCoordinate;
+  delta?: number | { x: number; y: number; z: number };
+  speed?: number;
+  count?: number;
+  force?: boolean;
+  when?: PortableDslCondition;
+};
+type PortableDsl = {
+  state(name: string, initial: number): PortableDslState;
+  input(name: string, initial?: number, binding?: PortableDslInputBinding): PortableDslInput;
+  tick(callback: () => void): void;
+  when(condition: PortableDslCondition, thenCallback: () => void, elseCallback?: () => void): void;
+  at(state: PortableDslState, base?: number): PortableDslCoordinate;
+  block(id: string, spec: PortableDslBlockSpec): void;
+  camera(id: string, spec: PortableDslCameraSpec): void;
+  particle(id: string, spec: PortableDslParticleSpec): void;
+};
+
+declare function portableDsl(build: (game: PortableDsl) => void): void;
+declare function portableDsl(options: { fixedPoint?: number }, build: (game: PortableDsl) => void): void;
+
 declare const game: {
   onStart(callback: () => void): void;
+  onBeforeTick(callback: (ctx: { tick: number }) => void): void;
   onTick(callback: (ctx: { tick: number }) => void): void;
   log(...values: unknown[]): void;
 };
@@ -158,6 +318,16 @@ declare const world: {
 };
 
 declare const effects: {
-  particle(options: { dimension?: string; particle: string; x: number; y: number; z: number }): void;
+  particle(options: {
+    dimension?: string;
+    particle: string;
+    x: number;
+    y: number;
+    z: number;
+    delta?: { x?: number; y?: number; z?: number };
+    speed?: number;
+    count?: number;
+    force?: boolean;
+  }): void;
   sound(options: { dimension?: string; sound: string; x: number; y: number; z: number; volume?: number; pitch?: number }): void;
 };

@@ -24,7 +24,7 @@ Vanilla Minecraft client
         v
 Fabric server + MC Game Runtime
   |  input snapshots
-  |  camera / actor / render / ui / menu / world / effects API
+  |  portable fixed-point rules + camera / actor / render / ui / menu / world / effects API
   |
   +--> sandboxed GraalJS
           ^
@@ -72,12 +72,13 @@ game.onTick(() => {
 });
 ```
 
-A minimal example lives under [`examples/demo-datapack`](examples/demo-datapack), and the validated two-room game loop lives under [`examples/topdown-roguelike`](examples/topdown-roguelike). Presentation API details and adapter guidance are in [`docs/presentation-api.md`](docs/presentation-api.md).
+A minimal example lives under [`examples/demo-datapack`](examples/demo-datapack), [`examples/portable-bounce`](examples/portable-bounce) is the low-level portable IR smoke example, [`examples/portable-breakout-core`](examples/portable-breakout-core) demonstrates the TypeScript DSL compiling to a mod-free vanilla datapack, and the validated game loop lives under [`examples/topdown-roguelike`](examples/topdown-roguelike). Presentation API details and adapter guidance are in [`docs/presentation-api.md`](docs/presentation-api.md).
 
 ## Current API
 
-- `game.onStart(callback)`
-- `game.onTick(callback)`
+- `portableDsl(...)` (experimental TS-style frontend; portable v3 includes held input, block projections, one spectator camera, and particle emitters)
+- `portable.define(spec)` / `portable.get(state)` / `portable.raw(state)` / input register access (low-level portable API)
+- `game.onStart(callback)` / `game.onBeforeTick(callback)` / `game.onTick(callback)`
 - `game.log(...values)`
 - `input.players()` / `input.get(playerIdOrName)`
 - `actors.spawn(id, options)` / `move` / `remove` (compatibility mannequin API)
@@ -103,6 +104,17 @@ Requires Java 25.
 ```bash
 ./gradlew build
 ```
+
+The experimental portable subset can also be compiled to a standalone vanilla datapack. A DSL-only source using supported portable primitives needs no Fabric mod on the target server. The current v3 backend supports normal held player input (W/A/S/D, jump, sneak, sprint), block-display projections, one spectator camera, and bounded particle emitters in addition to fixed-point game logic:
+
+```bash
+./gradlew compilePortable \
+  -PportableSource=examples/portable-breakout-core/datapack/data/portable_breakout/mcgame/main.ts \
+  -PportableNamespace=portable_breakout \
+  -PportableOutput=build/portable/portable_breakout
+```
+
+The reference Breakout uses A/D to move, Space to launch, a generated fixed camera, and generated end-rod/cloud particle effects. On a vanilla target the compiler emits player-input predicates, scoreboard/mcfunction logic, owned display/camera/marker entities, and `particle` commands; the TypeScript source itself is not shipped or executed.
 
 The server mod is emitted locally to `build/libs/mc-game-runtime-<version>.jar`. Tagged builds publish the runtime JAR and its SHA-256 checksum as GitHub Release assets; built JARs are not kept in the source tree. Fabric API is also required on the server.
 

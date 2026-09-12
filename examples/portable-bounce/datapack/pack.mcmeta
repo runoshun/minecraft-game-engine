@@ -1,0 +1,7 @@
+{
+  "pack": {
+    "description": "Portable fixed-point bounce example for MC Game Runtime",
+    "min_format": [101, 1],
+    "max_format": [101, 1]
+  }
+}

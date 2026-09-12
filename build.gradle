@@ -9,6 +9,8 @@ dependencies {
     implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
     compileOnly "org.graalvm.polyglot:polyglot:${project.graal_version}"
+    testImplementation "org.junit.jupiter:junit-jupiter:5.11.4"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.11.4"
 
     // Loom dev runs execute exploded classes rather than the Jar-in-Jar artifact, so mirror
     // the embedded Graal dependencies onto the dev runtime classpath. These are not packed
@@ -51,4 +53,27 @@ java {
     withSourcesJar()
     sourceCompatibility = JavaVersion.VERSION_25
     targetCompatibility = JavaVersion.VERSION_25
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+    maxHeapSize = '256m'
+    maxParallelForks = 1
+}
+
+tasks.register('compilePortable', JavaExec) {
+    group = 'mcgame'
+    description = 'Compile portable IR/portableDsl from a TypeScript main.ts into a vanilla datapack.'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'dev.mcgame.runtime.PortableCompilerCli'
+    doFirst {
+        def source = providers.gradleProperty('portableSource').orNull
+        def namespace = providers.gradleProperty('portableNamespace').orNull
+        def output = providers.gradleProperty('portableOutput').orNull
+        if (!source || !namespace || !output) {
+            throw new GradleException('compilePortable requires -PportableSource=... -PportableNamespace=... -PportableOutput=...')
+        }
+        args '--source', file(source).absolutePath, '--namespace', namespace, '--output', file(output).absolutePath
+    }
 }
