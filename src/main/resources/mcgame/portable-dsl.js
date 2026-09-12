@@ -2,6 +2,7 @@
   const REF = Symbol("mcgame.portableDsl.ref");
   const CONDITION = Symbol("mcgame.portableDsl.condition");
   const COORDINATE = Symbol("mcgame.portableDsl.coordinate");
+  const BOX = Symbol("mcgame.portableDsl.box");
 
   function fail(message) {
     throw new Error("portableDsl: " + message);
@@ -48,8 +49,11 @@
     const inputValues = Object.create(null);
     const vanillaInputs = Object.create(null);
     const projections = [];
+    const texts = [];
     const cameras = [];
     const particles = [];
+    const sounds = [];
+    const huds = [];
     const runtimeInputs = [];
     let tickActions = null;
     let actionSink = null;
@@ -169,6 +173,45 @@
       fail(label + " must be a number, state, or at(state, base)");
     }
 
+    function normalizeBoxValue(value, label) {
+      if (typeof value === "number") return finiteNumber(value, label);
+      if (value && (value[REF] === "state" || value[REF] === "input")) return unwrapValue(value);
+      fail(label + " must be a number, state, or input reference");
+    }
+
+    function box(id, spec) {
+      if (typeof id !== "string" || id.length === 0) fail("box id must be a non-empty string");
+      if (spec == null || typeof spec !== "object") fail("box " + id + " spec must be an object");
+      const width = finiteNumber(spec.width, "box " + id + " width");
+      const height = finiteNumber(spec.height, "box " + id + " height");
+      if (width <= 0 || width > 1000) fail("box " + id + " width must be > 0 and <= 1000");
+      if (height <= 0 || height > 1000) fail("box " + id + " height must be > 0 and <= 1000");
+      return Object.freeze({
+        [BOX]: true,
+        id,
+        x: normalizeBoxValue(spec.x, "box " + id + " x"),
+        y: normalizeBoxValue(spec.y, "box " + id + " y"),
+        width,
+        height,
+      });
+    }
+
+    function serializeBox(value, label) {
+      if (!value || value[BOX] !== true) fail(label + " must be created by box(...)");
+      return { x: value.x, y: value.y, width: value.width, height: value.height };
+    }
+
+    function whenColliding(a, b, thenCallback, elseCallback) {
+      const action = {
+        op: "if_aabb",
+        a: serializeBox(a, "whenColliding first box"),
+        b: serializeBox(b, "whenColliding second box"),
+        then: captureActions(thenCallback, "whenColliding then"),
+      };
+      if (elseCallback !== undefined) action.else = captureActions(elseCallback, "whenColliding else");
+      emit(action);
+    }
+
     function block(id, spec) {
       if (typeof id !== "string" || id.length === 0) fail("block id must be a non-empty string");
       if (spec == null || typeof spec !== "object") fail("block " + id + " spec must be an object");
@@ -184,6 +227,30 @@
       if (spec.scale !== undefined) projection.scale = spec.scale;
       if (spec.translation !== undefined) projection.translation = spec.translation;
       projections.push(projection);
+    }
+
+    function textProjection(id, spec) {
+      if (typeof id !== "string" || id.length === 0) fail("text id must be a non-empty string");
+      if (spec == null || typeof spec !== "object") fail("text " + id + " spec must be an object");
+      if (typeof spec.text !== "string") fail("text " + id + " requires a text string");
+      if (spec.text.length > 256) fail("text " + id + " exceeds 256 characters");
+      const projection = {
+        id,
+        dimension: spec.dimension === undefined ? "minecraft:overworld" : spec.dimension,
+        text: spec.text,
+        x: normalizeCoordinate(spec.x, "text " + id + " x"),
+        y: normalizeCoordinate(spec.y, "text " + id + " y"),
+        z: normalizeCoordinate(spec.z, "text " + id + " z"),
+        scale: normalizeVec3(spec.scale, { x: 1, y: 1, z: 1 }, "text " + id + " scale"),
+        billboard: spec.billboard === undefined ? "center" : spec.billboard,
+      };
+      if (!["fixed", "vertical", "horizontal", "center"].includes(projection.billboard)) {
+        fail("text " + id + " billboard must be fixed, vertical, horizontal, or center");
+      }
+      if (projection.scale.x <= 0 || projection.scale.y <= 0 || projection.scale.z <= 0) {
+        fail("text " + id + " scale components must be > 0");
+      }
+      texts.push(projection);
     }
 
     function cameraProjection(id, spec) {
@@ -225,15 +292,59 @@
       particles.push(emitter);
     }
 
+    function soundEmitter(id, spec) {
+      if (typeof id !== "string" || id.length === 0) fail("sound id must be a non-empty string");
+      if (spec == null || typeof spec !== "object") fail("sound " + id + " spec must be an object");
+      if (typeof spec.sound !== "string") fail("sound " + id + " requires a sound resource id");
+      const emitter = {
+        id,
+        dimension: spec.dimension === undefined ? "minecraft:overworld" : spec.dimension,
+        sound: spec.sound,
+        x: normalizeCoordinate(spec.x, "sound " + id + " x"),
+        y: normalizeCoordinate(spec.y, "sound " + id + " y"),
+        z: normalizeCoordinate(spec.z, "sound " + id + " z"),
+        volume: finiteNumber(spec.volume === undefined ? 1 : spec.volume, "sound " + id + " volume"),
+        pitch: finiteNumber(spec.pitch === undefined ? 1 : spec.pitch, "sound " + id + " pitch"),
+      };
+      if (emitter.volume < 0 || emitter.volume > 100) fail("sound " + id + " volume must be between 0 and 100");
+      if (emitter.pitch < 0 || emitter.pitch > 2) fail("sound " + id + " pitch must be between 0 and 2");
+      if (spec.when !== undefined) emitter.when = serializedCondition(spec.when, "sound " + id + " when");
+      sounds.push(emitter);
+    }
+
+    function hudProjection(id, spec) {
+      if (huds.length > 0) fail("only one hud(...) is currently supported");
+      if (typeof id !== "string" || id.length === 0) fail("hud id must be a non-empty string");
+      if (spec == null || typeof spec !== "object") fail("hud " + id + " spec must be an object");
+      const source = typeof spec.text === "string" ? [spec.text] : spec.text;
+      if (!Array.isArray(source) || source.length < 1 || source.length > 32) {
+        fail("hud " + id + " text must be a string or an array with 1..32 tokens");
+      }
+      const tokens = source.map((token, index) => {
+        if (typeof token === "string") {
+          if (token.length > 128) fail("hud " + id + " text token " + index + " exceeds 128 characters");
+          return { text: token };
+        }
+        if (token && (token[REF] === "state" || token[REF] === "input")) return { value: unwrapValue(token) };
+        fail("hud " + id + " token " + index + " must be a string, state, or input reference");
+      });
+      huds.push({ id, tokens });
+    }
+
     const dsl = Object.freeze({
       state: makeState,
       input(name, initial = 0, binding) { return makeInput(name, initial, binding); },
       tick,
       when,
+      whenColliding,
       at,
+      box,
       block,
+      text: textProjection,
       camera: cameraProjection,
       particle: particleEmitter,
+      sound: soundEmitter,
+      hud: hudProjection,
     });
 
     build(dsl);
@@ -241,18 +352,21 @@
     if (Object.keys(stateValues).length === 0) fail("at least one state(...) is required");
 
     const spec = {
-      version: 3,
+      version: 4,
       fixedPoint,
       state: stateValues,
       tick: tickActions,
     };
     if (Object.keys(inputValues).length > 0) spec.inputs = inputValues;
-    if (Object.keys(vanillaInputs).length > 0 || projections.length > 0 || cameras.length > 0 || particles.length > 0) {
+    if (Object.keys(vanillaInputs).length > 0 || projections.length > 0 || texts.length > 0 || cameras.length > 0 || particles.length > 0 || sounds.length > 0 || huds.length > 0) {
       spec.vanilla = {};
       if (Object.keys(vanillaInputs).length > 0) spec.vanilla.inputs = vanillaInputs;
       if (projections.length > 0) spec.vanilla.projections = projections;
+      if (texts.length > 0) spec.vanilla.texts = texts;
       if (cameras.length > 0) spec.vanilla.cameras = cameras;
       if (particles.length > 0) spec.vanilla.particles = particles;
+      if (sounds.length > 0) spec.vanilla.sounds = sounds;
+      if (huds.length > 0) spec.vanilla.huds = huds;
     }
 
     portable.define(spec);
@@ -313,6 +427,33 @@
             x: runtimeCoordinate(projection.x),
             y: runtimeCoordinate(projection.y),
             z: runtimeCoordinate(projection.z),
+          });
+        }
+      });
+    }
+
+    if (texts.length > 0) {
+      const renderTextId = text => "pdsl_text_" + text.id;
+      game.onStart(() => {
+        for (const text of texts) {
+          render.spawn(renderTextId(text), {
+            visual: { kind: "text", text: text.text },
+            dimension: text.dimension,
+            x: runtimeCoordinate(text.x),
+            y: runtimeCoordinate(text.y),
+            z: runtimeCoordinate(text.z),
+            scale: text.scale,
+            billboard: text.billboard,
+          });
+        }
+      });
+      game.onTick(() => {
+        for (const text of texts) {
+          if (typeof text.x === "number" && typeof text.y === "number" && typeof text.z === "number") continue;
+          render.update(renderTextId(text), {
+            x: runtimeCoordinate(text.x),
+            y: runtimeCoordinate(text.y),
+            z: runtimeCoordinate(text.z),
           });
         }
       });
@@ -389,6 +530,38 @@
             force: emitter.force,
           });
         }
+      });
+    }
+
+    if (sounds.length > 0) {
+      game.onTick(() => {
+        for (const emitter of sounds) {
+          if (emitter.when !== undefined && !runtimeTest(emitter.when)) continue;
+          effects.sound({
+            dimension: emitter.dimension,
+            sound: emitter.sound,
+            x: runtimeCoordinate(emitter.x),
+            y: runtimeCoordinate(emitter.y),
+            z: runtimeCoordinate(emitter.z),
+            volume: emitter.volume,
+            pitch: emitter.pitch,
+          });
+        }
+      });
+    }
+
+    if (huds.length > 0) {
+      const hud = huds[0];
+      game.onTick(() => {
+        const players = input.players();
+        const player = players.length > 0 ? players[0] : null;
+        if (!player) return;
+        let text = "";
+        for (const token of hud.tokens) {
+          if (token.text !== undefined) text += token.text;
+          else text += String(Math.trunc(runtimeValue(token.value)));
+        }
+        ui.hud(player.id, text);
       });
     }
   }

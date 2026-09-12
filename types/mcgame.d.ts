@@ -114,18 +114,20 @@ type PortableComparison = {
   left: PortableValue;
   right: PortableValue;
 };
+type PortableAabb = { x: PortableValue; y: PortableValue; width: number; height: number };
 type PortableAction =
   | { op: "set" | "add" | "sub"; target: string; value: PortableValue }
   | { op: "negate"; target: string }
-  | { op: "if"; condition: PortableComparison; then: PortableAction[]; else?: PortableAction[] };
+  | { op: "if"; condition: PortableComparison; then: PortableAction[]; else?: PortableAction[] }
+  | { op: "if_aabb"; a: PortableAabb; b: PortableAabb; then: PortableAction[]; else?: PortableAction[] };
 type PortableProgramSpecV1 = {
   version?: 1;
   fixedPoint?: number;
   state: Record<string, number>;
-  tick: PortableAction[];
+  tick: Exclude<PortableAction, { op: "if_aabb" }>[];
 };
 type PortableVanillaInputBindingV2 = { source: "first_player_hotbar_slot" };
-type PortableVanillaInputSourceV3 =
+type PortableVanillaInputSource =
   | "first_player_hotbar_slot"
   | "first_player_forward"
   | "first_player_backward"
@@ -134,7 +136,7 @@ type PortableVanillaInputSourceV3 =
   | "first_player_jump"
   | "first_player_sneak"
   | "first_player_sprint";
-type PortableVanillaInputBindingV3 = { source: PortableVanillaInputSourceV3 };
+type PortableVanillaInputBinding = { source: PortableVanillaInputSource };
 type PortableVanillaCoordinate = number | { state: string; base?: number };
 type PortableVanillaBlockProjection = {
   id: string;
@@ -145,6 +147,16 @@ type PortableVanillaBlockProjection = {
   z: PortableVanillaCoordinate;
   scale?: number | { x: number; y: number; z: number };
   translation?: { x: number; y: number; z: number };
+};
+type PortableVanillaTextProjection = {
+  id: string;
+  dimension?: string;
+  text: string;
+  x: PortableVanillaCoordinate;
+  y: PortableVanillaCoordinate;
+  z: PortableVanillaCoordinate;
+  scale?: number | { x: number; y: number; z: number };
+  billboard?: "fixed" | "vertical" | "horizontal" | "center";
 };
 type PortableVanillaCamera = {
   id: string;
@@ -168,6 +180,19 @@ type PortableVanillaParticleEmitter = {
   force?: boolean;
   when?: PortableComparison;
 };
+type PortableVanillaSoundEmitter = {
+  id: string;
+  dimension?: string;
+  sound: string;
+  x: PortableVanillaCoordinate;
+  y: PortableVanillaCoordinate;
+  z: PortableVanillaCoordinate;
+  volume?: number;
+  pitch?: number;
+  when?: PortableComparison;
+};
+type PortableHudToken = { text: string } | { value: PortableValue };
+type PortableVanillaHud = { id: string; tokens: PortableHudToken[] };
 type PortableProgramSpecV2 = {
   version: 2;
   fixedPoint?: number;
@@ -177,7 +202,7 @@ type PortableProgramSpecV2 = {
     inputs?: Record<string, PortableVanillaInputBindingV2>;
     projections?: PortableVanillaBlockProjection[];
   };
-  tick: PortableAction[];
+  tick: Exclude<PortableAction, { op: "if_aabb" }>[];
 };
 type PortableProgramSpecV3 = {
   version: 3;
@@ -185,14 +210,30 @@ type PortableProgramSpecV3 = {
   state: Record<string, number>;
   inputs?: Record<string, number>;
   vanilla?: {
-    inputs?: Record<string, PortableVanillaInputBindingV3>;
+    inputs?: Record<string, PortableVanillaInputBinding>;
     projections?: PortableVanillaBlockProjection[];
     cameras?: PortableVanillaCamera[];
     particles?: PortableVanillaParticleEmitter[];
   };
+  tick: Exclude<PortableAction, { op: "if_aabb" }>[];
+};
+type PortableProgramSpecV4 = {
+  version: 4;
+  fixedPoint?: number;
+  state: Record<string, number>;
+  inputs?: Record<string, number>;
+  vanilla?: {
+    inputs?: Record<string, PortableVanillaInputBinding>;
+    projections?: PortableVanillaBlockProjection[];
+    texts?: PortableVanillaTextProjection[];
+    cameras?: PortableVanillaCamera[];
+    particles?: PortableVanillaParticleEmitter[];
+    sounds?: PortableVanillaSoundEmitter[];
+    huds?: PortableVanillaHud[];
+  };
   tick: PortableAction[];
 };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3;
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -221,7 +262,7 @@ type PortableDslInput = PortableDslComparable & { readonly name: string };
 type PortableDslValue = number | PortableDslState | PortableDslInput;
 type PortableDslCondition = { readonly __portableDslCondition?: never };
 type PortableDslCoordinate = number | PortableDslState | { readonly __portableDslCoordinate?: never };
-type PortableDslInputBinding = { source: PortableVanillaInputSourceV3 };
+type PortableDslInputBinding = { source: PortableVanillaInputSource };
 type PortableDslBlockSpec = {
   dimension?: string;
   block: string;
@@ -230,6 +271,15 @@ type PortableDslBlockSpec = {
   z: PortableDslCoordinate;
   scale?: number | { x: number; y: number; z: number };
   translation?: { x: number; y: number; z: number };
+};
+type PortableDslTextSpec = {
+  dimension?: string;
+  text: string;
+  x: PortableDslCoordinate;
+  y: PortableDslCoordinate;
+  z: PortableDslCoordinate;
+  scale?: number | { x: number; y: number; z: number };
+  billboard?: "fixed" | "vertical" | "horizontal" | "center";
 };
 type PortableDslCameraSpec = {
   dimension?: string;
@@ -251,15 +301,33 @@ type PortableDslParticleSpec = {
   force?: boolean;
   when?: PortableDslCondition;
 };
+type PortableDslSoundSpec = {
+  dimension?: string;
+  sound: string;
+  x: PortableDslCoordinate;
+  y: PortableDslCoordinate;
+  z: PortableDslCoordinate;
+  volume?: number;
+  pitch?: number;
+  when?: PortableDslCondition;
+};
+type PortableDslBox = { readonly __portableDslBox?: never };
+type PortableDslBoxSpec = { x: PortableDslValue; y: PortableDslValue; width: number; height: number };
+type PortableDslHudSpec = { text: string | Array<string | PortableDslState | PortableDslInput> };
 type PortableDsl = {
   state(name: string, initial: number): PortableDslState;
   input(name: string, initial?: number, binding?: PortableDslInputBinding): PortableDslInput;
   tick(callback: () => void): void;
   when(condition: PortableDslCondition, thenCallback: () => void, elseCallback?: () => void): void;
+  box(id: string, spec: PortableDslBoxSpec): PortableDslBox;
+  whenColliding(a: PortableDslBox, b: PortableDslBox, thenCallback: () => void, elseCallback?: () => void): void;
   at(state: PortableDslState, base?: number): PortableDslCoordinate;
   block(id: string, spec: PortableDslBlockSpec): void;
+  text(id: string, spec: PortableDslTextSpec): void;
   camera(id: string, spec: PortableDslCameraSpec): void;
   particle(id: string, spec: PortableDslParticleSpec): void;
+  sound(id: string, spec: PortableDslSoundSpec): void;
+  hud(id: string, spec: PortableDslHudSpec): void;
 };
 
 declare function portableDsl(build: (game: PortableDsl) => void): void;
@@ -294,6 +362,7 @@ declare const render: {
 
 declare const ui: {
   panel(playerIdOrName: string, options: { title: UiText; rows: UiPanelRow[] } | null): void;
+  hud(playerIdOrName: string, text: UiText | null): void;
 };
 
 declare const menu: {

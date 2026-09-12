@@ -76,7 +76,7 @@ A minimal example lives under [`examples/demo-datapack`](examples/demo-datapack)
 
 ## Current API
 
-- `portableDsl(...)` (experimental TS-style frontend; portable v3 includes held input, block projections, one spectator camera, and particle emitters)
+- `portableDsl(...)` (experimental TS-style frontend; portable v4 includes held input, block/text projections, one spectator camera, particles, sounds, actionbar HUD, and 2D AABB collision)
 - `portable.define(spec)` / `portable.get(state)` / `portable.raw(state)` / input register access (low-level portable API)
 - `game.onStart(callback)` / `game.onBeforeTick(callback)` / `game.onTick(callback)`
 - `game.log(...values)`
@@ -84,6 +84,7 @@ A minimal example lives under [`examples/demo-datapack`](examples/demo-datapack)
 - `actors.spawn(id, options)` / `move` / `remove` (compatibility mannequin API)
 - `render.spawn(id, options)` / `update` / `remove` / `attach` / `detach`
 - `ui.panel(player, panelOrNull)` (per-player scoreboard sidebar projection)
+- `ui.hud(player, textOrNull)` (per-player actionbar projection)
 - `menu.open(player, spec)` / `update` / `close` / `onAction`
 - `camera.attach(player, options)` / `move` / `detach`
 - `world.setBlock(options)`
@@ -105,7 +106,7 @@ Requires Java 25.
 ./gradlew build
 ```
 
-The experimental portable subset can also be compiled to a standalone vanilla datapack. A DSL-only source using supported portable primitives needs no Fabric mod on the target server. The current v3 backend supports normal held player input (W/A/S/D, jump, sneak, sprint), block-display projections, one spectator camera, and bounded particle emitters in addition to fixed-point game logic:
+The experimental portable subset can also be compiled to a standalone vanilla datapack. A DSL-only source using supported portable primitives needs no Fabric mod on the target server. The current v4 backend supports normal held player input (W/A/S/D, jump, sneak, sprint), block/text-display projections, one spectator camera, bounded particle/sound emitters, one actionbar HUD, and deterministic 2D AABB collision in addition to fixed-point game logic:
 
 ```bash
 ./gradlew compilePortable \
@@ -114,7 +115,7 @@ The experimental portable subset can also be compiled to a standalone vanilla da
   -PportableOutput=build/portable/portable_breakout
 ```
 
-The reference Breakout uses A/D to move, Space to launch, a generated fixed camera, and generated end-rod/cloud particle effects. On a vanilla target the compiler emits player-input predicates, scoreboard/mcfunction logic, owned display/camera/marker entities, and `particle` commands; the TypeScript source itself is not shipped or executed.
+The reference Breakout uses A/D to move, Space to launch, AABB paddle collision, a generated fixed camera, a world-space title, an actionbar score HUD, end-rod/cloud particles, and bounce sound. On a vanilla target the compiler emits player-input predicates, scoreboard/mcfunction logic, owned display/camera/marker entities, `particle`/`playsound`, and actionbar commands; the TypeScript source itself is not shipped or executed.
 
 The server mod is emitted locally to `build/libs/mc-game-runtime-<version>.jar`. Tagged builds publish the runtime JAR and its SHA-256 checksum as GitHub Release assets; built JARs are not kept in the source tree. Fabric API is also required on the server.
 

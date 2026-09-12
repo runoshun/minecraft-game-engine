@@ -14,6 +14,7 @@ import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.numbers.BlankFormat;
 import net.minecraft.network.protocol.common.ClientboundClearDialogPacket;
 import net.minecraft.network.protocol.game.ClientboundResetScorePacket;
+import net.minecraft.network.protocol.game.ClientboundSetActionBarTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetDisplayObjectivePacket;
 import net.minecraft.network.protocol.game.ClientboundSetObjectivePacket;
 import net.minecraft.network.protocol.game.ClientboundSetScorePacket;
@@ -111,6 +112,7 @@ final class ScriptInstance {
     private final Map<String, RenderNode> renderNodes = new HashMap<>();
     private final Map<String, Attachment> renderAttachments = new HashMap<>();
     private final Map<UUID, PanelState> panels = new HashMap<>();
+    private final Set<UUID> hudPlayers = new HashSet<>();
     private final Map<UUID, OpenMenuState> openMenus = new HashMap<>();
     private final List<Value> menuActionCallbacks = new ArrayList<>();
     private final Deque<PendingMenuAction> pendingMenuActions = new ArrayDeque<>();
@@ -206,6 +208,11 @@ final class ScriptInstance {
         }
         renderNodes.clear();
         renderAttachments.clear();
+        for (UUID uuid : List.copyOf(hudPlayers)) {
+            ServerPlayer player = server.getPlayerList().getPlayer(uuid);
+            if (player != null) player.connection.send(new ClientboundSetActionBarTextPacket(Component.empty()));
+        }
+        hudPlayers.clear();
         for (PanelState panel : List.copyOf(panels.values())) hidePanel(server, panel);
         panels.clear();
         for (OpenMenuState menu : List.copyOf(openMenus.values())) closeMenuState(server, menu);
@@ -293,6 +300,7 @@ final class ScriptInstance {
 
         Map<String, Object> ui = new HashMap<>();
         ui.put("panel", (ProxyExecutable) args -> { setPanel(args); return null; });
+        ui.put("hud", (ProxyExecutable) args -> { setHud(args); return null; });
 
         Map<String, Object> menu = new HashMap<>();
         menu.put("onAction", (ProxyExecutable) args -> {
@@ -1063,6 +1071,19 @@ final class ScriptInstance {
         child.entity.setDeltaMovement(0, 0, 0);
         child.entity.setPos(child.x, child.y, child.z);
         syncAttachedChildren(childId);
+    }
+
+    private void setHud(Value[] args) {
+        MinecraftServer server = requireServer();
+        ServerPlayer player = requirePlayer(server, stringArg(args, 0, "ui.hud"));
+        if (args.length < 2 || args[1].isNull()) {
+            player.connection.send(new ClientboundSetActionBarTextPacket(Component.empty()));
+            hudPlayers.remove(player.getUUID());
+            return;
+        }
+        Component text = toComponent(args[1], "ui.hud");
+        player.connection.send(new ClientboundSetActionBarTextPacket(text));
+        hudPlayers.add(player.getUUID());
     }
 
     private void setPanel(Value[] args) {

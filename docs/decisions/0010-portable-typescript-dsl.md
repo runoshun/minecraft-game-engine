@@ -47,7 +47,7 @@ Tradeoffs and limitations:
 
 - DSL callbacks execute at initialization to record rules; they are not per-tick JavaScript closures;
 - normal JavaScript `if`, `for`, mutable arrays, classes, and arbitrary function calls inside `tick(...)` do not automatically become portable semantics. Authors must use DSL operations for code intended for vanilla compilation;
-- current v3 auto-adapters cover hotbar/held input, block-display projections, one camera, and particle emitters;
+- current v4 auto-adapters cover hotbar/held input, block/text-display projections, one camera, particle/sound emitters, one actionbar HUD, and 2D AABB collision;
 - generated vanilla ownership/input is still single-controller-oriented and not a general multiplayer session model;
 - the portable camera changes the controller to spectator and cleanup returns that player to Adventure rather than restoring an arbitrary prior gamemode;
 - richer physics, collections, events, UI, and sound need explicit IR/backend primitives before DSL sugar can expose them portably.

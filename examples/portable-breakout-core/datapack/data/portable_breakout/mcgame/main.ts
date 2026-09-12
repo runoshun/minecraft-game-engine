@@ -11,8 +11,6 @@ portableDsl({ fixedPoint: 1000 }, game => {
 
   const paddleX = game.state("paddleX", 0);
   const paddleDelta = game.state("paddleDelta", 0);
-  const paddleLeft = game.state("paddleLeft", -1.5);
-  const paddleRight = game.state("paddleRight", 1.5);
   const ballX = game.state("ballX", 0);
   const ballY = game.state("ballY", SERVE_Y);
   const ballVx = game.state("ballVx", 0.17);
@@ -20,6 +18,20 @@ portableDsl({ fixedPoint: 1000 }, game => {
   const playing = game.state("playing", 0);
   const previousJump = game.state("previousJump", 0);
   const hitFx = game.state("hitFx", 0);
+  const score = game.state("score", 0);
+
+  const paddleHitbox = game.box("paddle", {
+    x: paddleX,
+    y: PADDLE_Y,
+    width: 3.0,
+    height: 0.4,
+  });
+  const ballHitbox = game.box("ball", {
+    x: ballX,
+    y: ballY,
+    width: 0.45,
+    height: 0.45,
+  });
 
   game.camera("main", {
     x: BOARD_X,
@@ -53,6 +65,18 @@ portableDsl({ fixedPoint: 1000 }, game => {
     scale: 0.45,
     translation: { x: -0.225, y: -0.225, z: -0.225 },
   });
+  game.text("title", {
+    text: "PORTABLE BREAKOUT",
+    x: BOARD_X,
+    y: BOARD_Y + 6.5,
+    z: BOARD_Z - 0.25,
+    scale: 1.15,
+    billboard: "center",
+  });
+
+  game.hud("main", {
+    text: ["SCORE ", score, "   A/D MOVE   SPACE LAUNCH"],
+  });
 
   game.particle("trail", {
     particle: "minecraft:end_rod",
@@ -76,6 +100,15 @@ portableDsl({ fixedPoint: 1000 }, game => {
     force: true,
     when: hitFx.eq(1),
   });
+  game.sound("bounce", {
+    sound: "minecraft:block.note_block.pling",
+    x: game.at(ballX, BOARD_X),
+    y: game.at(ballY, BOARD_Y),
+    z: BOARD_Z - 0.1,
+    volume: 0.7,
+    pitch: 1.35,
+    when: hitFx.eq(1),
+  });
 
   game.tick(() => {
     hitFx.set(0);
@@ -86,11 +119,6 @@ portableDsl({ fixedPoint: 1000 }, game => {
     paddleX.add(paddleDelta);
     game.when(paddleX.gte(5.2), () => paddleX.set(5.2));
     game.when(paddleX.lte(-5.2), () => paddleX.set(-5.2));
-
-    paddleLeft.set(paddleX);
-    paddleLeft.sub(1.5);
-    paddleRight.set(paddleX);
-    paddleRight.add(1.5);
 
     game.when(playing.eq(0), () => {
       ballX.set(paddleX);
@@ -118,19 +146,19 @@ portableDsl({ fixedPoint: 1000 }, game => {
         hitFx.set(1);
       });
 
-      game.when(ballY.lte(-4.25), () => {
-        game.when(ballVy.lt(0), () => {
-          game.when(ballX.gte(paddleLeft), () => {
-            game.when(ballX.lte(paddleRight), () => {
-              ballY.set(-4.25);
-              ballVy.negate();
-              hitFx.set(1);
-            });
-          });
+      game.when(ballVy.lt(0), () => {
+        game.whenColliding(ballHitbox, paddleHitbox, () => {
+          ballY.set(PADDLE_Y + 0.425);
+          ballVy.negate();
+          score.add(1);
+          hitFx.set(1);
         });
       });
 
-      game.when(ballY.lte(-7.0), () => playing.set(0));
+      game.when(ballY.lte(-7.0), () => {
+        playing.set(0);
+        score.set(0);
+      });
     });
 
     previousJump.set(jump);

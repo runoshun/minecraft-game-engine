@@ -16,8 +16,12 @@ final class PortableProgramParser {
     private static final int MAX_STATES = 128;
     private static final int MAX_INPUTS = 32;
     private static final int MAX_PROJECTIONS = 64;
+    private static final int MAX_TEXTS = 64;
     private static final int MAX_CAMERAS = 1;
     private static final int MAX_PARTICLES = 64;
+    private static final int MAX_SOUNDS = 64;
+    private static final int MAX_HUDS = 1;
+    private static final int MAX_HUD_TOKENS = 32;
     private static final int MAX_ACTIONS = 2048;
     private static final int MAX_DEPTH = 16;
 
@@ -64,8 +68,11 @@ final class PortableProgramParser {
 
         Map<String, PortableProgram.VanillaInputSource> vanillaInputs = new LinkedHashMap<>();
         List<PortableProgram.VanillaBlockProjection> vanillaProjections = new ArrayList<>();
+        List<PortableProgram.VanillaTextProjection> vanillaTexts = new ArrayList<>();
         List<PortableProgram.VanillaCamera> vanillaCameras = new ArrayList<>();
         List<PortableProgram.VanillaParticleEmitter> vanillaParticles = new ArrayList<>();
+        List<PortableProgram.VanillaSoundEmitter> vanillaSounds = new ArrayList<>();
+        List<PortableProgram.VanillaHud> vanillaHuds = new ArrayList<>();
 
         if (spec.hasMember("vanilla")) {
             if (version < PortableProgram.VERSION_2) throw new IllegalArgumentException(api + ".vanilla requires portable version 2");
@@ -121,6 +128,32 @@ final class PortableProgramParser {
                 }
             }
 
+            if (vanilla.hasMember("texts")) {
+                if (version < PortableProgram.VERSION_4) throw new IllegalArgumentException(api + ".vanilla.texts requires portable version 4");
+                Value texts = requiredArray(vanilla, "texts", api + ".vanilla");
+                if (texts.getArraySize() > MAX_TEXTS) throw new IllegalArgumentException(api + ".vanilla.texts exceeds max text count " + MAX_TEXTS);
+                Set<String> textIds = new java.util.HashSet<>();
+                for (long i = 0; i < texts.getArraySize(); i++) {
+                    Value text = texts.getArrayElement(i);
+                    String path = api + ".vanilla.texts[" + i + "]";
+                    if (text == null || !text.hasMembers()) throw new IllegalArgumentException(path + " must be an object");
+                    String id = requiredPortableId(text, path);
+                    if (!textIds.add(id)) throw new IllegalArgumentException(path + ".id is duplicated: " + id);
+                    String dimension = memberResource(text, "dimension", "minecraft:overworld", path);
+                    String content = requiredString(text, "text", path);
+                    if (content.length() > 256) throw new IllegalArgumentException(path + ".text exceeds 256 characters");
+                    PortableProgram.VanillaCoordinate x = parseVanillaCoordinate(requiredMember(text, "x", path), initialState.keySet(), fixedPoint, path + ".x");
+                    PortableProgram.VanillaCoordinate y = parseVanillaCoordinate(requiredMember(text, "y", path), initialState.keySet(), fixedPoint, path + ".y");
+                    PortableProgram.VanillaCoordinate z = parseVanillaCoordinate(requiredMember(text, "z", path), initialState.keySet(), fixedPoint, path + ".z");
+                    PortableProgram.VanillaVec3 scale = memberVanillaVec3(text, "scale", new PortableProgram.VanillaVec3(1, 1, 1), path, true);
+                    String billboard = memberString(text, "billboard", "center", path);
+                    if (!Set.of("fixed", "vertical", "horizontal", "center").contains(billboard)) {
+                        throw new IllegalArgumentException(path + ".billboard must be fixed, vertical, horizontal, or center");
+                    }
+                    vanillaTexts.add(new PortableProgram.VanillaTextProjection(id, dimension, content, x, y, z, scale, billboard));
+                }
+            }
+
             if (vanilla.hasMember("cameras")) {
                 if (version < PortableProgram.VERSION_3) throw new IllegalArgumentException(api + ".vanilla.cameras requires portable version 3");
                 Value cameras = requiredArray(vanilla, "cameras", api + ".vanilla");
@@ -173,12 +206,74 @@ final class PortableProgramParser {
                     vanillaParticles.add(new PortableProgram.VanillaParticleEmitter(id, dimension, particleId, x, y, z, delta, speed, count, force, condition));
                 }
             }
+
+            if (vanilla.hasMember("sounds")) {
+                if (version < PortableProgram.VERSION_4) throw new IllegalArgumentException(api + ".vanilla.sounds requires portable version 4");
+                Value sounds = requiredArray(vanilla, "sounds", api + ".vanilla");
+                if (sounds.getArraySize() > MAX_SOUNDS) throw new IllegalArgumentException(api + ".vanilla.sounds exceeds max sound count " + MAX_SOUNDS);
+                Set<String> soundIds = new java.util.HashSet<>();
+                for (long i = 0; i < sounds.getArraySize(); i++) {
+                    Value sound = sounds.getArrayElement(i);
+                    String path = api + ".vanilla.sounds[" + i + "]";
+                    if (sound == null || !sound.hasMembers()) throw new IllegalArgumentException(path + " must be an object");
+                    String id = requiredPortableId(sound, path);
+                    if (!soundIds.add(id)) throw new IllegalArgumentException(path + ".id is duplicated: " + id);
+                    String dimension = memberResource(sound, "dimension", "minecraft:overworld", path);
+                    String soundId = memberResource(sound, "sound", null, path);
+                    PortableProgram.VanillaCoordinate x = parseVanillaCoordinate(requiredMember(sound, "x", path), initialState.keySet(), fixedPoint, path + ".x");
+                    PortableProgram.VanillaCoordinate y = parseVanillaCoordinate(requiredMember(sound, "y", path), initialState.keySet(), fixedPoint, path + ".y");
+                    PortableProgram.VanillaCoordinate z = parseVanillaCoordinate(requiredMember(sound, "z", path), initialState.keySet(), fixedPoint, path + ".z");
+                    double volume = memberNumber(sound, "volume", 1, path);
+                    double pitch = memberNumber(sound, "pitch", 1, path);
+                    if (volume < 0 || volume > 100) throw new IllegalArgumentException(path + ".volume must be between 0 and 100");
+                    if (pitch < 0 || pitch > 2) throw new IllegalArgumentException(path + ".pitch must be between 0 and 2");
+                    PortableProgram.Condition condition = null;
+                    if (sound.hasMember("when")) {
+                        condition = parseCondition(requiredObject(sound, "when", path), initialState.keySet(), initialInputs.keySet(), fixedPoint, path + ".when");
+                    }
+                    vanillaSounds.add(new PortableProgram.VanillaSoundEmitter(id, dimension, soundId, x, y, z, volume, pitch, condition));
+                }
+            }
+
+            if (vanilla.hasMember("huds")) {
+                if (version < PortableProgram.VERSION_4) throw new IllegalArgumentException(api + ".vanilla.huds requires portable version 4");
+                Value huds = requiredArray(vanilla, "huds", api + ".vanilla");
+                if (huds.getArraySize() > MAX_HUDS) throw new IllegalArgumentException(api + ".vanilla.huds exceeds max HUD count " + MAX_HUDS);
+                Set<String> hudIds = new java.util.HashSet<>();
+                for (long i = 0; i < huds.getArraySize(); i++) {
+                    Value hud = huds.getArrayElement(i);
+                    String path = api + ".vanilla.huds[" + i + "]";
+                    if (hud == null || !hud.hasMembers()) throw new IllegalArgumentException(path + " must be an object");
+                    String id = requiredPortableId(hud, path);
+                    if (!hudIds.add(id)) throw new IllegalArgumentException(path + ".id is duplicated: " + id);
+                    Value tokens = requiredArray(hud, "tokens", path);
+                    if (tokens.getArraySize() < 1 || tokens.getArraySize() > MAX_HUD_TOKENS) {
+                        throw new IllegalArgumentException(path + ".tokens must contain 1.." + MAX_HUD_TOKENS + " entries");
+                    }
+                    List<PortableProgram.HudToken> parsed = new ArrayList<>();
+                    for (long j = 0; j < tokens.getArraySize(); j++) {
+                        Value token = tokens.getArrayElement(j);
+                        String tokenPath = path + ".tokens[" + j + "]";
+                        if (token == null || !token.hasMembers()) throw new IllegalArgumentException(tokenPath + " must be an object");
+                        if (token.hasMember("text")) {
+                            String literal = requiredString(token, "text", tokenPath);
+                            if (literal.length() > 128) throw new IllegalArgumentException(tokenPath + ".text exceeds 128 characters");
+                            parsed.add(new PortableProgram.HudLiteral(literal));
+                        } else if (token.hasMember("value")) {
+                            parsed.add(new PortableProgram.HudValue(parseValue(requiredMember(token, "value", tokenPath), initialState.keySet(), initialInputs.keySet(), fixedPoint, tokenPath + ".value")));
+                        } else {
+                            throw new IllegalArgumentException(tokenPath + " requires text or value");
+                        }
+                    }
+                    vanillaHuds.add(new PortableProgram.VanillaHud(id, parsed));
+                }
+            }
         }
 
         Value tick = spec.hasMember("tick") ? spec.getMember("tick") : null;
         if (tick == null || !tick.hasArrayElements()) throw new IllegalArgumentException(api + ".tick must be an array");
         Counter counter = new Counter();
-        List<PortableProgram.Action> actions = parseActions(tick, initialState.keySet(), initialInputs.keySet(), fixedPoint, 0, counter, api + ".tick");
+        List<PortableProgram.Action> actions = parseActions(tick, initialState.keySet(), initialInputs.keySet(), fixedPoint, version, 0, counter, api + ".tick");
         return new PortableProgram(
             version,
             fixedPoint,
@@ -186,8 +281,11 @@ final class PortableProgramParser {
             initialInputs,
             vanillaInputs,
             vanillaProjections,
+            vanillaTexts,
             vanillaCameras,
             vanillaParticles,
+            vanillaSounds,
+            vanillaHuds,
             actions
         );
     }
@@ -202,6 +300,7 @@ final class PortableProgramParser {
         Set<String> states,
         Set<String> inputs,
         int fixedPoint,
+        int version,
         int depth,
         Counter counter,
         String path
@@ -234,18 +333,42 @@ final class PortableProgramParser {
                     Value conditionValue = requiredObject(action, "condition", actionPath);
                     PortableProgram.Condition condition = parseCondition(conditionValue, states, inputs, fixedPoint, actionPath + ".condition");
                     Value thenValue = requiredArray(action, "then", actionPath);
-                    List<PortableProgram.Action> thenActions = parseActions(thenValue, states, inputs, fixedPoint, depth + 1, counter, actionPath + ".then");
+                    List<PortableProgram.Action> thenActions = parseActions(thenValue, states, inputs, fixedPoint, version, depth + 1, counter, actionPath + ".then");
                     List<PortableProgram.Action> elseActions = List.of();
                     if (action.hasMember("else")) {
                         Value elseValue = requiredArray(action, "else", actionPath);
-                        elseActions = parseActions(elseValue, states, inputs, fixedPoint, depth + 1, counter, actionPath + ".else");
+                        elseActions = parseActions(elseValue, states, inputs, fixedPoint, version, depth + 1, counter, actionPath + ".else");
                     }
                     yield new PortableProgram.IfAction(condition, thenActions, elseActions);
+                }
+                case "if_aabb" -> {
+                    if (version < PortableProgram.VERSION_4) throw new IllegalArgumentException(actionPath + ".op requires portable version 4");
+                    PortableProgram.Aabb2d a = parseAabb(requiredObject(action, "a", actionPath), states, inputs, fixedPoint, actionPath + ".a");
+                    PortableProgram.Aabb2d b = parseAabb(requiredObject(action, "b", actionPath), states, inputs, fixedPoint, actionPath + ".b");
+                    List<PortableProgram.Action> thenActions = parseActions(requiredArray(action, "then", actionPath), states, inputs, fixedPoint, version, depth + 1, counter, actionPath + ".then");
+                    List<PortableProgram.Action> elseActions = List.of();
+                    if (action.hasMember("else")) {
+                        elseActions = parseActions(requiredArray(action, "else", actionPath), states, inputs, fixedPoint, version, depth + 1, counter, actionPath + ".else");
+                    }
+                    yield new PortableProgram.AabbIfAction(a, b, thenActions, elseActions);
                 }
                 default -> throw new IllegalArgumentException(actionPath + ".op unsupported portable operation: " + op);
             });
         }
         return List.copyOf(out);
+    }
+
+    private static PortableProgram.Aabb2d parseAabb(Value value, Set<String> states, Set<String> inputs, int fixedPoint, String path) {
+        PortableProgram.ValueRef x = parseValue(requiredMember(value, "x", path), states, inputs, fixedPoint, path + ".x");
+        PortableProgram.ValueRef y = parseValue(requiredMember(value, "y", path), states, inputs, fixedPoint, path + ".y");
+        double width = requiredNumber(value, "width", path);
+        double height = requiredNumber(value, "height", path);
+        if (width <= 0 || width > 1000) throw new IllegalArgumentException(path + ".width must be > 0 and <= 1000");
+        if (height <= 0 || height > 1000) throw new IllegalArgumentException(path + ".height must be > 0 and <= 1000");
+        int halfWidth = scale(width / 2.0, fixedPoint, path + ".width");
+        int halfHeight = scale(height / 2.0, fixedPoint, path + ".height");
+        if (halfWidth < 1 || halfHeight < 1) throw new IllegalArgumentException(path + " dimensions are below fixed-point resolution");
+        return new PortableProgram.Aabb2d(x, y, halfWidth, halfHeight);
     }
 
     private static PortableProgram.Condition parseCondition(Value value, Set<String> states, Set<String> inputs, int fixedPoint, String path) {
@@ -321,6 +444,19 @@ final class PortableProgramParser {
         String id = requiredString(object, "id", path);
         if (!PROJECTION_ID.matcher(id).matches()) throw new IllegalArgumentException(path + ".id must match " + PROJECTION_ID.pattern());
         return id;
+    }
+
+    private static String memberString(Value object, String member, String fallback, String path) {
+        if (!object.hasMember(member)) return fallback;
+        Value value = object.getMember(member);
+        if (value == null || !value.isString()) throw new IllegalArgumentException(path + "." + member + " must be a string");
+        return value.asString();
+    }
+
+    private static double requiredNumber(Value object, String member, String path) {
+        Value value = requiredMember(object, member, path);
+        if (!value.isNumber()) throw new IllegalArgumentException(path + "." + member + " must be a number");
+        return finiteNumber(value.asDouble(), path + "." + member);
     }
 
     private static double memberNumber(Value object, String member, double fallback, String path) {

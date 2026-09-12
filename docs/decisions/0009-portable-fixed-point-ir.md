@@ -35,7 +35,7 @@ Positive:
 
 Tradeoffs and limitations:
 
-- version 1 is intentionally small; version 2 adds bounded input registers plus a hotbar adapter and block-display projections; version 3 adds held input, one camera, and particle emitters, while sound, collision primitives, functions/loops, random numbers, events, and dynamic entity collections remain outside the portable IR;
+- version 1 is intentionally small; version 2 adds bounded input registers plus a hotbar adapter and block-display projections; version 3 adds held input, one camera, and particle emitters; version 4 adds sound, world text, an actionbar HUD, and 2D AABB collision, while functions/loops, random numbers, events, dynamic entity collections, swept/3D collision, and Minecraft world queries remain outside the portable IR;
 - vanilla compilation covers semantics represented in portable IR rather than arbitrary host callbacks; DSL-only programs can now produce a full simple arcade input/physics/display loop, while richer host capabilities still require explicit portable primitives;
 - fixed-point state must remain within signed 32-bit scoreboard range; the Fabric interpreter throws on arithmetic overflow while generated vanilla scoreboards do not yet insert overflow guards;
 - `portable.define` is initialization-only and may appear only once per script;

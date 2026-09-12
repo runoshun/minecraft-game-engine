@@ -9,7 +9,8 @@ final class PortableProgram {
     static final int VERSION_1 = 1;
     static final int VERSION_2 = 2;
     static final int VERSION_3 = 3;
-    static final int CURRENT_VERSION = VERSION_3;
+    static final int VERSION_4 = 4;
+    static final int CURRENT_VERSION = VERSION_4;
 
     sealed interface ValueRef permits StateValue, InputValue, ConstantValue {}
     record StateValue(String name) implements ValueRef {}
@@ -52,6 +53,17 @@ final class PortableProgram {
         VanillaVec3 translation
     ) {}
 
+    record VanillaTextProjection(
+        String id,
+        String dimension,
+        String text,
+        VanillaCoordinate x,
+        VanillaCoordinate y,
+        VanillaCoordinate z,
+        VanillaVec3 scale,
+        String billboard
+    ) {}
+
     record VanillaCamera(
         String id,
         String dimension,
@@ -61,6 +73,8 @@ final class PortableProgram {
         double yaw,
         double pitch
     ) {}
+
+    record Condition(Comparison comparison, ValueRef left, ValueRef right) {}
 
     record VanillaParticleEmitter(
         String id,
@@ -76,15 +90,40 @@ final class PortableProgram {
         Condition condition
     ) {}
 
-    record Condition(Comparison comparison, ValueRef left, ValueRef right) {}
+    record VanillaSoundEmitter(
+        String id,
+        String dimension,
+        String sound,
+        VanillaCoordinate x,
+        VanillaCoordinate y,
+        VanillaCoordinate z,
+        double volume,
+        double pitch,
+        Condition condition
+    ) {}
 
-    sealed interface Action permits SetAction, AddAction, SubAction, NegateAction, IfAction {}
+    sealed interface HudToken permits HudLiteral, HudValue {}
+    record HudLiteral(String text) implements HudToken {}
+    record HudValue(ValueRef value) implements HudToken {}
+    record VanillaHud(String id, List<HudToken> tokens) {
+        VanillaHud { tokens = List.copyOf(tokens); }
+    }
+
+    record Aabb2d(ValueRef x, ValueRef y, int halfWidthRaw, int halfHeightRaw) {}
+
+    sealed interface Action permits SetAction, AddAction, SubAction, NegateAction, IfAction, AabbIfAction {}
     record SetAction(String target, ValueRef value) implements Action {}
     record AddAction(String target, ValueRef value) implements Action {}
     record SubAction(String target, ValueRef value) implements Action {}
     record NegateAction(String target) implements Action {}
     record IfAction(Condition condition, List<Action> thenActions, List<Action> elseActions) implements Action {
         IfAction {
+            thenActions = List.copyOf(thenActions);
+            elseActions = List.copyOf(elseActions);
+        }
+    }
+    record AabbIfAction(Aabb2d a, Aabb2d b, List<Action> thenActions, List<Action> elseActions) implements Action {
+        AabbIfAction {
             thenActions = List.copyOf(thenActions);
             elseActions = List.copyOf(elseActions);
         }
@@ -96,8 +135,11 @@ final class PortableProgram {
     private final Map<String, Integer> initialInputs;
     private final Map<String, VanillaInputSource> vanillaInputs;
     private final List<VanillaBlockProjection> vanillaProjections;
+    private final List<VanillaTextProjection> vanillaTexts;
     private final List<VanillaCamera> vanillaCameras;
     private final List<VanillaParticleEmitter> vanillaParticles;
+    private final List<VanillaSoundEmitter> vanillaSounds;
+    private final List<VanillaHud> vanillaHuds;
     private final List<Action> tickActions;
 
     PortableProgram(
@@ -107,8 +149,11 @@ final class PortableProgram {
         Map<String, Integer> initialInputs,
         Map<String, VanillaInputSource> vanillaInputs,
         List<VanillaBlockProjection> vanillaProjections,
+        List<VanillaTextProjection> vanillaTexts,
         List<VanillaCamera> vanillaCameras,
         List<VanillaParticleEmitter> vanillaParticles,
+        List<VanillaSoundEmitter> vanillaSounds,
+        List<VanillaHud> vanillaHuds,
         List<Action> tickActions
     ) {
         if (version < VERSION_1 || version > CURRENT_VERSION) {
@@ -123,8 +168,11 @@ final class PortableProgram {
         this.initialInputs = Collections.unmodifiableMap(new LinkedHashMap<>(initialInputs));
         this.vanillaInputs = Collections.unmodifiableMap(new LinkedHashMap<>(vanillaInputs));
         this.vanillaProjections = List.copyOf(vanillaProjections);
+        this.vanillaTexts = List.copyOf(vanillaTexts);
         this.vanillaCameras = List.copyOf(vanillaCameras);
         this.vanillaParticles = List.copyOf(vanillaParticles);
+        this.vanillaSounds = List.copyOf(vanillaSounds);
+        this.vanillaHuds = List.copyOf(vanillaHuds);
         this.tickActions = List.copyOf(tickActions);
     }
 
@@ -134,8 +182,11 @@ final class PortableProgram {
     Map<String, Integer> initialInputs() { return initialInputs; }
     Map<String, VanillaInputSource> vanillaInputs() { return vanillaInputs; }
     List<VanillaBlockProjection> vanillaProjections() { return vanillaProjections; }
+    List<VanillaTextProjection> vanillaTexts() { return vanillaTexts; }
     List<VanillaCamera> vanillaCameras() { return vanillaCameras; }
     List<VanillaParticleEmitter> vanillaParticles() { return vanillaParticles; }
+    List<VanillaSoundEmitter> vanillaSounds() { return vanillaSounds; }
+    List<VanillaHud> vanillaHuds() { return vanillaHuds; }
     List<Action> tickActions() { return tickActions; }
 
     double logicalValue(int raw) {

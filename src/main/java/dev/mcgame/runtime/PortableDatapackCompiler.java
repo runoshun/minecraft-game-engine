@@ -21,6 +21,7 @@ import java.util.regex.Pattern;
 final class PortableDatapackCompiler {
     private static final Pattern NAMESPACE = Pattern.compile("[a-z0-9_.-]+");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    private static final Gson COMPACT_GSON = new Gson();
 
     record Result(
         String namespace,
@@ -28,8 +29,11 @@ final class PortableDatapackCompiler {
         int stateCount,
         int inputCount,
         int projectionCount,
+        int textCount,
         int cameraCount,
         int particleCount,
+        int soundCount,
+        int hudCount,
         int branchFunctionCount
     ) {}
 
@@ -45,8 +49,11 @@ final class PortableDatapackCompiler {
         compileVanillaInputs(program, tick, context);
         compileActions(program.tickActions(), tick, context);
         compileVanillaProjections(program, tick, context);
+        compileVanillaTextUpdates(program, tick, context);
         compileVanillaCameraUpdates(program, tick, context);
         compileVanillaParticles(program, tick, context);
+        compileVanillaSounds(program, tick, context);
+        compileVanillaHuds(program, tick, context);
         if (tick.isEmpty()) tick.add("# no portable tick actions");
 
         List<String> load = new ArrayList<>();
@@ -63,8 +70,10 @@ final class PortableDatapackCompiler {
             load.add("scoreboard players set " + entry.getValue() + " " + objective + " " + entry.getKey());
         }
         compileVanillaProjectionLoad(program, load, context);
+        compileVanillaTextLoad(program, load, context);
         compileVanillaCameraLoad(program, load, context);
         compileVanillaParticleLoad(program, load, context);
+        compileVanillaSoundLoad(program, load, context);
 
         JsonObject pack = new JsonObject();
         JsonObject packBody = new JsonObject();
@@ -103,8 +112,11 @@ final class PortableDatapackCompiler {
             program.initialState().size(),
             program.initialInputs().size(),
             program.vanillaProjections().size(),
+            program.vanillaTexts().size(),
             program.vanillaCameras().size(),
             program.vanillaParticles().size(),
+            program.vanillaSounds().size(),
+            program.vanillaHuds().size(),
             context.nextBranch
         );
     }
@@ -212,6 +224,31 @@ final class PortableDatapackCompiler {
         }
     }
 
+    private void compileVanillaTextLoad(PortableProgram program, List<String> lines, CompileContext context) {
+        for (PortableProgram.VanillaTextProjection text : program.vanillaTexts()) {
+            String tag = textTag(context.namespace, text.id());
+            double x = logicalCoordinate(program, text.x());
+            double y = logicalCoordinate(program, text.y());
+            double z = logicalCoordinate(program, text.z());
+            int chunkBlockX = (int) Math.floor(x);
+            int chunkBlockZ = (int) Math.floor(z);
+            JsonObject component = new JsonObject();
+            component.addProperty("text", text.text());
+            String textJson = COMPACT_GSON.toJson(component);
+            PortableProgram.VanillaVec3 scale = text.scale();
+            String snbt = "{Tags:[\"" + tag + "\"],text:" + snbtQuoted(textJson)
+                + ",billboard:\"" + text.billboard() + "\",transformation:{translation:[0f,0f,0f],left_rotation:[0f,0f,0f,1f],scale:["
+                + floatLiteral(scale.x()) + "," + floatLiteral(scale.y()) + "," + floatLiteral(scale.z())
+                + "],right_rotation:[0f,0f,0f,1f]}}";
+            lines.add("execute in " + text.dimension() + " run forceload add " + chunkBlockX + " " + chunkBlockZ);
+            lines.add("execute in " + text.dimension() + " run kill @e[tag=" + tag + "]");
+            lines.add(String.format(Locale.ROOT,
+                "execute in %s run summon minecraft:text_display %.6f %.6f %.6f %s",
+                text.dimension(), x, y, z, snbt));
+            lines.add("execute in " + text.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
+        }
+    }
+
     private void compileVanillaCameraLoad(PortableProgram program, List<String> lines, CompileContext context) {
         for (PortableProgram.VanillaCamera camera : program.vanillaCameras()) {
             String tag = cameraTag(context.namespace, camera.id());
@@ -250,8 +287,29 @@ final class PortableDatapackCompiler {
         }
     }
 
+    private void compileVanillaSoundLoad(PortableProgram program, List<String> lines, CompileContext context) {
+        for (PortableProgram.VanillaSoundEmitter emitter : program.vanillaSounds()) {
+            if (!dynamic(emitter.x(), emitter.y(), emitter.z())) continue;
+            String tag = soundTag(context.namespace, emitter.id());
+            double x = logicalCoordinate(program, emitter.x());
+            double y = logicalCoordinate(program, emitter.y());
+            double z = logicalCoordinate(program, emitter.z());
+            int chunkBlockX = (int) Math.floor(x);
+            int chunkBlockZ = (int) Math.floor(z);
+            lines.add("execute in " + emitter.dimension() + " run forceload add " + chunkBlockX + " " + chunkBlockZ);
+            lines.add("execute in " + emitter.dimension() + " run kill @e[tag=" + tag + "]");
+            lines.add(String.format(Locale.ROOT,
+                "execute in %s run summon minecraft:marker %.6f %.6f %.6f {Tags:[\"%s\"]}",
+                emitter.dimension(), x, y, z, tag));
+            lines.add("execute in " + emitter.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
+        }
+    }
+
     private List<String> cleanupLines(PortableProgram program, CompileContext context) {
         List<String> lines = new ArrayList<>();
+        if (!program.vanillaHuds().isEmpty()) {
+            lines.add("execute as " + controllerSelector(program, context) + " run title @s actionbar {\"text\":\"\"}");
+        }
         if (!program.vanillaCameras().isEmpty()) {
             lines.add("scoreboard players set #enabled " + context.objective + " 0");
             String userTag = cameraUserTag(context.namespace);
@@ -262,12 +320,20 @@ final class PortableDatapackCompiler {
         for (PortableProgram.VanillaBlockProjection projection : program.vanillaProjections()) {
             appendEntityCleanup(lines, program, projection.dimension(), projectionTag(context.namespace, projection.id()), projection.x(), projection.z());
         }
+        for (PortableProgram.VanillaTextProjection text : program.vanillaTexts()) {
+            appendEntityCleanup(lines, program, text.dimension(), textTag(context.namespace, text.id()), text.x(), text.z());
+        }
         for (PortableProgram.VanillaCamera camera : program.vanillaCameras()) {
             appendEntityCleanup(lines, program, camera.dimension(), cameraTag(context.namespace, camera.id()), camera.x(), camera.z());
         }
         for (PortableProgram.VanillaParticleEmitter emitter : program.vanillaParticles()) {
             if (dynamic(emitter.x(), emitter.y(), emitter.z())) {
                 appendEntityCleanup(lines, program, emitter.dimension(), particleTag(context.namespace, emitter.id()), emitter.x(), emitter.z());
+            }
+        }
+        for (PortableProgram.VanillaSoundEmitter emitter : program.vanillaSounds()) {
+            if (dynamic(emitter.x(), emitter.y(), emitter.z())) {
+                appendEntityCleanup(lines, program, emitter.dimension(), soundTag(context.namespace, emitter.id()), emitter.x(), emitter.z());
             }
         }
         lines.add("scoreboard objectives remove " + context.objective);
@@ -298,6 +364,16 @@ final class PortableDatapackCompiler {
             compileEntityAxis(projection.dimension(), tag, "Pos[0]", projection.x(), storeScale, lines, context);
             compileEntityAxis(projection.dimension(), tag, "Pos[1]", projection.y(), storeScale, lines, context);
             compileEntityAxis(projection.dimension(), tag, "Pos[2]", projection.z(), storeScale, lines, context);
+        }
+    }
+
+    private void compileVanillaTextUpdates(PortableProgram program, List<String> lines, CompileContext context) {
+        String storeScale = storeScale(program.fixedPoint());
+        for (PortableProgram.VanillaTextProjection text : program.vanillaTexts()) {
+            String tag = textTag(context.namespace, text.id());
+            compileEntityAxis(text.dimension(), tag, "Pos[0]", text.x(), storeScale, lines, context);
+            compileEntityAxis(text.dimension(), tag, "Pos[1]", text.y(), storeScale, lines, context);
+            compileEntityAxis(text.dimension(), tag, "Pos[2]", text.z(), storeScale, lines, context);
         }
     }
 
@@ -341,6 +417,63 @@ final class PortableDatapackCompiler {
         }
     }
 
+    private void compileVanillaSounds(PortableProgram program, List<String> lines, CompileContext context) {
+        String storeScale = storeScale(program.fixedPoint());
+        for (PortableProgram.VanillaSoundEmitter emitter : program.vanillaSounds()) {
+            boolean isDynamic = dynamic(emitter.x(), emitter.y(), emitter.z());
+            String position;
+            String executeLocation;
+            if (isDynamic) {
+                String tag = soundTag(context.namespace, emitter.id());
+                compileEntityAxis(emitter.dimension(), tag, "Pos[0]", emitter.x(), storeScale, lines, context);
+                compileEntityAxis(emitter.dimension(), tag, "Pos[1]", emitter.y(), storeScale, lines, context);
+                compileEntityAxis(emitter.dimension(), tag, "Pos[2]", emitter.z(), storeScale, lines, context);
+                position = "~ ~ ~";
+                executeLocation = "in " + emitter.dimension() + " at @e[tag=" + tag + ",limit=1]";
+            } else {
+                position = String.format(Locale.ROOT, "%.6f %.6f %.6f",
+                    logicalCoordinate(program, emitter.x()),
+                    logicalCoordinate(program, emitter.y()),
+                    logicalCoordinate(program, emitter.z()));
+                executeLocation = "in " + emitter.dimension();
+            }
+            String command = "playsound " + emitter.sound() + " master @a " + position + " "
+                + numberLiteral(emitter.volume()) + " " + numberLiteral(emitter.pitch());
+            String prefix = "execute ";
+            if (emitter.condition() != null) prefix += condition(emitter.condition(), true, context) + " ";
+            lines.add(prefix + executeLocation + " run " + command);
+        }
+    }
+
+    private void compileVanillaHuds(PortableProgram program, List<String> lines, CompileContext context) {
+        if (program.vanillaHuds().isEmpty()) return;
+        PortableProgram.VanillaHud hud = program.vanillaHuds().getFirst();
+        JsonArray component = new JsonArray();
+        int index = 0;
+        for (PortableProgram.HudToken token : hud.tokens()) {
+            if (token instanceof PortableProgram.HudLiteral literal) {
+                JsonObject part = new JsonObject();
+                part.addProperty("text", literal.text());
+                component.add(part);
+            } else if (token instanceof PortableProgram.HudValue value) {
+                String temp = context.nextHudTemp();
+                lines.add("scoreboard players operation " + temp + " " + context.objective + " = " + holder(value.value(), context) + " " + context.objective);
+                if (program.fixedPoint() != 1) {
+                    lines.add("scoreboard players operation " + temp + " " + context.objective + " /= "
+                        + context.constantHolder(program.fixedPoint()) + " " + context.objective);
+                }
+                JsonObject part = new JsonObject();
+                JsonObject score = new JsonObject();
+                score.addProperty("name", temp);
+                score.addProperty("objective", context.objective);
+                part.add("score", score);
+                component.add(part);
+                index++;
+            }
+        }
+        lines.add("execute as " + controllerSelector(program, context) + " run title @s actionbar " + COMPACT_GSON.toJson(component));
+    }
+
     private void compileEntityAxis(
         String dimension,
         String tag,
@@ -376,6 +509,10 @@ final class PortableDatapackCompiler {
         return "mcg_v_" + Integer.toUnsignedString(namespace.hashCode(), 36) + "_" + id;
     }
 
+    private static String textTag(String namespace, String id) {
+        return "mcg_t_" + Integer.toUnsignedString(namespace.hashCode(), 36) + "_" + id;
+    }
+
     private static String cameraTag(String namespace, String id) {
         return "mcg_c_" + Integer.toUnsignedString(namespace.hashCode(), 36) + "_" + id;
     }
@@ -386,6 +523,14 @@ final class PortableDatapackCompiler {
 
     private static String particleTag(String namespace, String id) {
         return "mcg_p_" + Integer.toUnsignedString(namespace.hashCode(), 36) + "_" + id;
+    }
+
+    private static String soundTag(String namespace, String id) {
+        return "mcg_s_" + Integer.toUnsignedString(namespace.hashCode(), 36) + "_" + id;
+    }
+
+    private static String snbtQuoted(String value) {
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
     private static String storeScale(int fixedPoint) {
@@ -435,8 +580,51 @@ final class PortableDatapackCompiler {
                         lines.add("execute " + condition(branch.condition(), false, context) + " run function " + context.namespace + ":portable/" + function);
                     }
                 }
+                case PortableProgram.AabbIfAction branch -> compileAabbIf(branch, lines, context);
             }
         }
+    }
+
+    private void compileAabbIf(PortableProgram.AabbIfAction branch, List<String> lines, CompileContext context) {
+        String aLeft = aabbEdge(branch.a().x(), -branch.a().halfWidthRaw(), lines, context);
+        String aRight = aabbEdge(branch.a().x(), branch.a().halfWidthRaw(), lines, context);
+        String aBottom = aabbEdge(branch.a().y(), -branch.a().halfHeightRaw(), lines, context);
+        String aTop = aabbEdge(branch.a().y(), branch.a().halfHeightRaw(), lines, context);
+        String bLeft = aabbEdge(branch.b().x(), -branch.b().halfWidthRaw(), lines, context);
+        String bRight = aabbEdge(branch.b().x(), branch.b().halfWidthRaw(), lines, context);
+        String bBottom = aabbEdge(branch.b().y(), -branch.b().halfHeightRaw(), lines, context);
+        String bTop = aabbEdge(branch.b().y(), branch.b().halfHeightRaw(), lines, context);
+        String flag = context.nextCollisionTemp();
+        lines.add("scoreboard players set " + flag + " " + context.objective + " 0");
+        lines.add("execute if score " + aLeft + " " + context.objective + " <= " + bRight + " " + context.objective
+            + " if score " + aRight + " " + context.objective + " >= " + bLeft + " " + context.objective
+            + " if score " + aBottom + " " + context.objective + " <= " + bTop + " " + context.objective
+            + " if score " + aTop + " " + context.objective + " >= " + bBottom + " " + context.objective
+            + " run scoreboard players set " + flag + " " + context.objective + " 1");
+        if (!branch.thenActions().isEmpty()) {
+            String function = context.nextBranchFunctionName();
+            List<String> body = new ArrayList<>();
+            compileActions(branch.thenActions(), body, context);
+            context.functions.put(function, body);
+            lines.add("execute if score " + flag + " " + context.objective + " matches 1 run function " + context.namespace + ":portable/" + function);
+        }
+        if (!branch.elseActions().isEmpty()) {
+            String function = context.nextBranchFunctionName();
+            List<String> body = new ArrayList<>();
+            compileActions(branch.elseActions(), body, context);
+            context.functions.put(function, body);
+            lines.add("execute unless score " + flag + " " + context.objective + " matches 1 run function " + context.namespace + ":portable/" + function);
+        }
+    }
+
+    private String aabbEdge(PortableProgram.ValueRef center, int offset, List<String> lines, CompileContext context) {
+        String temp = context.nextCollisionTemp();
+        lines.add("scoreboard players operation " + temp + " " + context.objective + " = " + holder(center, context) + " " + context.objective);
+        if (offset != 0) {
+            lines.add("scoreboard players operation " + temp + " " + context.objective + (offset > 0 ? " += " : " -= ")
+                + context.constantHolder(Math.abs(offset)) + " " + context.objective);
+        }
+        return temp;
     }
 
     private String setCommand(String target, PortableProgram.ValueRef value, CompileContext context) {
@@ -500,6 +688,8 @@ final class PortableDatapackCompiler {
         int nextConstant;
         int nextBranch;
         int nextProjectionTemp;
+        int nextHudTemp;
+        int nextCollisionTemp;
         boolean usesNegate;
 
         CompileContext(String namespace, String objective) {
@@ -517,6 +707,14 @@ final class PortableDatapackCompiler {
 
         String nextProjectionTemp() {
             return "#v" + nextProjectionTemp++;
+        }
+
+        String nextHudTemp() {
+            return "#h" + nextHudTemp++;
+        }
+
+        String nextCollisionTemp() {
+            return "#q" + nextCollisionTemp++;
         }
     }
 }

@@ -141,7 +141,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(3, program.version());
+        assertEquals(4, program.version());
         assertEquals(2, program.initialState().size());
         assertEquals(1, program.initialInputs().size());
         assertEquals(1, program.vanillaProjections().size());
@@ -193,7 +193,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(3, program.version());
+        assertEquals(4, program.version());
         assertEquals(2, program.initialInputs().size());
         assertEquals(1, program.vanillaCameras().size());
         assertEquals(1, program.vanillaParticles().size());
@@ -228,6 +228,75 @@ class PortableCompilerTest {
         String cleanup = Files.readString(output.resolve("data/portable_v3/function/portable/cleanup.mcfunction"));
         assertTrue(cleanup.contains("run spectate"));
         assertTrue(cleanup.contains("gamemode adventure"));
+    }
+
+
+    @Test
+    void versionFourDslCompilesSoundTextHudAndAabbCollision() throws Exception {
+        String source = """
+            portableDsl({ fixedPoint: 1000 }, game => {
+              const ax = game.state("ax", 0);
+              const ay = game.state("ay", 0);
+              const bx = game.state("bx", 0.75);
+              const by = game.state("by", 0);
+              const hit = game.state("hit", 0);
+              const score = game.state("score", 3);
+              const a = game.box("a", { x: ax, y: ay, width: 1, height: 1 });
+              const b = game.box("b", { x: bx, y: by, width: 1, height: 1 });
+
+              game.text("label", {
+                text: "PORTABLE V4",
+                x: game.at(ax, 10), y: 70, z: 0,
+                scale: 0.75,
+                billboard: "center"
+              });
+              game.sound("hit", {
+                sound: "minecraft:block.note_block.pling",
+                x: game.at(ax, 10), y: 70, z: 0,
+                volume: 0.8, pitch: 1.4,
+                when: hit.eq(1)
+              });
+              game.hud("main", { text: ["SCORE ", score] });
+              game.tick(() => {
+                hit.set(0);
+                game.whenColliding(a, b, () => hit.set(1));
+              });
+            });
+            """;
+
+        PortableProgram program = extract(source);
+        assertEquals(4, program.version());
+        assertEquals(1, program.vanillaTexts().size());
+        assertEquals(1, program.vanillaSounds().size());
+        assertEquals(1, program.vanillaHuds().size());
+        assertTrue(program.tickActions().stream().anyMatch(PortableProgram.AabbIfAction.class::isInstance));
+
+        PortableStateMachine machine = new PortableStateMachine(program);
+        machine.tick();
+        assertEquals(1.0, machine.get("hit"), 0.0001);
+
+        Path output = Files.createTempDirectory("mcgame-portable-v4-test");
+        PortableDatapackCompiler.Result result = new PortableDatapackCompiler().compile(program, "portable_v4", output);
+        assertEquals(1, result.textCount());
+        assertEquals(1, result.soundCount());
+        assertEquals(1, result.hudCount());
+
+        String load = Files.readString(output.resolve("data/portable_v4/function/portable/load.mcfunction"));
+        assertTrue(load.contains("summon minecraft:text_display"));
+        assertTrue(load.contains("PORTABLE V4"));
+        assertTrue(load.contains("summon minecraft:marker"));
+
+        String tick = Files.readString(output.resolve("data/portable_v4/function/portable/tick.mcfunction"));
+        assertTrue(tick.contains("playsound minecraft:block.note_block.pling master @a"));
+        assertTrue(tick.contains("title @s actionbar"));
+        assertTrue(tick.contains("SCORE "));
+        assertTrue(tick.contains(" /= "));
+        assertTrue(tick.contains(" if score #q"));
+        assertTrue(tick.contains(" <= #q"));
+
+        String cleanup = Files.readString(output.resolve("data/portable_v4/function/portable/cleanup.mcfunction"));
+        assertTrue(cleanup.contains("title @s actionbar"));
+        assertTrue(cleanup.contains("kill @e[tag=mcg_t_"));
     }
 
     @Test

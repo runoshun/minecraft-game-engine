@@ -58,6 +58,7 @@ final class PortableStateMachine {
                 case PortableProgram.SubAction sub -> state.put(sub.target(), Math.subtractExact(raw(sub.target()), resolve(sub.value())));
                 case PortableProgram.NegateAction negate -> state.put(negate.target(), Math.negateExact(raw(negate.target())));
                 case PortableProgram.IfAction branch -> execute(test(branch.condition()) ? branch.thenActions() : branch.elseActions());
+                case PortableProgram.AabbIfAction branch -> execute(overlaps(branch.a(), branch.b()) ? branch.thenActions() : branch.elseActions());
             }
         }
     }
@@ -73,6 +74,17 @@ final class PortableStateMachine {
             case GT -> left > right;
             case GTE -> left >= right;
         };
+    }
+
+    private boolean overlaps(PortableProgram.Aabb2d a, PortableProgram.Aabb2d b) {
+        long ax = resolve(a.x());
+        long ay = resolve(a.y());
+        long bx = resolve(b.x());
+        long by = resolve(b.y());
+        return ax - a.halfWidthRaw() <= bx + b.halfWidthRaw()
+            && ax + a.halfWidthRaw() >= bx - b.halfWidthRaw()
+            && ay - a.halfHeightRaw() <= by + b.halfHeightRaw()
+            && ay + a.halfHeightRaw() >= by - b.halfHeightRaw();
     }
 
     private int resolve(PortableProgram.ValueRef value) {

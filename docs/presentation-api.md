@@ -203,9 +203,9 @@ render.attach("boss_label", "boss", { x: 0, y: 4, z: 0 });
 
 An HP bar can be composed from one background Display and one foreground Display whose X scale reflects normalized HP. That composition belongs in the Minecraft adapter.
 
-## Runtime capability: `ui.panel`
+## Runtime capabilities: `ui.panel` and `ui.hud`
 
-The only persistent screen HUD channel currently exposed is a semantic panel:
+The persistent sidebar channel is a semantic panel, while `ui.hud` is a lightweight actionbar projection:
 
 ```ts
 type UiPanelRow = {
@@ -219,6 +219,7 @@ declare const ui: {
     playerIdOrName: string,
     options: { title: UiText; rows: UiPanelRow[] } | null,
   ): void;
+  hud(playerIdOrName: string, text: UiText | null): void;
 };
 ```
 
@@ -233,7 +234,7 @@ Minecraft implementation:
 - `null` removes the panel
 - reconnecting players receive the current panel again while the script remains active
 
-This avoids polluting the world scoreboard and keeps scoreboard values as presentation only. The sidebar is still a single vanilla HUD channel, so another plugin/datapack/client scoreboard update can replace it while active.
+This avoids polluting the world scoreboard and keeps scoreboard values as presentation only. The sidebar is still a single vanilla HUD channel, so another plugin/datapack/client scoreboard update can replace it while active. `ui.hud` sends the vanilla actionbar packet directly to one player; `null` clears it, and script close also clears every actionbar player owned by that script. Portable v4 uses this channel for its single-line HUD adapter.
 
 Example adapter call:
 
@@ -328,7 +329,7 @@ This is suitable for NPC choices, confirmation flows, simple stage selection, an
 
 All `render` entities are script-owned and removed on `/reload`, script failure, or server stop. Attached render descendants are removed recursively with their parent.
 
-`ui.panel` packet state, open `menu` state, and dialog custom-click tokens are also script-owned. They are cleared when the script closes so a reloaded script cannot receive stale UI actions from the previous instance.
+`ui.panel` packet state, `ui.hud` actionbar ownership, open `menu` state, and dialog custom-click tokens are also script-owned. They are cleared when the script closes so a reloaded script cannot receive stale UI actions from the previous instance.
 
 ## Validation status
 
