@@ -22,6 +22,7 @@ final class PortableDatapackCompiler {
     private static final Pattern NAMESPACE = Pattern.compile("[a-z0-9_.-]+");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Gson COMPACT_GSON = new Gson();
+    private static final int MAX_SIDEBAR_SCORE = 15;
 
     record Result(
         String namespace,
@@ -36,6 +37,7 @@ final class PortableDatapackCompiler {
         int particleCount,
         int soundCount,
         int hudCount,
+        int sidebarCount,
         int branchFunctionCount
     ) {}
 
@@ -58,6 +60,7 @@ final class PortableDatapackCompiler {
         compileVanillaParticles(program, tick, context);
         compileVanillaSounds(program, tick, context);
         compileVanillaHuds(program, tick, context);
+        compileVanillaSidebars(program, tick, context);
         if (tick.isEmpty()) tick.add("# no portable tick actions");
 
         List<String> load = new ArrayList<>();
@@ -80,6 +83,7 @@ final class PortableDatapackCompiler {
         compileVanillaCameraLoad(program, load, context);
         compileVanillaParticleLoad(program, load, context);
         compileVanillaSoundLoad(program, load, context);
+        compileVanillaSidebarLoad(program, load, context);
 
         JsonObject pack = new JsonObject();
         JsonObject packBody = new JsonObject();
@@ -125,6 +129,7 @@ final class PortableDatapackCompiler {
             program.vanillaParticles().size(),
             program.vanillaSounds().size(),
             program.vanillaHuds().size(),
+            program.vanillaSidebars().size(),
             context.nextBranch
         );
     }
@@ -440,6 +445,9 @@ final class PortableDatapackCompiler {
                 appendEntityCleanup(lines, program, emitter.dimension(), soundTag(context.namespace, emitter.id()), emitter.x(), emitter.z());
             }
         }
+        if (!program.vanillaSidebars().isEmpty()) {
+            lines.add("scoreboard objectives remove " + sidebarObjectiveName(context.namespace));
+        }
         lines.add("scoreboard objectives remove " + context.objective);
         return lines;
     }
@@ -656,6 +664,55 @@ final class PortableDatapackCompiler {
             }
         }
         lines.add("execute as " + controllerSelector(program, context) + " run title @s actionbar " + COMPACT_GSON.toJson(component));
+    }
+
+    private void compileVanillaSidebarLoad(PortableProgram program, List<String> lines, CompileContext context) {
+        if (program.vanillaSidebars().isEmpty()) return;
+        PortableProgram.VanillaSidebar sidebar = program.vanillaSidebars().getFirst();
+        String objective = sidebarObjectiveName(context.namespace);
+        JsonObject title = new JsonObject();
+        title.addProperty("text", sidebar.title());
+        lines.add("scoreboard objectives remove " + objective);
+        lines.add("scoreboard objectives add " + objective + " dummy " + COMPACT_GSON.toJson(title));
+        for (int i = 0; i < sidebar.rows().size(); i++) {
+            String holder = sidebarRowHolder(i);
+            lines.add("scoreboard players set " + holder + " " + objective + " " + (MAX_SIDEBAR_SCORE - i));
+            lines.add("scoreboard players display numberformat " + holder + " " + objective + " blank");
+        }
+        lines.add("scoreboard objectives setdisplay sidebar " + objective);
+    }
+
+    private void compileVanillaSidebars(PortableProgram program, List<String> lines, CompileContext context) {
+        if (program.vanillaSidebars().isEmpty()) return;
+        PortableProgram.VanillaSidebar sidebar = program.vanillaSidebars().getFirst();
+        String sidebarObjective = sidebarObjectiveName(context.namespace);
+        for (int rowIndex = 0; rowIndex < sidebar.rows().size(); rowIndex++) {
+            PortableProgram.VanillaSidebarRow row = sidebar.rows().get(rowIndex);
+            JsonObject component = new JsonObject();
+            component.addProperty("text", "");
+            JsonArray extra = new JsonArray();
+            for (int tokenIndex = 0; tokenIndex < row.tokens().size(); tokenIndex++) {
+                PortableProgram.HudToken token = row.tokens().get(tokenIndex);
+                JsonObject part = new JsonObject();
+                if (token instanceof PortableProgram.HudLiteral literal) {
+                    part.addProperty("text", literal.text());
+                } else if (token instanceof PortableProgram.HudValue value) {
+                    String temp = context.sidebarValueHolder(sidebar.id(), row.id(), tokenIndex);
+                    lines.add("scoreboard players operation " + temp + " " + context.objective + " = " + holder(value.value(), context) + " " + context.objective);
+                    if (program.fixedPoint() != 1) {
+                        lines.add("scoreboard players operation " + temp + " " + context.objective + " /= "
+                            + context.constantHolder(program.fixedPoint()) + " " + context.objective);
+                    }
+                    JsonObject score = new JsonObject();
+                    score.addProperty("name", temp);
+                    score.addProperty("objective", context.objective);
+                    part.add("score", score);
+                }
+                extra.add(part);
+            }
+            component.add("extra", extra);
+            lines.add("scoreboard players display name " + sidebarRowHolder(rowIndex) + " " + sidebarObjective + " " + COMPACT_GSON.toJson(component));
+        }
     }
 
     private void compileEntityAxis(
@@ -1067,6 +1124,8 @@ final class PortableDatapackCompiler {
     private static String stateHolder(String state) { return "#" + state; }
     private static String inputHolder(String input) { return "#in_" + input; }
     private static String objectiveName(String namespace) { return String.format(Locale.ROOT, "mcg%08x", namespace.hashCode()); }
+    private static String sidebarObjectiveName(String namespace) { return String.format(Locale.ROOT, "mcgu%08x", namespace.hashCode()); }
+    private static String sidebarRowHolder(int index) { return String.format(Locale.ROOT, "r%02d", index); }
 
     private static void writeFunctionTag(Path root, String tag, String function) throws IOException {
         JsonObject json = new JsonObject();
@@ -1087,12 +1146,14 @@ final class PortableDatapackCompiler {
         final int fixedPointDivisor;
         final Map<Integer, String> constantHolders = new LinkedHashMap<>();
         final Map<String, String> textValueHolders = new LinkedHashMap<>();
+        final Map<String, String> sidebarValueHolders = new LinkedHashMap<>();
         final Map<String, List<String>> functions = new LinkedHashMap<>();
         int nextConstant;
         int nextBranch;
         int nextProjectionTemp;
         int nextHudTemp;
         int nextTextTemp;
+        int nextSidebarTemp;
         int nextCollisionTemp;
         boolean usesNegate;
 
@@ -1120,6 +1181,10 @@ final class PortableDatapackCompiler {
 
         String textValueHolder(String textId, int tokenIndex) {
             return textValueHolders.computeIfAbsent(textId + ":" + tokenIndex, ignored -> "#t" + nextTextTemp++);
+        }
+
+        String sidebarValueHolder(String sidebarId, String rowId, int tokenIndex) {
+            return sidebarValueHolders.computeIfAbsent(sidebarId + ":" + rowId + ":" + tokenIndex, ignored -> "#u" + nextSidebarTemp++);
         }
 
         String nextCollisionTemp() {

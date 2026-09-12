@@ -142,7 +142,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(8, program.version());
+        assertEquals(9, program.version());
         assertEquals(2, program.initialState().size());
         assertEquals(1, program.initialInputs().size());
         assertEquals(1, program.vanillaProjections().size());
@@ -194,7 +194,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(8, program.version());
+        assertEquals(9, program.version());
         assertEquals(2, program.initialInputs().size());
         assertEquals(1, program.vanillaCameras().size());
         assertEquals(1, program.vanillaParticles().size());
@@ -266,7 +266,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(8, program.version());
+        assertEquals(9, program.version());
         assertEquals(1, program.vanillaTexts().size());
         assertEquals(1, program.vanillaSounds().size());
         assertEquals(1, program.vanillaHuds().size());
@@ -340,7 +340,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(8, program.version());
+        assertEquals(9, program.version());
         assertEquals(3, program.vanillaProjections().size());
         assertEquals(1, program.vanillaTexts().size());
         assertTrue(program.tickActions().stream().anyMatch(PortableProgram.CircleIfAction.class::isInstance));
@@ -398,7 +398,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(8, program.version());
+        assertEquals(9, program.version());
         assertTrue(program.tickActions().stream().anyMatch(PortableProgram.CircleCapsuleIfAction.class::isInstance));
         assertTrue(program.tickActions().stream().anyMatch(PortableProgram.TriggerIfAction.class::isInstance));
 
@@ -452,7 +452,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(8, program.version());
+        assertEquals(9, program.version());
         assertEquals(2, program.vanillaActors().size());
         assertEquals("minecraft:mannequin", program.vanillaActors().get(0).entityType());
         assertEquals("minecraft:zombie", program.vanillaActors().get(1).entityType());
@@ -508,7 +508,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(8, program.version());
+        assertEquals(9, program.version());
         assertEquals(2, program.vanillaWorldBatches().size());
         assertEquals(2, program.vanillaWorldBatches().get(0).blocks().size());
         assertEquals(4, program.vanillaWorldBatches().get(1).blocks().size());
@@ -533,6 +533,85 @@ class PortableCompilerTest {
         assertEquals(4, paint.lines().filter(line -> line.contains(" setblock " )).count());
         assertFalse(cleanup.contains("setblock"));
         assertFalse(cleanup.contains("world_base"));
+    }
+
+    @Test
+    void versionNineDslCompilesSidebarAndInputEdgeState() throws Exception {
+        String source = """
+            portableDsl({ fixedPoint: 1000 }, game => {
+              const selection = game.state("selection", 0);
+              const confirms = game.state("confirms", 0);
+              const jumpPrev = game.state("jump_prev", 0);
+              const jump = game.input("jump", 0, { source: "first_player_jump" });
+
+              game.sidebar("main", {
+                title: "Portable UI",
+                rows: [
+                  { id: "selection", text: ["SELECT ", selection] },
+                  { id: "confirms", text: ["CONFIRMS ", confirms] },
+                  { id: "help", text: "SPACE CONFIRM" }
+                ]
+              });
+              game.tick(() => {
+                game.when(jump.eq(1), () => {
+                  game.when(jumpPrev.eq(0), () => confirms.add(1));
+                });
+                jumpPrev.set(jump);
+                selection.set(1);
+              });
+            });
+            """;
+
+        PortableProgram program = extract(source);
+        assertEquals(9, program.version());
+        assertEquals(1, program.vanillaSidebars().size());
+        assertEquals(3, program.vanillaSidebars().getFirst().rows().size());
+
+        PortableStateMachine machine = new PortableStateMachine(program);
+        machine.setInput("jump", 1);
+        machine.tick();
+        assertEquals(1.0, machine.get("confirms"), 0.0001);
+        machine.tick();
+        assertEquals(1.0, machine.get("confirms"), 0.0001);
+        machine.setInput("jump", 0);
+        machine.tick();
+        machine.setInput("jump", 1);
+        machine.tick();
+        assertEquals(2.0, machine.get("confirms"), 0.0001);
+
+        Path output = Files.createTempDirectory("mcgame-portable-v9-sidebar-test");
+        PortableDatapackCompiler.Result result = new PortableDatapackCompiler().compile(program, "portable_v9_ui", output);
+        assertEquals(1, result.sidebarCount());
+        String load = Files.readString(output.resolve("data/portable_v9_ui/function/portable/load.mcfunction"));
+        String tick = Files.readString(output.resolve("data/portable_v9_ui/function/portable/tick.mcfunction"));
+        String cleanup = Files.readString(output.resolve("data/portable_v9_ui/function/portable/cleanup.mcfunction"));
+        assertTrue(load.contains("scoreboard objectives add mcgu"));
+        assertTrue(load.contains("scoreboard players display numberformat r00"));
+        assertTrue(load.contains("scoreboard objectives setdisplay sidebar mcgu"));
+        assertTrue(tick.contains("scoreboard players display name r00 mcgu"));
+        assertTrue(tick.contains("SELECT "));
+        assertTrue(tick.contains("\"score\":{\"name\""));
+        assertTrue(cleanup.contains("scoreboard objectives remove mcgu"));
+    }
+
+    @Test
+    void versionEightRejectsSidebarMetadata() {
+        String source = """
+            portable.define({
+              version: 8,
+              fixedPoint: 1000,
+              state: { x: 0 },
+              vanilla: {
+                sidebars: [{
+                  id: "main", title: "UI",
+                  rows: [{ id: "x", tokens: [{ text: "X" }] }]
+                }]
+              },
+              tick: []
+            });
+            """;
+        RuntimeException error = assertThrows(RuntimeException.class, () -> extract(source));
+        assertTrue(error.getMessage().contains("vanilla.sidebars requires portable version 9"));
     }
 
     @Test

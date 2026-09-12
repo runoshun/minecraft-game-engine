@@ -61,6 +61,7 @@
     const particles = [];
     const sounds = [];
     const huds = [];
+    const sidebars = [];
     const runtimeInputs = [];
     let tickActions = null;
     let actionSink = null;
@@ -569,6 +570,33 @@
       huds.push({ id, tokens });
     }
 
+    function sidebarProjection(id, spec) {
+      if (sidebars.length > 0) fail("only one sidebar(...) is currently supported");
+      if (typeof id !== "string" || id.length === 0) fail("sidebar id must be a non-empty string");
+      if (spec == null || typeof spec !== "object") fail("sidebar " + id + " spec must be an object");
+      if (typeof spec.title !== "string" || spec.title.length > 128) fail("sidebar " + id + " title must be a string of at most 128 characters");
+      if (!Array.isArray(spec.rows) || spec.rows.length < 1 || spec.rows.length > 15) fail("sidebar " + id + " rows must contain 1..15 entries");
+      const seen = new Set();
+      const rows = spec.rows.map((row, rowIndex) => {
+        if (row == null || typeof row !== "object") fail("sidebar " + id + " row " + rowIndex + " must be an object");
+        if (typeof row.id !== "string" || row.id.length === 0) fail("sidebar " + id + " row " + rowIndex + " id must be a non-empty string");
+        if (seen.has(row.id)) fail("sidebar " + id + " duplicate row id: " + row.id);
+        seen.add(row.id);
+        const source = typeof row.text === "string" ? [row.text] : row.text;
+        if (!Array.isArray(source) || source.length < 1 || source.length > 32) fail("sidebar " + id + " row " + row.id + " text must be a string or an array with 1..32 tokens");
+        const tokens = source.map((token, tokenIndex) => {
+          if (typeof token === "string") {
+            if (token.length > 128) fail("sidebar " + id + " row " + row.id + " token " + tokenIndex + " exceeds 128 characters");
+            return { text: token };
+          }
+          if (token && (token[REF] === "state" || token[REF] === "input")) return { value: unwrapValue(token) };
+          fail("sidebar " + id + " row " + row.id + " token " + tokenIndex + " must be a string, state, or input reference");
+        });
+        return { id: row.id, tokens };
+      });
+      sidebars.push({ id, title: spec.title, rows });
+    }
+
     const dsl = Object.freeze({
       state: makeState,
       input(name, initial = 0, binding) { return makeInput(name, initial, binding); },
@@ -593,6 +621,7 @@
       particle: particleEmitter,
       sound: soundEmitter,
       hud: hudProjection,
+      sidebar: sidebarProjection,
     });
 
     build(dsl);
@@ -600,13 +629,13 @@
     if (Object.keys(stateValues).length === 0) fail("at least one state(...) is required");
 
     const spec = {
-      version: 8,
+      version: 9,
       fixedPoint,
       state: stateValues,
       tick: tickActions,
     };
     if (Object.keys(inputValues).length > 0) spec.inputs = inputValues;
-    if (Object.keys(vanillaInputs).length > 0 || projections.length > 0 || texts.length > 0 || actorProjections.length > 0 || worldBatches.length > 0 || cameras.length > 0 || particles.length > 0 || sounds.length > 0 || huds.length > 0) {
+    if (Object.keys(vanillaInputs).length > 0 || projections.length > 0 || texts.length > 0 || actorProjections.length > 0 || worldBatches.length > 0 || cameras.length > 0 || particles.length > 0 || sounds.length > 0 || huds.length > 0 || sidebars.length > 0) {
       spec.vanilla = {};
       if (Object.keys(vanillaInputs).length > 0) spec.vanilla.inputs = vanillaInputs;
       if (projections.length > 0) spec.vanilla.projections = projections;
@@ -617,6 +646,7 @@
       if (particles.length > 0) spec.vanilla.particles = particles;
       if (sounds.length > 0) spec.vanilla.sounds = sounds;
       if (huds.length > 0) spec.vanilla.huds = huds;
+      if (sidebars.length > 0) spec.vanilla.sidebars = sidebars;
     }
 
     portable.define(spec);
@@ -895,6 +925,24 @@
           else text += String(Math.trunc(runtimeValue(token.value)));
         }
         ui.hud(player.id, text);
+      });
+    }
+
+    if (sidebars.length > 0) {
+      const sidebar = sidebars[0];
+      game.onTick(() => {
+        const players = input.players();
+        const player = players.length > 0 ? players[0] : null;
+        if (!player) return;
+        const rows = sidebar.rows.map(row => {
+          let label = "";
+          for (const token of row.tokens) {
+            if (token.text !== undefined) label += token.text;
+            else label += String(Math.trunc(runtimeValue(token.value)));
+          }
+          return { id: row.id, label };
+        });
+        ui.panel(player.id, { title: sidebar.title, rows });
       });
     }
   }

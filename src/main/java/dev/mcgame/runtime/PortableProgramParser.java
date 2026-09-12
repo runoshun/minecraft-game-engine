@@ -25,6 +25,8 @@ final class PortableProgramParser {
     private static final int MAX_SOUNDS = 64;
     private static final int MAX_HUDS = 1;
     private static final int MAX_HUD_TOKENS = 32;
+    private static final int MAX_SIDEBARS = 1;
+    private static final int MAX_SIDEBAR_ROWS = 15;
     private static final int MAX_ACTIONS = 2048;
     private static final int MAX_DEPTH = 16;
 
@@ -78,6 +80,7 @@ final class PortableProgramParser {
         List<PortableProgram.VanillaParticleEmitter> vanillaParticles = new ArrayList<>();
         List<PortableProgram.VanillaSoundEmitter> vanillaSounds = new ArrayList<>();
         List<PortableProgram.VanillaHud> vanillaHuds = new ArrayList<>();
+        List<PortableProgram.VanillaSidebar> vanillaSidebars = new ArrayList<>();
 
         if (spec.hasMember("vanilla")) {
             if (version < PortableProgram.VERSION_2) throw new IllegalArgumentException(api + ".vanilla requires portable version 2");
@@ -377,6 +380,56 @@ final class PortableProgramParser {
                     vanillaHuds.add(new PortableProgram.VanillaHud(id, parsed));
                 }
             }
+
+            if (vanilla.hasMember("sidebars")) {
+                if (version < PortableProgram.VERSION_9) throw new IllegalArgumentException(api + ".vanilla.sidebars requires portable version 9");
+                Value sidebars = requiredArray(vanilla, "sidebars", api + ".vanilla");
+                if (sidebars.getArraySize() > MAX_SIDEBARS) throw new IllegalArgumentException(api + ".vanilla.sidebars exceeds max sidebar count " + MAX_SIDEBARS);
+                Set<String> sidebarIds = new java.util.HashSet<>();
+                for (long i = 0; i < sidebars.getArraySize(); i++) {
+                    Value sidebar = sidebars.getArrayElement(i);
+                    String path = api + ".vanilla.sidebars[" + i + "]";
+                    if (sidebar == null || !sidebar.hasMembers()) throw new IllegalArgumentException(path + " must be an object");
+                    String id = requiredPortableId(sidebar, path);
+                    if (!sidebarIds.add(id)) throw new IllegalArgumentException(path + ".id is duplicated: " + id);
+                    String title = requiredString(sidebar, "title", path);
+                    if (title.length() > 128) throw new IllegalArgumentException(path + ".title exceeds 128 characters");
+                    Value rows = requiredArray(sidebar, "rows", path);
+                    if (rows.getArraySize() < 1 || rows.getArraySize() > MAX_SIDEBAR_ROWS) {
+                        throw new IllegalArgumentException(path + ".rows must contain 1.." + MAX_SIDEBAR_ROWS + " entries");
+                    }
+                    Set<String> rowIds = new java.util.HashSet<>();
+                    List<PortableProgram.VanillaSidebarRow> parsedRows = new ArrayList<>();
+                    for (long j = 0; j < rows.getArraySize(); j++) {
+                        Value row = rows.getArrayElement(j);
+                        String rowPath = path + ".rows[" + j + "]";
+                        if (row == null || !row.hasMembers()) throw new IllegalArgumentException(rowPath + " must be an object");
+                        String rowId = requiredPortableId(row, rowPath);
+                        if (!rowIds.add(rowId)) throw new IllegalArgumentException(rowPath + ".id is duplicated: " + rowId);
+                        Value tokens = requiredArray(row, "tokens", rowPath);
+                        if (tokens.getArraySize() < 1 || tokens.getArraySize() > MAX_HUD_TOKENS) {
+                            throw new IllegalArgumentException(rowPath + ".tokens must contain 1.." + MAX_HUD_TOKENS + " entries");
+                        }
+                        List<PortableProgram.HudToken> parsedTokens = new ArrayList<>();
+                        for (long k = 0; k < tokens.getArraySize(); k++) {
+                            Value token = tokens.getArrayElement(k);
+                            String tokenPath = rowPath + ".tokens[" + k + "]";
+                            if (token == null || !token.hasMembers()) throw new IllegalArgumentException(tokenPath + " must be an object");
+                            if (token.hasMember("text")) {
+                                String literal = requiredString(token, "text", tokenPath);
+                                if (literal.length() > 128) throw new IllegalArgumentException(tokenPath + ".text exceeds 128 characters");
+                                parsedTokens.add(new PortableProgram.HudLiteral(literal));
+                            } else if (token.hasMember("value")) {
+                                parsedTokens.add(new PortableProgram.HudValue(parseValue(requiredMember(token, "value", tokenPath), initialState.keySet(), initialInputs.keySet(), fixedPoint, tokenPath + ".value")));
+                            } else {
+                                throw new IllegalArgumentException(tokenPath + " requires text or value");
+                            }
+                        }
+                        parsedRows.add(new PortableProgram.VanillaSidebarRow(rowId, parsedTokens));
+                    }
+                    vanillaSidebars.add(new PortableProgram.VanillaSidebar(id, title, parsedRows));
+                }
+            }
         }
 
         Value tick = spec.hasMember("tick") ? spec.getMember("tick") : null;
@@ -397,6 +450,7 @@ final class PortableProgramParser {
             vanillaParticles,
             vanillaSounds,
             vanillaHuds,
+            vanillaSidebars,
             actions
         );
     }

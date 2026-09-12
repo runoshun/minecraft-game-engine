@@ -39,6 +39,7 @@ public final class PortableCompilerCli {
         System.out.println("  particles: " + result.particleCount());
         System.out.println("  sounds: " + result.soundCount());
         System.out.println("  huds: " + result.hudCount());
+        System.out.println("  sidebars: " + result.sidebarCount());
         System.out.println("  branch functions: " + result.branchFunctionCount());
         System.out.println("  output: " + output);
     }

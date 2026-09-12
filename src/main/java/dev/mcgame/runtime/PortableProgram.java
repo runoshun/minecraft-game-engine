@@ -14,7 +14,8 @@ final class PortableProgram {
     static final int VERSION_6 = 6;
     static final int VERSION_7 = 7;
     static final int VERSION_8 = 8;
-    static final int CURRENT_VERSION = VERSION_8;
+    static final int VERSION_9 = 9;
+    static final int CURRENT_VERSION = VERSION_9;
 
     sealed interface ValueRef permits StateValue, InputValue, ConstantValue {}
     record StateValue(String name) implements ValueRef {}
@@ -134,6 +135,13 @@ final class PortableProgram {
         VanillaHud { tokens = List.copyOf(tokens); }
     }
 
+    record VanillaSidebarRow(String id, List<HudToken> tokens) {
+        VanillaSidebarRow { tokens = List.copyOf(tokens); }
+    }
+    record VanillaSidebar(String id, String title, List<VanillaSidebarRow> rows) {
+        VanillaSidebar { rows = List.copyOf(rows); }
+    }
+
     record Aabb2d(ValueRef x, ValueRef y, int halfWidthRaw, int halfHeightRaw) {}
     record Circle2d(ValueRef x, ValueRef y, int radiusRaw) {}
     record Capsule2d(int axRaw, int ayRaw, int bxRaw, int byRaw, int radiusRaw) {}
@@ -188,6 +196,7 @@ final class PortableProgram {
     private final List<VanillaParticleEmitter> vanillaParticles;
     private final List<VanillaSoundEmitter> vanillaSounds;
     private final List<VanillaHud> vanillaHuds;
+    private final List<VanillaSidebar> vanillaSidebars;
     private final List<Action> tickActions;
 
     PortableProgram(
@@ -204,6 +213,7 @@ final class PortableProgram {
         List<VanillaParticleEmitter> vanillaParticles,
         List<VanillaSoundEmitter> vanillaSounds,
         List<VanillaHud> vanillaHuds,
+        List<VanillaSidebar> vanillaSidebars,
         List<Action> tickActions
     ) {
         if (version < VERSION_1 || version > CURRENT_VERSION) {
@@ -225,6 +235,7 @@ final class PortableProgram {
         this.vanillaParticles = List.copyOf(vanillaParticles);
         this.vanillaSounds = List.copyOf(vanillaSounds);
         this.vanillaHuds = List.copyOf(vanillaHuds);
+        this.vanillaSidebars = List.copyOf(vanillaSidebars);
         this.tickActions = List.copyOf(tickActions);
     }
 
@@ -241,6 +252,7 @@ final class PortableProgram {
     List<VanillaParticleEmitter> vanillaParticles() { return vanillaParticles; }
     List<VanillaSoundEmitter> vanillaSounds() { return vanillaSounds; }
     List<VanillaHud> vanillaHuds() { return vanillaHuds; }
+    List<VanillaSidebar> vanillaSidebars() { return vanillaSidebars; }
     List<Action> tickActions() { return tickActions; }
 
     double logicalValue(int raw) {

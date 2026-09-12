@@ -218,6 +218,8 @@ type PortableVanillaSoundEmitter = {
 };
 type PortableHudToken = { text: string } | { value: PortableValue };
 type PortableVanillaHud = { id: string; tokens: PortableHudToken[] };
+type PortableVanillaSidebarRow = { id: string; tokens: PortableHudToken[] };
+type PortableVanillaSidebar = { id: string; title: string; rows: PortableVanillaSidebarRow[] };
 type PortableProgramSpecV2 = {
   version: 2;
   fixedPoint?: number;
@@ -298,7 +300,15 @@ type PortableProgramSpecV8 = {
   vanilla?: PortableProgramSpecV7["vanilla"] & { worldBatches?: PortableVanillaWorldBatch[] };
   tick: PortableAction[];
 };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8;
+type PortableProgramSpecV9 = {
+  version: 9;
+  fixedPoint?: number;
+  state: Record<string, number>;
+  inputs?: Record<string, number>;
+  vanilla?: PortableProgramSpecV8["vanilla"] & { sidebars?: PortableVanillaSidebar[] };
+  tick: PortableAction[];
+};
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -421,6 +431,8 @@ type PortableDslFlipperSpec = {
 };
 type PortableDslCollider = PortableDslBox | PortableDslCircle | PortableDslSegment | PortableDslCapsule | PortableDslFlipper;
 type PortableDslHudSpec = { text: string | Array<string | PortableDslState | PortableDslInput> };
+type PortableDslSidebarRow = { id: string; text: string | Array<string | PortableDslState | PortableDslInput> };
+type PortableDslSidebarSpec = { title: string; rows: PortableDslSidebarRow[] };
 type PortableDsl = {
   state(name: string, initial: number): PortableDslState;
   input(name: string, initial?: number, binding?: PortableDslInputBinding): PortableDslInput;
@@ -448,6 +460,7 @@ type PortableDsl = {
   particle(id: string, spec: PortableDslParticleSpec): void;
   sound(id: string, spec: PortableDslSoundSpec): void;
   hud(id: string, spec: PortableDslHudSpec): void;
+  sidebar(id: string, spec: PortableDslSidebarSpec): void;
 };
 
 declare function portableDsl(build: (game: PortableDsl) => void): void;
