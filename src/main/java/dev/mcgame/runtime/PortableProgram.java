@@ -13,7 +13,8 @@ final class PortableProgram {
     static final int VERSION_5 = 5;
     static final int VERSION_6 = 6;
     static final int VERSION_7 = 7;
-    static final int CURRENT_VERSION = VERSION_7;
+    static final int VERSION_8 = 8;
+    static final int CURRENT_VERSION = VERSION_8;
 
     sealed interface ValueRef permits StateValue, InputValue, ConstantValue {}
     record StateValue(String name) implements ValueRef {}
@@ -82,6 +83,11 @@ final class PortableProgram {
         VanillaCoordinate yaw,
         Condition condition
     ) {}
+
+    record VanillaWorldBlockWrite(int x, int y, int z, String block) {}
+    record VanillaWorldBatch(String id, String dimension, List<VanillaWorldBlockWrite> blocks, Condition condition) {
+        VanillaWorldBatch { blocks = List.copyOf(blocks); }
+    }
 
     record VanillaCamera(
         String id,
@@ -177,6 +183,7 @@ final class PortableProgram {
     private final List<VanillaBlockProjection> vanillaProjections;
     private final List<VanillaTextProjection> vanillaTexts;
     private final List<VanillaActorProjection> vanillaActors;
+    private final List<VanillaWorldBatch> vanillaWorldBatches;
     private final List<VanillaCamera> vanillaCameras;
     private final List<VanillaParticleEmitter> vanillaParticles;
     private final List<VanillaSoundEmitter> vanillaSounds;
@@ -192,6 +199,7 @@ final class PortableProgram {
         List<VanillaBlockProjection> vanillaProjections,
         List<VanillaTextProjection> vanillaTexts,
         List<VanillaActorProjection> vanillaActors,
+        List<VanillaWorldBatch> vanillaWorldBatches,
         List<VanillaCamera> vanillaCameras,
         List<VanillaParticleEmitter> vanillaParticles,
         List<VanillaSoundEmitter> vanillaSounds,
@@ -212,6 +220,7 @@ final class PortableProgram {
         this.vanillaProjections = List.copyOf(vanillaProjections);
         this.vanillaTexts = List.copyOf(vanillaTexts);
         this.vanillaActors = List.copyOf(vanillaActors);
+        this.vanillaWorldBatches = List.copyOf(vanillaWorldBatches);
         this.vanillaCameras = List.copyOf(vanillaCameras);
         this.vanillaParticles = List.copyOf(vanillaParticles);
         this.vanillaSounds = List.copyOf(vanillaSounds);
@@ -227,6 +236,7 @@ final class PortableProgram {
     List<VanillaBlockProjection> vanillaProjections() { return vanillaProjections; }
     List<VanillaTextProjection> vanillaTexts() { return vanillaTexts; }
     List<VanillaActorProjection> vanillaActors() { return vanillaActors; }
+    List<VanillaWorldBatch> vanillaWorldBatches() { return vanillaWorldBatches; }
     List<VanillaCamera> vanillaCameras() { return vanillaCameras; }
     List<VanillaParticleEmitter> vanillaParticles() { return vanillaParticles; }
     List<VanillaSoundEmitter> vanillaSounds() { return vanillaSounds; }

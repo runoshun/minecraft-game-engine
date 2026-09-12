@@ -142,7 +142,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(7, program.version());
+        assertEquals(8, program.version());
         assertEquals(2, program.initialState().size());
         assertEquals(1, program.initialInputs().size());
         assertEquals(1, program.vanillaProjections().size());
@@ -194,7 +194,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(7, program.version());
+        assertEquals(8, program.version());
         assertEquals(2, program.initialInputs().size());
         assertEquals(1, program.vanillaCameras().size());
         assertEquals(1, program.vanillaParticles().size());
@@ -266,7 +266,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(7, program.version());
+        assertEquals(8, program.version());
         assertEquals(1, program.vanillaTexts().size());
         assertEquals(1, program.vanillaSounds().size());
         assertEquals(1, program.vanillaHuds().size());
@@ -340,7 +340,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(7, program.version());
+        assertEquals(8, program.version());
         assertEquals(3, program.vanillaProjections().size());
         assertEquals(1, program.vanillaTexts().size());
         assertTrue(program.tickActions().stream().anyMatch(PortableProgram.CircleIfAction.class::isInstance));
@@ -398,7 +398,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(7, program.version());
+        assertEquals(8, program.version());
         assertTrue(program.tickActions().stream().anyMatch(PortableProgram.CircleCapsuleIfAction.class::isInstance));
         assertTrue(program.tickActions().stream().anyMatch(PortableProgram.TriggerIfAction.class::isInstance));
 
@@ -452,7 +452,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(7, program.version());
+        assertEquals(8, program.version());
         assertEquals(2, program.vanillaActors().size());
         assertEquals("minecraft:mannequin", program.vanillaActors().get(0).entityType());
         assertEquals("minecraft:zombie", program.vanillaActors().get(1).entityType());
@@ -481,6 +481,95 @@ class PortableCompilerTest {
         assertTrue(tick.contains(" text set value {text:\"\",extra:["));
         assertTrue(tick.contains("score:{name:"));
         assertTrue(cleanup.contains("kill @e[tag=mcg_a_"));
+    }
+
+    @Test
+    void versionEightDslCompilesBoundedWorldProjection() throws Exception {
+        String source = """
+            portableDsl({ fixedPoint: 1000 }, game => {
+              const mode = game.state("mode", 0);
+              const left = game.input("left", 0, { source: "first_player_left" });
+
+              game.worldBatch("base", {
+                blocks: [
+                  { x: 160, y: 90, z: 0, block: "minecraft:stone" },
+                  { x: 161, y: 90, z: 0, block: "minecraft:deepslate_tiles" }
+                ]
+              });
+              game.worldFill("paint", {
+                fromX: 160, fromY: 91, fromZ: 0,
+                toX: 161, toY: 91, toZ: 1,
+                block: "minecraft:gold_block",
+                when: left.eq(1)
+              });
+
+              game.tick(() => { mode.set(1); });
+            });
+            """;
+
+        PortableProgram program = extract(source);
+        assertEquals(8, program.version());
+        assertEquals(2, program.vanillaWorldBatches().size());
+        assertEquals(2, program.vanillaWorldBatches().get(0).blocks().size());
+        assertEquals(4, program.vanillaWorldBatches().get(1).blocks().size());
+        assertEquals(null, program.vanillaWorldBatches().get(0).condition());
+        assertTrue(program.vanillaWorldBatches().get(1).condition() != null);
+
+        Path output = Files.createTempDirectory("mcgame-portable-v8-world-test");
+        PortableDatapackCompiler.Result result = new PortableDatapackCompiler().compile(program, "portable_v8_world", output);
+        assertEquals(2, result.worldBatchCount());
+        String load = Files.readString(output.resolve("data/portable_v8_world/function/portable/load.mcfunction"));
+        String tick = Files.readString(output.resolve("data/portable_v8_world/function/portable/tick.mcfunction"));
+        String base = Files.readString(output.resolve("data/portable_v8_world/function/portable/world_base.mcfunction"));
+        String paint = Files.readString(output.resolve("data/portable_v8_world/function/portable/world_paint.mcfunction"));
+        String cleanup = Files.readString(output.resolve("data/portable_v8_world/function/portable/cleanup.mcfunction"));
+        assertTrue(load.contains("function portable_v8_world:portable/world_base"));
+        assertFalse(load.contains("world_paint"));
+        assertTrue(tick.contains("run function portable_v8_world:portable/world_paint"));
+        assertTrue(base.contains("forceload add 160 0"));
+        assertTrue(base.contains("setblock 160 90 0 minecraft:stone"));
+        assertTrue(base.contains("setblock 161 90 0 minecraft:deepslate_tiles"));
+        assertTrue(base.contains("forceload remove 160 0"));
+        assertEquals(4, paint.lines().filter(line -> line.contains(" setblock " )).count());
+        assertFalse(cleanup.contains("setblock"));
+        assertFalse(cleanup.contains("world_base"));
+    }
+
+    @Test
+    void versionSevenRejectsWorldBatchMetadata() {
+        String source = """
+            portable.define({
+              version: 7,
+              fixedPoint: 1000,
+              state: { x: 0 },
+              vanilla: {
+                worldBatches: [{
+                  id: "base",
+                  blocks: [{ x: 0, y: 64, z: 0, block: "minecraft:stone" }]
+                }]
+              },
+              tick: []
+            });
+            """;
+        RuntimeException error = assertThrows(RuntimeException.class, () -> extract(source));
+        assertTrue(error.getMessage().contains("vanilla.worldBatches requires portable version 8"));
+    }
+
+    @Test
+    void versionEightRejectsOversizedWorldFill() {
+        String source = """
+            portableDsl({ fixedPoint: 1000 }, game => {
+              game.state("ready", 1);
+              game.worldFill("too_big", {
+                fromX: 0, fromY: 0, fromZ: 0,
+                toX: 32, toY: 30, toZ: 32,
+                block: "minecraft:stone"
+              });
+              game.tick(() => {});
+            });
+            """;
+        RuntimeException error = assertThrows(RuntimeException.class, () -> extract(source));
+        assertTrue(error.getMessage().contains("worldFill too_big exceeds 32768 writes"));
     }
 
     @Test

@@ -10,7 +10,7 @@ Verified against Minecraft 26.1:
 
 - `portableDsl(...)` TypeScript lowers to versioned Portable IR at build time
 - generated datapacks run on a mod-free vanilla server
-- held input, spectator camera, block/text displays, particles, sound, actionbar HUD, fixed-point state, AABB collision, circle/circle collision, static segment/capsule collision, trigger zones, two-pose flippers, bounded mannequin/zombie/skeleton actor projections, state-backed world-text tokens, and conditional projection visibility are supported by the vanilla backend
+- held input, spectator camera, block/text displays, particles, sound, actionbar HUD, fixed-point state, AABB collision, circle/circle collision, static segment/capsule collision, trigger zones, two-pose flippers, bounded mannequin/zombie/skeleton actor projections, state-backed world-text tokens, bounded compile-time world batches/fills, and conditional projection visibility are supported by the vanilla backend
 - compile-time `repeat(...)` expands bounded static object fields such as brick grids
 - the optional Fabric backend still executes the same portable declarations for development and compatibility
 
@@ -71,11 +71,11 @@ portableDsl({ fixedPoint: 1000 }, game => {
 });
 ```
 
-A minimal example lives under [`examples/demo-datapack`](examples/demo-datapack), [`examples/portable-bounce`](examples/portable-bounce) is the low-level portable IR smoke example, [`examples/portable-breakout-core`](examples/portable-breakout-core) is the mod-free brick-breaker acceptance game, [`examples/portable-pinball-core`](examples/portable-pinball-core) is the v6 segment/capsule/trigger/flipper acceptance game, [`examples/portable-presentation-core`](examples/portable-presentation-core) is the v7 actor/dynamic-label acceptance game, and the legacy Fabric-heavy game loop lives under [`examples/topdown-roguelike`](examples/topdown-roguelike). Presentation API details and adapter guidance are in [`docs/presentation-api.md`](docs/presentation-api.md).
+A minimal example lives under [`examples/demo-datapack`](examples/demo-datapack), [`examples/portable-bounce`](examples/portable-bounce) is the low-level portable IR smoke example, [`examples/portable-breakout-core`](examples/portable-breakout-core) is the mod-free brick-breaker acceptance game, [`examples/portable-pinball-core`](examples/portable-pinball-core) is the v6 segment/capsule/trigger/flipper acceptance game, [`examples/portable-presentation-core`](examples/portable-presentation-core) is the v7 actor/dynamic-label acceptance game, [`examples/portable-world-core`](examples/portable-world-core) is the v8 world-projection acceptance game, and the legacy Fabric-heavy game loop lives under [`examples/topdown-roguelike`](examples/topdown-roguelike). Presentation API details and adapter guidance are in [`docs/presentation-api.md`](docs/presentation-api.md).
 
 ## Current API
 
-- `portableDsl(...)` (primary TS authoring frontend; portable v7 adds bounded state-backed actor projections and dynamic world-text scalar tokens on top of the v6 arcade/pinball feature set)
+- `portableDsl(...)` (primary TS authoring frontend; portable v8 adds bounded declarative world batches/fills on top of v7 presentation and the v6 arcade/pinball feature set)
 - `portable.define(spec)` / `portable.get(state)` / `portable.raw(state)` / input register access (low-level portable API)
 - `game.onStart(callback)` / `game.onBeforeTick(callback)` / `game.onTick(callback)`
 - `game.log(...values)`
@@ -105,7 +105,7 @@ Requires Java 25.
 ./gradlew build
 ```
 
-The primary deployment path compiles supported portable DSL programs to standalone vanilla datapacks. The current v7 backend supports normal held player input (W/A/S/D, jump, sneak, sprint), block/text-display projections with optional state-controlled visibility, one spectator camera, bounded particle/sound emitters, one actionbar HUD, deterministic 2D AABB and circle/circle collision, static segment/capsule collision, center-point trigger zones, two-pose flippers, bounded mannequin/zombie/skeleton actor projections, state-backed world-text tokens, and compile-time static collection expansion in addition to fixed-point game logic:
+The primary deployment path compiles supported portable DSL programs to standalone vanilla datapacks. The current v8 backend supports normal held player input (W/A/S/D, jump, sneak, sprint), block/text-display projections with optional state-controlled visibility, one spectator camera, bounded particle/sound emitters, one actionbar HUD, deterministic 2D AABB and circle/circle collision, static segment/capsule collision, center-point trigger zones, two-pose flippers, bounded mannequin/zombie/skeleton actor projections, state-backed world-text tokens, bounded compile-time world batches/fills, and compile-time static collection expansion in addition to fixed-point game logic:
 
 ```bash
 ./gradlew compilePortable \

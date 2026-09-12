@@ -18,6 +18,8 @@ final class PortableProgramParser {
     private static final int MAX_PROJECTIONS = 64;
     private static final int MAX_TEXTS = 64;
     private static final int MAX_ACTORS = 64;
+    private static final int MAX_WORLD_BATCHES = 32;
+    private static final int MAX_WORLD_WRITES = 32_768;
     private static final int MAX_CAMERAS = 1;
     private static final int MAX_PARTICLES = 64;
     private static final int MAX_SOUNDS = 64;
@@ -71,6 +73,7 @@ final class PortableProgramParser {
         List<PortableProgram.VanillaBlockProjection> vanillaProjections = new ArrayList<>();
         List<PortableProgram.VanillaTextProjection> vanillaTexts = new ArrayList<>();
         List<PortableProgram.VanillaActorProjection> vanillaActors = new ArrayList<>();
+        List<PortableProgram.VanillaWorldBatch> vanillaWorldBatches = new ArrayList<>();
         List<PortableProgram.VanillaCamera> vanillaCameras = new ArrayList<>();
         List<PortableProgram.VanillaParticleEmitter> vanillaParticles = new ArrayList<>();
         List<PortableProgram.VanillaSoundEmitter> vanillaSounds = new ArrayList<>();
@@ -222,6 +225,44 @@ final class PortableProgramParser {
                 }
             }
 
+            if (vanilla.hasMember("worldBatches")) {
+                if (version < PortableProgram.VERSION_8) throw new IllegalArgumentException(api + ".vanilla.worldBatches requires portable version 8");
+                Value batches = requiredArray(vanilla, "worldBatches", api + ".vanilla");
+                if (batches.getArraySize() > MAX_WORLD_BATCHES) throw new IllegalArgumentException(api + ".vanilla.worldBatches exceeds max batch count " + MAX_WORLD_BATCHES);
+                Set<String> batchIds = new java.util.HashSet<>();
+                int totalWrites = 0;
+                for (long i = 0; i < batches.getArraySize(); i++) {
+                    Value batch = batches.getArrayElement(i);
+                    String path = api + ".vanilla.worldBatches[" + i + "]";
+                    if (batch == null || !batch.hasMembers()) throw new IllegalArgumentException(path + " must be an object");
+                    String id = requiredPortableId(batch, path);
+                    if (!batchIds.add(id)) throw new IllegalArgumentException(path + ".id is duplicated: " + id);
+                    String dimension = memberResource(batch, "dimension", "minecraft:overworld", path);
+                    Value blocks = requiredArray(batch, "blocks", path);
+                    if (blocks.getArraySize() < 1 || blocks.getArraySize() > MAX_WORLD_WRITES) {
+                        throw new IllegalArgumentException(path + ".blocks must contain 1.." + MAX_WORLD_WRITES + " writes");
+                    }
+                    totalWrites = Math.addExact(totalWrites, Math.toIntExact(blocks.getArraySize()));
+                    if (totalWrites > MAX_WORLD_WRITES) throw new IllegalArgumentException(api + ".vanilla.worldBatches exceeds total write count " + MAX_WORLD_WRITES);
+                    List<PortableProgram.VanillaWorldBlockWrite> writes = new ArrayList<>();
+                    for (long j = 0; j < blocks.getArraySize(); j++) {
+                        Value write = blocks.getArrayElement(j);
+                        String writePath = path + ".blocks[" + j + "]";
+                        if (write == null || !write.hasMembers()) throw new IllegalArgumentException(writePath + " must be an object");
+                        int x = requiredBoundedInteger(write, "x", -30_000_000, 30_000_000, writePath);
+                        int y = requiredBoundedInteger(write, "y", -2048, 2048, writePath);
+                        int z = requiredBoundedInteger(write, "z", -30_000_000, 30_000_000, writePath);
+                        String blockId = memberResource(write, "block", null, writePath);
+                        writes.add(new PortableProgram.VanillaWorldBlockWrite(x, y, z, blockId));
+                    }
+                    PortableProgram.Condition condition = null;
+                    if (batch.hasMember("when")) {
+                        condition = parseCondition(requiredObject(batch, "when", path), initialState.keySet(), initialInputs.keySet(), fixedPoint, path + ".when");
+                    }
+                    vanillaWorldBatches.add(new PortableProgram.VanillaWorldBatch(id, dimension, writes, condition));
+                }
+            }
+
             if (vanilla.hasMember("cameras")) {
                 if (version < PortableProgram.VERSION_3) throw new IllegalArgumentException(api + ".vanilla.cameras requires portable version 3");
                 Value cameras = requiredArray(vanilla, "cameras", api + ".vanilla");
@@ -351,6 +392,7 @@ final class PortableProgramParser {
             vanillaProjections,
             vanillaTexts,
             vanillaActors,
+            vanillaWorldBatches,
             vanillaCameras,
             vanillaParticles,
             vanillaSounds,
@@ -631,6 +673,15 @@ final class PortableProgramParser {
         Value value = object.getMember(member);
         if (value == null || !value.isBoolean()) throw new IllegalArgumentException(path + "." + member + " must be boolean");
         return value.asBoolean();
+    }
+
+    private static int requiredBoundedInteger(Value object, String member, int min, int max, String path) {
+        Value value = requiredMember(object, member, path);
+        if (!value.isNumber()) throw new IllegalArgumentException(path + "." + member + " must be a number");
+        double number = value.asDouble();
+        if (!Double.isFinite(number) || number != Math.rint(number)) throw new IllegalArgumentException(path + "." + member + " must be an integer");
+        if (number < min || number > max) throw new IllegalArgumentException(path + "." + member + " must be between " + min + " and " + max);
+        return (int) number;
     }
 
     private static int memberBoundedInt(Value object, String member, int fallback, int min, int max, String path) {

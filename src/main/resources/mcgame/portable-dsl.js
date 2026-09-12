@@ -55,6 +55,8 @@
     const projections = [];
     const texts = [];
     const actorProjections = [];
+    const worldBatches = [];
+    let worldWriteCount = 0;
     const cameras = [];
     const particles = [];
     const sounds = [];
@@ -436,6 +438,59 @@
       actorProjections.push(actor);
     }
 
+    function normalizeWorldWrite(write, label) {
+      if (write == null || typeof write !== "object") fail(label + " must be an object");
+      if (typeof write.block !== "string" || write.block.length === 0) fail(label + ".block must be a resource id string");
+      return {
+        x: finiteInteger(write.x, label + ".x", -30000000, 30000000),
+        y: finiteInteger(write.y, label + ".y", -2048, 2048),
+        z: finiteInteger(write.z, label + ".z", -30000000, 30000000),
+        block: write.block,
+      };
+    }
+
+    function worldBatch(id, spec) {
+      if (typeof id !== "string" || id.length === 0) fail("worldBatch id must be a non-empty string");
+      if (spec == null || typeof spec !== "object") fail("worldBatch " + id + " spec must be an object");
+      if (!Array.isArray(spec.blocks) || spec.blocks.length < 1 || spec.blocks.length > 32768) {
+        fail("worldBatch " + id + " blocks must contain 1..32768 writes");
+      }
+      const blocks = spec.blocks.map((write, index) => normalizeWorldWrite(write, "worldBatch " + id + " block " + index));
+      worldWriteCount += blocks.length;
+      if (worldWriteCount > 32768) fail("portable world batches exceed total write count 32768");
+      const batch = {
+        id,
+        dimension: spec.dimension === undefined ? "minecraft:overworld" : spec.dimension,
+        blocks,
+      };
+      if (typeof batch.dimension !== "string" || batch.dimension.length === 0) fail("worldBatch " + id + " dimension must be a resource id string");
+      if (spec.when !== undefined) batch.when = serializedCondition(spec.when, "worldBatch " + id + " when");
+      worldBatches.push(batch);
+    }
+
+    function worldFill(id, spec) {
+      if (spec == null || typeof spec !== "object") fail("worldFill " + id + " spec must be an object");
+      if (typeof spec.block !== "string" || spec.block.length === 0) fail("worldFill " + id + " block must be a resource id string");
+      const fromX = finiteInteger(spec.fromX, "worldFill " + id + ".fromX", -30000000, 30000000);
+      const fromY = finiteInteger(spec.fromY, "worldFill " + id + ".fromY", -2048, 2048);
+      const fromZ = finiteInteger(spec.fromZ, "worldFill " + id + ".fromZ", -30000000, 30000000);
+      const toX = finiteInteger(spec.toX, "worldFill " + id + ".toX", -30000000, 30000000);
+      const toY = finiteInteger(spec.toY, "worldFill " + id + ".toY", -2048, 2048);
+      const toZ = finiteInteger(spec.toZ, "worldFill " + id + ".toZ", -30000000, 30000000);
+      const minX = Math.min(fromX, toX), maxX = Math.max(fromX, toX);
+      const minY = Math.min(fromY, toY), maxY = Math.max(fromY, toY);
+      const minZ = Math.min(fromZ, toZ), maxZ = Math.max(fromZ, toZ);
+      const count = (maxX - minX + 1) * (maxY - minY + 1) * (maxZ - minZ + 1);
+      if (!Number.isSafeInteger(count) || count < 1 || count > 32768) fail("worldFill " + id + " exceeds 32768 writes");
+      const blocks = [];
+      for (let y = minY; y <= maxY; y++) {
+        for (let z = minZ; z <= maxZ; z++) {
+          for (let x = minX; x <= maxX; x++) blocks.push({ x, y, z, block: spec.block });
+        }
+      }
+      worldBatch(id, { dimension: spec.dimension, blocks, when: spec.when });
+    }
+
     function cameraProjection(id, spec) {
       if (cameras.length > 0) fail("only one camera(...) is currently supported");
       if (typeof id !== "string" || id.length === 0) fail("camera id must be a non-empty string");
@@ -532,6 +587,8 @@
       block,
       text: textProjection,
       actor: actorProjection,
+      worldBatch,
+      worldFill,
       camera: cameraProjection,
       particle: particleEmitter,
       sound: soundEmitter,
@@ -543,18 +600,19 @@
     if (Object.keys(stateValues).length === 0) fail("at least one state(...) is required");
 
     const spec = {
-      version: 7,
+      version: 8,
       fixedPoint,
       state: stateValues,
       tick: tickActions,
     };
     if (Object.keys(inputValues).length > 0) spec.inputs = inputValues;
-    if (Object.keys(vanillaInputs).length > 0 || projections.length > 0 || texts.length > 0 || actorProjections.length > 0 || cameras.length > 0 || particles.length > 0 || sounds.length > 0 || huds.length > 0) {
+    if (Object.keys(vanillaInputs).length > 0 || projections.length > 0 || texts.length > 0 || actorProjections.length > 0 || worldBatches.length > 0 || cameras.length > 0 || particles.length > 0 || sounds.length > 0 || huds.length > 0) {
       spec.vanilla = {};
       if (Object.keys(vanillaInputs).length > 0) spec.vanilla.inputs = vanillaInputs;
       if (projections.length > 0) spec.vanilla.projections = projections;
       if (texts.length > 0) spec.vanilla.texts = texts;
       if (actorProjections.length > 0) spec.vanilla.actors = actorProjections;
+      if (worldBatches.length > 0) spec.vanilla.worldBatches = worldBatches;
       if (cameras.length > 0) spec.vanilla.cameras = cameras;
       if (particles.length > 0) spec.vanilla.particles = particles;
       if (sounds.length > 0) spec.vanilla.sounds = sounds;
@@ -775,6 +833,18 @@
         case "gte": return left >= right;
         default: fail("internal runtime condition operator is invalid: " + condition.op);
       }
+    }
+
+    if (worldBatches.length > 0) {
+      const applyWorldBatch = batch => world.setBlocks({ dimension: batch.dimension, blocks: batch.blocks });
+      game.onStart(() => {
+        for (const batch of worldBatches) if (batch.when === undefined) applyWorldBatch(batch);
+      });
+      game.onTick(() => {
+        for (const batch of worldBatches) {
+          if (batch.when !== undefined && runtimeTest(batch.when)) applyWorldBatch(batch);
+        }
+      });
     }
 
     if (particles.length > 0) {

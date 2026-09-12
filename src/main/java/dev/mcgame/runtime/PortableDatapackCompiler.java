@@ -31,6 +31,7 @@ final class PortableDatapackCompiler {
         int projectionCount,
         int textCount,
         int actorCount,
+        int worldBatchCount,
         int cameraCount,
         int particleCount,
         int soundCount,
@@ -52,6 +53,7 @@ final class PortableDatapackCompiler {
         compileVanillaProjections(program, tick, context);
         compileVanillaTextUpdates(program, tick, context);
         compileVanillaActorUpdates(program, tick, context);
+        prepareVanillaWorldBatches(program, tick, context);
         compileVanillaCameraUpdates(program, tick, context);
         compileVanillaParticles(program, tick, context);
         compileVanillaSounds(program, tick, context);
@@ -71,6 +73,7 @@ final class PortableDatapackCompiler {
         for (Map.Entry<Integer, String> entry : context.constantHolders.entrySet()) {
             load.add("scoreboard players set " + entry.getValue() + " " + objective + " " + entry.getKey());
         }
+        compileVanillaWorldBatchLoadCalls(program, load, context);
         compileVanillaProjectionLoad(program, load, context);
         compileVanillaTextLoad(program, load, context);
         compileVanillaActorLoad(program, load, context);
@@ -117,6 +120,7 @@ final class PortableDatapackCompiler {
             program.vanillaProjections().size(),
             program.vanillaTexts().size(),
             program.vanillaActors().size(),
+            program.vanillaWorldBatches().size(),
             program.vanillaCameras().size(),
             program.vanillaParticles().size(),
             program.vanillaSounds().size(),
@@ -298,6 +302,51 @@ final class PortableDatapackCompiler {
             body.add("execute in " + actor.dimension() + " run item replace entity @e[tag=" + tag + ",limit=1] armor.head with " + headItem);
         }
         body.add("execute in " + actor.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
+        context.functions.put(function, body);
+    }
+
+    private void prepareVanillaWorldBatches(PortableProgram program, List<String> tick, CompileContext context) {
+        for (PortableProgram.VanillaWorldBatch batch : program.vanillaWorldBatches()) {
+            ensureWorldBatchFunction(batch, context);
+            if (batch.condition() != null) {
+                tick.add("execute " + condition(batch.condition(), true, context) + " run function "
+                    + context.namespace + ":portable/world_" + batch.id());
+            }
+        }
+    }
+
+    private void compileVanillaWorldBatchLoadCalls(PortableProgram program, List<String> load, CompileContext context) {
+        for (PortableProgram.VanillaWorldBatch batch : program.vanillaWorldBatches()) {
+            if (batch.condition() == null) {
+                load.add("function " + context.namespace + ":portable/world_" + batch.id());
+            }
+        }
+    }
+
+    private void ensureWorldBatchFunction(PortableProgram.VanillaWorldBatch batch, CompileContext context) {
+        String function = "world_" + batch.id();
+        if (context.functions.containsKey(function)) return;
+
+        Map<String, List<PortableProgram.VanillaWorldBlockWrite>> byChunk = new LinkedHashMap<>();
+        for (PortableProgram.VanillaWorldBlockWrite write : batch.blocks()) {
+            int chunkX = Math.floorDiv(write.x(), 16);
+            int chunkZ = Math.floorDiv(write.z(), 16);
+            String key = chunkX + "," + chunkZ;
+            byChunk.computeIfAbsent(key, ignored -> new ArrayList<>()).add(write);
+        }
+
+        List<String> body = new ArrayList<>();
+        for (List<PortableProgram.VanillaWorldBlockWrite> chunkWrites : byChunk.values()) {
+            PortableProgram.VanillaWorldBlockWrite first = chunkWrites.getFirst();
+            int chunkBlockX = Math.floorDiv(first.x(), 16) * 16;
+            int chunkBlockZ = Math.floorDiv(first.z(), 16) * 16;
+            body.add("execute in " + batch.dimension() + " run forceload add " + chunkBlockX + " " + chunkBlockZ);
+            for (PortableProgram.VanillaWorldBlockWrite write : chunkWrites) {
+                body.add("execute in " + batch.dimension() + " run setblock "
+                    + write.x() + " " + write.y() + " " + write.z() + " " + write.block());
+            }
+            body.add("execute in " + batch.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
+        }
         context.functions.put(function, body);
     }
 

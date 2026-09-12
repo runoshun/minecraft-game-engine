@@ -176,6 +176,13 @@ type PortableVanillaActorProjection = {
   yaw?: PortableVanillaCoordinate;
   when?: PortableComparison;
 };
+type PortableVanillaWorldBlockWrite = { x: number; y: number; z: number; block: string };
+type PortableVanillaWorldBatch = {
+  id: string;
+  dimension?: string;
+  blocks: PortableVanillaWorldBlockWrite[];
+  when?: PortableComparison;
+};
 type PortableVanillaCamera = {
   id: string;
   dimension?: string;
@@ -283,7 +290,15 @@ type PortableProgramSpecV7 = {
   vanilla?: PortableProgramSpecV5["vanilla"] & { actors?: PortableVanillaActorProjection[] };
   tick: PortableAction[];
 };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7;
+type PortableProgramSpecV8 = {
+  version: 8;
+  fixedPoint?: number;
+  state: Record<string, number>;
+  inputs?: Record<string, number>;
+  vanilla?: PortableProgramSpecV7["vanilla"] & { worldBatches?: PortableVanillaWorldBatch[] };
+  tick: PortableAction[];
+};
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -350,6 +365,19 @@ type PortableDslActorSpec = {
   yaw?: PortableDslCoordinate;
   when?: PortableDslCondition;
 };
+type PortableDslWorldBlockWrite = { x: number; y: number; z: number; block: string };
+type PortableDslWorldBatchSpec = {
+  dimension?: string;
+  blocks: PortableDslWorldBlockWrite[];
+  when?: PortableDslCondition;
+};
+type PortableDslWorldFillSpec = {
+  dimension?: string;
+  fromX: number; fromY: number; fromZ: number;
+  toX: number; toY: number; toZ: number;
+  block: string;
+  when?: PortableDslCondition;
+};
 type PortableDslParticleSpec = {
   dimension?: string;
   particle: string;
@@ -414,6 +442,8 @@ type PortableDsl = {
   block(id: string, spec: PortableDslBlockSpec): void;
   text(id: string, spec: PortableDslTextSpec): void;
   actor(id: string, spec: PortableDslActorSpec): void;
+  worldBatch(id: string, spec: PortableDslWorldBatchSpec): void;
+  worldFill(id: string, spec: PortableDslWorldFillSpec): void;
   camera(id: string, spec: PortableDslCameraSpec): void;
   particle(id: string, spec: PortableDslParticleSpec): void;
   sound(id: string, spec: PortableDslSoundSpec): void;
