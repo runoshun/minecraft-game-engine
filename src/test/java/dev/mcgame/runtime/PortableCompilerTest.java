@@ -142,7 +142,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(6, program.version());
+        assertEquals(7, program.version());
         assertEquals(2, program.initialState().size());
         assertEquals(1, program.initialInputs().size());
         assertEquals(1, program.vanillaProjections().size());
@@ -194,7 +194,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(6, program.version());
+        assertEquals(7, program.version());
         assertEquals(2, program.initialInputs().size());
         assertEquals(1, program.vanillaCameras().size());
         assertEquals(1, program.vanillaParticles().size());
@@ -266,7 +266,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(6, program.version());
+        assertEquals(7, program.version());
         assertEquals(1, program.vanillaTexts().size());
         assertEquals(1, program.vanillaSounds().size());
         assertEquals(1, program.vanillaHuds().size());
@@ -340,7 +340,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(6, program.version());
+        assertEquals(7, program.version());
         assertEquals(3, program.vanillaProjections().size());
         assertEquals(1, program.vanillaTexts().size());
         assertTrue(program.tickActions().stream().anyMatch(PortableProgram.CircleIfAction.class::isInstance));
@@ -398,7 +398,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(6, program.version());
+        assertEquals(7, program.version());
         assertTrue(program.tickActions().stream().anyMatch(PortableProgram.CircleCapsuleIfAction.class::isInstance));
         assertTrue(program.tickActions().stream().anyMatch(PortableProgram.TriggerIfAction.class::isInstance));
 
@@ -420,6 +420,104 @@ class PortableCompilerTest {
         assertTrue(generated.contains("matches ..0 if score"));
         assertTrue(generated.contains("matches 1.. if score"));
         assertTrue(generated.contains("run scoreboard players set #q"));
+    }
+
+    @Test
+    void versionSevenDslCompilesBoundedActorProjections() throws Exception {
+        String source = """
+            portableDsl({ fixedPoint: 1000 }, game => {
+              const x = game.state("x", 0);
+              const z = game.state("z", 0);
+              const yaw = game.state("yaw", 0);
+              const alive = game.state("alive", 1);
+              const hp = game.state("hp", 12);
+
+              game.actor("hero", {
+                x: game.at(x, 10), y: 64, z: game.at(z, 5), yaw
+              });
+              game.actor("enemy", {
+                entityType: "minecraft:zombie",
+                x: 12, y: 64, z: 5, yaw: 180, when: alive.eq(1)
+              });
+              game.text("enemy_label", {
+                text: ["HP ", hp], x: 12, y: 66, z: 5, billboard: "center"
+              });
+
+              game.tick(() => {
+                x.add(0.1);
+                yaw.add(15);
+                game.when(x.gte(1), () => alive.set(0));
+              });
+            });
+            """;
+
+        PortableProgram program = extract(source);
+        assertEquals(7, program.version());
+        assertEquals(2, program.vanillaActors().size());
+        assertEquals("minecraft:mannequin", program.vanillaActors().get(0).entityType());
+        assertEquals("minecraft:zombie", program.vanillaActors().get(1).entityType());
+        assertTrue(program.vanillaActors().get(0).x().dynamic());
+        assertTrue(program.vanillaActors().get(0).yaw().dynamic());
+        assertTrue(program.vanillaActors().get(1).condition() != null);
+        assertEquals(1, program.vanillaTexts().size());
+        assertTrue(program.vanillaTexts().getFirst().dynamicText());
+
+        Path output = Files.createTempDirectory("mcgame-portable-v7-actor-test");
+        PortableDatapackCompiler.Result result = new PortableDatapackCompiler().compile(program, "portable_v7_actor", output);
+        assertEquals(2, result.actorCount());
+        assertEquals(1, result.textCount());
+        String load = Files.readString(output.resolve("data/portable_v7_actor/function/portable/load.mcfunction"));
+        String tick = Files.readString(output.resolve("data/portable_v7_actor/function/portable/tick.mcfunction"));
+        String enemySpawn = Files.readString(output.resolve("data/portable_v7_actor/function/portable/actor_enemy_spawn.mcfunction"));
+        String cleanup = Files.readString(output.resolve("data/portable_v7_actor/function/portable/cleanup.mcfunction"));
+        assertTrue(load.contains("actor_hero_spawn"));
+        assertTrue(load.contains("actor_enemy_spawn"));
+        assertTrue(enemySpawn.contains("summon minecraft:mannequin"));
+        assertTrue(enemySpawn.contains("armor.head with minecraft:zombie_head"));
+        assertTrue(tick.contains("Rotation[0] float 0.001"));
+        assertTrue(tick.contains("unless entity @e[tag=mcg_a_"));
+        assertTrue(tick.contains("run kill @e[tag=mcg_a_"));
+        assertTrue(tick.contains("data modify entity @e[tag=mcg_t_"));
+        assertTrue(tick.contains(" text set value {text:\"\",extra:["));
+        assertTrue(tick.contains("score:{name:"));
+        assertTrue(cleanup.contains("kill @e[tag=mcg_a_"));
+    }
+
+    @Test
+    void versionSixRejectsDynamicTextTokens() {
+        String source = """
+            portable.define({
+              version: 6,
+              fixedPoint: 1000,
+              state: { hp: 12 },
+              vanilla: {
+                texts: [{
+                  id: "hp", text: [{ text: "HP " }, { value: { state: "hp" } }],
+                  x: 0, y: 64, z: 0
+                }]
+              },
+              tick: []
+            });
+            """;
+        RuntimeException error = assertThrows(RuntimeException.class, () -> extract(source));
+        assertTrue(error.getMessage().contains("text token arrays require portable version 7"));
+    }
+
+    @Test
+    void versionSixRejectsActorProjectionMetadata() {
+        String source = """
+            portable.define({
+              version: 6,
+              fixedPoint: 1000,
+              state: { x: 0 },
+              vanilla: {
+                actors: [{ id: "hero", x: 0, y: 64, z: 0 }]
+              },
+              tick: []
+            });
+            """;
+        RuntimeException error = assertThrows(RuntimeException.class, () -> extract(source));
+        assertTrue(error.getMessage().contains("vanilla.actors requires portable version 7"));
     }
 
     @Test

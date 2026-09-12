@@ -33,6 +33,7 @@ public final class PortableCompilerCli {
         System.out.println("  inputs: " + result.inputCount());
         System.out.println("  projections: " + result.projectionCount());
         System.out.println("  texts: " + result.textCount());
+        System.out.println("  actors: " + result.actorCount());
         System.out.println("  cameras: " + result.cameraCount());
         System.out.println("  particles: " + result.particleCount());
         System.out.println("  sounds: " + result.soundCount());

@@ -17,6 +17,7 @@ final class PortableProgramParser {
     private static final int MAX_INPUTS = 32;
     private static final int MAX_PROJECTIONS = 64;
     private static final int MAX_TEXTS = 64;
+    private static final int MAX_ACTORS = 64;
     private static final int MAX_CAMERAS = 1;
     private static final int MAX_PARTICLES = 64;
     private static final int MAX_SOUNDS = 64;
@@ -69,6 +70,7 @@ final class PortableProgramParser {
         Map<String, PortableProgram.VanillaInputSource> vanillaInputs = new LinkedHashMap<>();
         List<PortableProgram.VanillaBlockProjection> vanillaProjections = new ArrayList<>();
         List<PortableProgram.VanillaTextProjection> vanillaTexts = new ArrayList<>();
+        List<PortableProgram.VanillaActorProjection> vanillaActors = new ArrayList<>();
         List<PortableProgram.VanillaCamera> vanillaCameras = new ArrayList<>();
         List<PortableProgram.VanillaParticleEmitter> vanillaParticles = new ArrayList<>();
         List<PortableProgram.VanillaSoundEmitter> vanillaSounds = new ArrayList<>();
@@ -145,8 +147,34 @@ final class PortableProgramParser {
                     String id = requiredPortableId(text, path);
                     if (!textIds.add(id)) throw new IllegalArgumentException(path + ".id is duplicated: " + id);
                     String dimension = memberResource(text, "dimension", "minecraft:overworld", path);
-                    String content = requiredString(text, "text", path);
-                    if (content.length() > 256) throw new IllegalArgumentException(path + ".text exceeds 256 characters");
+                    Value content = requiredMember(text, "text", path);
+                    List<PortableProgram.HudToken> textTokens = new ArrayList<>();
+                    if (content.isString()) {
+                        String literal = content.asString();
+                        if (literal.length() > 256) throw new IllegalArgumentException(path + ".text exceeds 256 characters");
+                        textTokens.add(new PortableProgram.HudLiteral(literal));
+                    } else if (content.hasArrayElements()) {
+                        if (version < PortableProgram.VERSION_7) throw new IllegalArgumentException(path + ".text token arrays require portable version 7");
+                        if (content.getArraySize() < 1 || content.getArraySize() > MAX_HUD_TOKENS) {
+                            throw new IllegalArgumentException(path + ".text token array must contain 1.." + MAX_HUD_TOKENS + " entries");
+                        }
+                        for (long j = 0; j < content.getArraySize(); j++) {
+                            Value token = content.getArrayElement(j);
+                            String tokenPath = path + ".text[" + j + "]";
+                            if (token == null || !token.hasMembers()) throw new IllegalArgumentException(tokenPath + " must be an object");
+                            if (token.hasMember("text")) {
+                                String literal = requiredString(token, "text", tokenPath);
+                                if (literal.length() > 128) throw new IllegalArgumentException(tokenPath + ".text exceeds 128 characters");
+                                textTokens.add(new PortableProgram.HudLiteral(literal));
+                            } else if (token.hasMember("value")) {
+                                textTokens.add(new PortableProgram.HudValue(parseValue(requiredMember(token, "value", tokenPath), initialState.keySet(), initialInputs.keySet(), fixedPoint, tokenPath + ".value")));
+                            } else {
+                                throw new IllegalArgumentException(tokenPath + " requires text or value");
+                            }
+                        }
+                    } else {
+                        throw new IllegalArgumentException(path + ".text must be a string or portable v7 token array");
+                    }
                     PortableProgram.VanillaCoordinate x = parseVanillaCoordinate(requiredMember(text, "x", path), initialState.keySet(), fixedPoint, path + ".x");
                     PortableProgram.VanillaCoordinate y = parseVanillaCoordinate(requiredMember(text, "y", path), initialState.keySet(), fixedPoint, path + ".y");
                     PortableProgram.VanillaCoordinate z = parseVanillaCoordinate(requiredMember(text, "z", path), initialState.keySet(), fixedPoint, path + ".z");
@@ -160,7 +188,37 @@ final class PortableProgramParser {
                         if (version < PortableProgram.VERSION_5) throw new IllegalArgumentException(path + ".when requires portable version 5");
                         condition = parseCondition(requiredObject(text, "when", path), initialState.keySet(), initialInputs.keySet(), fixedPoint, path + ".when");
                     }
-                    vanillaTexts.add(new PortableProgram.VanillaTextProjection(id, dimension, content, x, y, z, scale, billboard, condition));
+                    vanillaTexts.add(new PortableProgram.VanillaTextProjection(id, dimension, textTokens, x, y, z, scale, billboard, condition));
+                }
+            }
+
+            if (vanilla.hasMember("actors")) {
+                if (version < PortableProgram.VERSION_7) throw new IllegalArgumentException(api + ".vanilla.actors requires portable version 7");
+                Value actors = requiredArray(vanilla, "actors", api + ".vanilla");
+                if (actors.getArraySize() > MAX_ACTORS) throw new IllegalArgumentException(api + ".vanilla.actors exceeds max actor count " + MAX_ACTORS);
+                Set<String> actorIds = new java.util.HashSet<>();
+                for (long i = 0; i < actors.getArraySize(); i++) {
+                    Value actor = actors.getArrayElement(i);
+                    String path = api + ".vanilla.actors[" + i + "]";
+                    if (actor == null || !actor.hasMembers()) throw new IllegalArgumentException(path + " must be an object");
+                    String id = requiredPortableId(actor, path);
+                    if (!actorIds.add(id)) throw new IllegalArgumentException(path + ".id is duplicated: " + id);
+                    String dimension = memberResource(actor, "dimension", "minecraft:overworld", path);
+                    String entityType = memberResource(actor, "entityType", "minecraft:mannequin", path);
+                    if (!Set.of("minecraft:mannequin", "minecraft:zombie", "minecraft:skeleton").contains(entityType)) {
+                        throw new IllegalArgumentException(path + ".entityType must be minecraft:mannequin, minecraft:zombie, or minecraft:skeleton");
+                    }
+                    PortableProgram.VanillaCoordinate x = parseVanillaCoordinate(requiredMember(actor, "x", path), initialState.keySet(), fixedPoint, path + ".x");
+                    PortableProgram.VanillaCoordinate y = parseVanillaCoordinate(requiredMember(actor, "y", path), initialState.keySet(), fixedPoint, path + ".y");
+                    PortableProgram.VanillaCoordinate z = parseVanillaCoordinate(requiredMember(actor, "z", path), initialState.keySet(), fixedPoint, path + ".z");
+                    PortableProgram.VanillaCoordinate yaw = actor.hasMember("yaw")
+                        ? parseVanillaCoordinate(actor.getMember("yaw"), initialState.keySet(), fixedPoint, path + ".yaw")
+                        : new PortableProgram.VanillaCoordinate(null, 0);
+                    PortableProgram.Condition condition = null;
+                    if (actor.hasMember("when")) {
+                        condition = parseCondition(requiredObject(actor, "when", path), initialState.keySet(), initialInputs.keySet(), fixedPoint, path + ".when");
+                    }
+                    vanillaActors.add(new PortableProgram.VanillaActorProjection(id, dimension, entityType, x, y, z, yaw, condition));
                 }
             }
 
@@ -292,6 +350,7 @@ final class PortableProgramParser {
             vanillaInputs,
             vanillaProjections,
             vanillaTexts,
+            vanillaActors,
             vanillaCameras,
             vanillaParticles,
             vanillaSounds,

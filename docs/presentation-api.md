@@ -344,3 +344,22 @@ For 0.2.0, a standalone Fabric 26.1 dev-server smoke test executed:
 The script reached both `PRESENTATION_SMOKE_START` and `PRESENTATION_SMOKE_UPDATED` without render/Mixin errors.
 
 That local dev environment needed extra heap for the embedded TypeScript compiler. Main-server deployment of 0.2.0 then showed that applying the normal 100 ms budget to cold script evaluation/`onStart` could falsely disable a game after restart. Runtime 0.2.1 therefore keeps the 100 ms hard budget for normal ticks but gives script evaluation and `onStart` a 1000 ms startup budget. Main-server smoke testing also showed that a Display entity can survive chunk unload/reload while its old Java reference becomes removed; 0.2.1 reacquires the live tagged projection before update/attachment operations. Main-server restart testing then showed that direct Display creation itself must happen in a loaded chunk; 0.2.2 explicitly loads the target chunk before actor/render spawn and clears a persisted same-id projection before creating the replacement. `ui.panel` and menu open paths are validated on the main server; semantic container/Dialog click delivery still requires a client automation path that can activate GUI controls.
+
+
+## Portable presentation projections
+
+The mutable `actors`/`render` host capabilities above describe the transitional Fabric backend. Portable IR v7 does **not** clone those APIs. It adds bounded declarative `portableDsl` actor and dynamic-label primitives for the subset needed by retained games:
+
+```ts
+game.actor("enemy", {
+  entityType: "minecraft:zombie",
+  x, y: 64, z, yaw,
+  when: alive.eq(1),
+});
+```
+
+Portable actor position and yaw may follow scalar state. `when` controls owned actor existence. The allowed semantic appearances are currently mannequin, zombie, and skeleton. On a vanilla generated datapack all three use `minecraft:mannequin` as the carrier; zombie and skeleton are distinguished with `minecraft:zombie_head` / `minecraft:skeleton_skull`. This is intentionally different from the Fabric compatibility adapter, which may use inert Mob entities. The vanilla mapping avoids Peaceful-difficulty hostile-spawn behavior and keeps game rules independent from Mob AI/despawn.
+
+World text may also use bounded scalar tokens, for example `text: ["HP ", hp, "/", maxHp]`. The vanilla backend updates the owned `text_display` component from scratch scoreboard holders and the Fabric compatibility adapter updates the corresponding render text. This is intended for labels/HUD-like world annotations rather than arbitrary string computation.
+
+Runtime-created actor/display collections, arbitrary entity types, custom textures/equipment, item/model projections, attachment graphs, pitch/roll/scale, arbitrary rich text, and animation are not part of portable v7. Add a portable semantic primitive only when a retained game demonstrates the need.

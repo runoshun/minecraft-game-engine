@@ -158,12 +158,22 @@ type PortableVanillaBlockProjection = {
 type PortableVanillaTextProjection = {
   id: string;
   dimension?: string;
-  text: string;
+  text: string | PortableHudToken[];
   x: PortableVanillaCoordinate;
   y: PortableVanillaCoordinate;
   z: PortableVanillaCoordinate;
   scale?: number | { x: number; y: number; z: number };
   billboard?: "fixed" | "vertical" | "horizontal" | "center";
+  when?: PortableComparison;
+};
+type PortableVanillaActorProjection = {
+  id: string;
+  dimension?: string;
+  entityType?: "minecraft:mannequin" | "minecraft:zombie" | "minecraft:skeleton";
+  x: PortableVanillaCoordinate;
+  y: PortableVanillaCoordinate;
+  z: PortableVanillaCoordinate;
+  yaw?: PortableVanillaCoordinate;
   when?: PortableComparison;
 };
 type PortableVanillaCamera = {
@@ -265,7 +275,15 @@ type PortableProgramSpecV6 = {
   vanilla?: PortableProgramSpecV5["vanilla"];
   tick: PortableAction[];
 };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6;
+type PortableProgramSpecV7 = {
+  version: 7;
+  fixedPoint?: number;
+  state: Record<string, number>;
+  inputs?: Record<string, number>;
+  vanilla?: PortableProgramSpecV5["vanilla"] & { actors?: PortableVanillaActorProjection[] };
+  tick: PortableAction[];
+};
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -307,7 +325,7 @@ type PortableDslBlockSpec = {
 };
 type PortableDslTextSpec = {
   dimension?: string;
-  text: string;
+  text: string | Array<string | PortableDslState | PortableDslInput>;
   x: PortableDslCoordinate;
   y: PortableDslCoordinate;
   z: PortableDslCoordinate;
@@ -322,6 +340,15 @@ type PortableDslCameraSpec = {
   z: PortableDslCoordinate;
   yaw?: number;
   pitch?: number;
+};
+type PortableDslActorSpec = {
+  dimension?: string;
+  entityType?: "minecraft:mannequin" | "minecraft:zombie" | "minecraft:skeleton";
+  x: PortableDslCoordinate;
+  y: PortableDslCoordinate;
+  z: PortableDslCoordinate;
+  yaw?: PortableDslCoordinate;
+  when?: PortableDslCondition;
 };
 type PortableDslParticleSpec = {
   dimension?: string;
@@ -386,6 +413,7 @@ type PortableDsl = {
   at(state: PortableDslState, base?: number): PortableDslCoordinate;
   block(id: string, spec: PortableDslBlockSpec): void;
   text(id: string, spec: PortableDslTextSpec): void;
+  actor(id: string, spec: PortableDslActorSpec): void;
   camera(id: string, spec: PortableDslCameraSpec): void;
   particle(id: string, spec: PortableDslParticleSpec): void;
   sound(id: string, spec: PortableDslSoundSpec): void;

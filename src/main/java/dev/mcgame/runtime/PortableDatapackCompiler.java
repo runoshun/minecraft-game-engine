@@ -30,6 +30,7 @@ final class PortableDatapackCompiler {
         int inputCount,
         int projectionCount,
         int textCount,
+        int actorCount,
         int cameraCount,
         int particleCount,
         int soundCount,
@@ -50,6 +51,7 @@ final class PortableDatapackCompiler {
         compileActions(program.tickActions(), tick, context);
         compileVanillaProjections(program, tick, context);
         compileVanillaTextUpdates(program, tick, context);
+        compileVanillaActorUpdates(program, tick, context);
         compileVanillaCameraUpdates(program, tick, context);
         compileVanillaParticles(program, tick, context);
         compileVanillaSounds(program, tick, context);
@@ -71,6 +73,7 @@ final class PortableDatapackCompiler {
         }
         compileVanillaProjectionLoad(program, load, context);
         compileVanillaTextLoad(program, load, context);
+        compileVanillaActorLoad(program, load, context);
         compileVanillaCameraLoad(program, load, context);
         compileVanillaParticleLoad(program, load, context);
         compileVanillaSoundLoad(program, load, context);
@@ -113,6 +116,7 @@ final class PortableDatapackCompiler {
             program.initialInputs().size(),
             program.vanillaProjections().size(),
             program.vanillaTexts().size(),
+            program.vanillaActors().size(),
             program.vanillaCameras().size(),
             program.vanillaParticles().size(),
             program.vanillaSounds().size(),
@@ -234,7 +238,8 @@ final class PortableDatapackCompiler {
             int chunkBlockX = (int) Math.floor(x);
             int chunkBlockZ = (int) Math.floor(z);
             PortableProgram.VanillaVec3 scale = text.scale();
-            String snbt = "{Tags:[\"" + tag + "\"],text:{text:" + snbtQuoted(text.text()) + "}"
+            prepareTextValues(program, text, lines, context);
+            String snbt = "{Tags:[\"" + tag + "\"],text:" + textComponentSnbt(text, context)
                 + ",billboard:\"" + text.billboard() + "\",transformation:{translation:[0f,0f,0f],left_rotation:[0f,0f,0f,1f],scale:["
                 + floatLiteral(scale.x()) + "," + floatLiteral(scale.y()) + "," + floatLiteral(scale.z())
                 + "],right_rotation:[0f,0f,0f,1f]}}";
@@ -246,6 +251,54 @@ final class PortableDatapackCompiler {
             compileVisibility(text.dimension(), tag, text.scale(), text.condition(), lines, context);
             lines.add("execute in " + text.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
         }
+    }
+
+    private void compileVanillaActorLoad(PortableProgram program, List<String> lines, CompileContext context) {
+        for (PortableProgram.VanillaActorProjection actor : program.vanillaActors()) {
+            String tag = actorTag(context.namespace, actor.id());
+            double x = logicalCoordinate(program, actor.x());
+            double z = logicalCoordinate(program, actor.z());
+            int chunkBlockX = (int) Math.floor(x);
+            int chunkBlockZ = (int) Math.floor(z);
+            ensureActorSpawnFunction(program, actor, context);
+            lines.add("execute in " + actor.dimension() + " run forceload add " + chunkBlockX + " " + chunkBlockZ);
+            lines.add("execute in " + actor.dimension() + " run kill @e[tag=" + tag + "]");
+            String spawnFunction = context.namespace + ":portable/actor_" + actor.id() + "_spawn";
+            if (actor.condition() == null) {
+                lines.add("function " + spawnFunction);
+            } else {
+                lines.add("execute " + condition(actor.condition(), true, context) + " run function " + spawnFunction);
+            }
+            lines.add("execute in " + actor.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
+        }
+    }
+
+    private void ensureActorSpawnFunction(PortableProgram program, PortableProgram.VanillaActorProjection actor, CompileContext context) {
+        String function = "actor_" + actor.id() + "_spawn";
+        if (context.functions.containsKey(function)) return;
+        String tag = actorTag(context.namespace, actor.id());
+        double x = logicalCoordinate(program, actor.x());
+        double y = logicalCoordinate(program, actor.y());
+        double z = logicalCoordinate(program, actor.z());
+        double yaw = logicalCoordinate(program, actor.yaw());
+        int chunkBlockX = (int) Math.floor(x);
+        int chunkBlockZ = (int) Math.floor(z);
+        List<String> body = new ArrayList<>();
+        body.add("execute in " + actor.dimension() + " run forceload add " + chunkBlockX + " " + chunkBlockZ);
+        String snbt = String.format(Locale.ROOT,
+            "{Tags:[\"%s\"],NoGravity:1b,Invulnerable:1b,Silent:1b,Rotation:[%.3ff,0f]}", tag, yaw);
+        body.add(String.format(Locale.ROOT,
+            "execute in %s run summon minecraft:mannequin %.6f %.6f %.6f %s", actor.dimension(), x, y, z, snbt));
+        String headItem = switch (actor.entityType()) {
+            case "minecraft:zombie" -> "minecraft:zombie_head";
+            case "minecraft:skeleton" -> "minecraft:skeleton_skull";
+            default -> null;
+        };
+        if (headItem != null) {
+            body.add("execute in " + actor.dimension() + " run item replace entity @e[tag=" + tag + ",limit=1] armor.head with " + headItem);
+        }
+        body.add("execute in " + actor.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
+        context.functions.put(function, body);
     }
 
     private void compileVanillaCameraLoad(PortableProgram program, List<String> lines, CompileContext context) {
@@ -322,6 +375,9 @@ final class PortableDatapackCompiler {
         for (PortableProgram.VanillaTextProjection text : program.vanillaTexts()) {
             appendEntityCleanup(lines, program, text.dimension(), textTag(context.namespace, text.id()), text.x(), text.z());
         }
+        for (PortableProgram.VanillaActorProjection actor : program.vanillaActors()) {
+            appendEntityCleanup(lines, program, actor.dimension(), actorTag(context.namespace, actor.id()), actor.x(), actor.z());
+        }
         for (PortableProgram.VanillaCamera camera : program.vanillaCameras()) {
             appendEntityCleanup(lines, program, camera.dimension(), cameraTag(context.namespace, camera.id()), camera.x(), camera.z());
         }
@@ -374,8 +430,49 @@ final class PortableDatapackCompiler {
             compileEntityAxis(text.dimension(), tag, "Pos[0]", text.x(), storeScale, lines, context);
             compileEntityAxis(text.dimension(), tag, "Pos[1]", text.y(), storeScale, lines, context);
             compileEntityAxis(text.dimension(), tag, "Pos[2]", text.z(), storeScale, lines, context);
+            if (text.dynamicText()) {
+                prepareTextValues(program, text, lines, context);
+                lines.add("execute in " + text.dimension() + " if entity @e[tag=" + tag + ",limit=1] run data modify entity @e[tag=" + tag + ",limit=1] text set value "
+                    + textComponentSnbt(text, context));
+            }
             compileVisibility(text.dimension(), tag, text.scale(), text.condition(), lines, context);
         }
+    }
+
+    private void prepareTextValues(
+        PortableProgram program,
+        PortableProgram.VanillaTextProjection text,
+        List<String> lines,
+        CompileContext context
+    ) {
+        for (int i = 0; i < text.tokens().size(); i++) {
+            PortableProgram.HudToken token = text.tokens().get(i);
+            if (!(token instanceof PortableProgram.HudValue value)) continue;
+            String temp = context.textValueHolder(text.id(), i);
+            lines.add("scoreboard players operation " + temp + " " + context.objective + " = " + holder(value.value(), context) + " " + context.objective);
+            if (program.fixedPoint() != 1) {
+                lines.add("scoreboard players operation " + temp + " " + context.objective + " /= "
+                    + context.constantHolder(program.fixedPoint()) + " " + context.objective);
+            }
+        }
+    }
+
+    private static String textComponentSnbt(PortableProgram.VanillaTextProjection text, CompileContext context) {
+        if (text.tokens().size() == 1 && text.tokens().getFirst() instanceof PortableProgram.HudLiteral literal) {
+            return "{text:" + snbtQuoted(literal.text()) + "}";
+        }
+        StringBuilder out = new StringBuilder("{text:\"\",extra:[");
+        for (int i = 0; i < text.tokens().size(); i++) {
+            if (i > 0) out.append(',');
+            PortableProgram.HudToken token = text.tokens().get(i);
+            if (token instanceof PortableProgram.HudLiteral literal) {
+                out.append("{text:").append(snbtQuoted(literal.text())).append('}');
+            } else if (token instanceof PortableProgram.HudValue) {
+                out.append("{score:{name:").append(snbtQuoted(context.textValueHolder(text.id(), i)))
+                    .append(",objective:").append(snbtQuoted(context.objective)).append("}}");
+            }
+        }
+        return out.append("]}").toString();
     }
 
     private void compileVisibility(
@@ -394,6 +491,25 @@ final class PortableDatapackCompiler {
             + " run data modify entity " + selector + " transformation.scale set value " + shown);
         lines.add("execute " + condition(visibility, false, context) + " in " + dimension
             + " run data modify entity " + selector + " transformation.scale set value " + hidden);
+    }
+
+    private void compileVanillaActorUpdates(PortableProgram program, List<String> lines, CompileContext context) {
+        String storeScale = storeScale(program.fixedPoint());
+        for (PortableProgram.VanillaActorProjection actor : program.vanillaActors()) {
+            String tag = actorTag(context.namespace, actor.id());
+            ensureActorSpawnFunction(program, actor, context);
+            String spawnFunction = context.namespace + ":portable/actor_" + actor.id() + "_spawn";
+            if (actor.condition() != null) {
+                lines.add("execute " + condition(actor.condition(), true, context) + " in " + actor.dimension()
+                    + " unless entity @e[tag=" + tag + ",limit=1] run function " + spawnFunction);
+                lines.add("execute " + condition(actor.condition(), false, context) + " in " + actor.dimension()
+                    + " if entity @e[tag=" + tag + ",limit=1] run kill @e[tag=" + tag + "]");
+            }
+            compileEntityAxis(actor.dimension(), tag, "Pos[0]", actor.x(), storeScale, lines, context);
+            compileEntityAxis(actor.dimension(), tag, "Pos[1]", actor.y(), storeScale, lines, context);
+            compileEntityAxis(actor.dimension(), tag, "Pos[2]", actor.z(), storeScale, lines, context);
+            compileEntityFloat(actor.dimension(), tag, "Rotation[0]", actor.yaw(), storeScale, lines, context);
+        }
     }
 
     private void compileVanillaCameraUpdates(PortableProgram program, List<String> lines, CompileContext context) {
@@ -514,6 +630,27 @@ final class PortableDatapackCompiler {
             + " double " + storeScale + " run scoreboard players get " + sourceHolder + " " + context.objective);
     }
 
+    private void compileEntityFloat(
+        String dimension,
+        String tag,
+        String nbtPath,
+        PortableProgram.VanillaCoordinate coordinate,
+        String storeScale,
+        List<String> lines,
+        CompileContext context
+    ) {
+        if (!coordinate.dynamic()) return;
+        String sourceHolder = stateHolder(coordinate.state());
+        if (coordinate.baseRaw() != 0) {
+            String temp = context.nextProjectionTemp();
+            lines.add("scoreboard players operation " + temp + " " + context.objective + " = " + sourceHolder + " " + context.objective);
+            lines.add("scoreboard players operation " + temp + " " + context.objective + " += " + context.constantHolder(coordinate.baseRaw()) + " " + context.objective);
+            sourceHolder = temp;
+        }
+        lines.add("execute in " + dimension + " store result entity @e[tag=" + tag + ",limit=1] " + nbtPath
+            + " float " + storeScale + " run scoreboard players get " + sourceHolder + " " + context.objective);
+    }
+
     private static boolean dynamic(PortableProgram.VanillaCoordinate x, PortableProgram.VanillaCoordinate y, PortableProgram.VanillaCoordinate z) {
         return x.dynamic() || y.dynamic() || z.dynamic();
     }
@@ -530,6 +667,10 @@ final class PortableDatapackCompiler {
 
     private static String textTag(String namespace, String id) {
         return "mcg_t_" + Integer.toUnsignedString(namespace.hashCode(), 36) + "_" + id;
+    }
+
+    private static String actorTag(String namespace, String id) {
+        return "mcg_a_" + Integer.toUnsignedString(namespace.hashCode(), 36) + "_" + id;
     }
 
     private static String cameraTag(String namespace, String id) {
@@ -896,11 +1037,13 @@ final class PortableDatapackCompiler {
         final String objective;
         final int fixedPointDivisor;
         final Map<Integer, String> constantHolders = new LinkedHashMap<>();
+        final Map<String, String> textValueHolders = new LinkedHashMap<>();
         final Map<String, List<String>> functions = new LinkedHashMap<>();
         int nextConstant;
         int nextBranch;
         int nextProjectionTemp;
         int nextHudTemp;
+        int nextTextTemp;
         int nextCollisionTemp;
         boolean usesNegate;
 
@@ -924,6 +1067,10 @@ final class PortableDatapackCompiler {
 
         String nextHudTemp() {
             return "#h" + nextHudTemp++;
+        }
+
+        String textValueHolder(String textId, int tokenIndex) {
+            return textValueHolders.computeIfAbsent(textId + ":" + tokenIndex, ignored -> "#t" + nextTextTemp++);
         }
 
         String nextCollisionTemp() {

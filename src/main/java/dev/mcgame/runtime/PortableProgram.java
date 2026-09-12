@@ -12,7 +12,8 @@ final class PortableProgram {
     static final int VERSION_4 = 4;
     static final int VERSION_5 = 5;
     static final int VERSION_6 = 6;
-    static final int CURRENT_VERSION = VERSION_6;
+    static final int VERSION_7 = 7;
+    static final int CURRENT_VERSION = VERSION_7;
 
     sealed interface ValueRef permits StateValue, InputValue, ConstantValue {}
     record StateValue(String name) implements ValueRef {}
@@ -59,12 +60,26 @@ final class PortableProgram {
     record VanillaTextProjection(
         String id,
         String dimension,
-        String text,
+        List<HudToken> tokens,
         VanillaCoordinate x,
         VanillaCoordinate y,
         VanillaCoordinate z,
         VanillaVec3 scale,
         String billboard,
+        Condition condition
+    ) {
+        VanillaTextProjection { tokens = List.copyOf(tokens); }
+        boolean dynamicText() { return tokens.stream().anyMatch(HudValue.class::isInstance); }
+    }
+
+    record VanillaActorProjection(
+        String id,
+        String dimension,
+        String entityType,
+        VanillaCoordinate x,
+        VanillaCoordinate y,
+        VanillaCoordinate z,
+        VanillaCoordinate yaw,
         Condition condition
     ) {}
 
@@ -161,6 +176,7 @@ final class PortableProgram {
     private final Map<String, VanillaInputSource> vanillaInputs;
     private final List<VanillaBlockProjection> vanillaProjections;
     private final List<VanillaTextProjection> vanillaTexts;
+    private final List<VanillaActorProjection> vanillaActors;
     private final List<VanillaCamera> vanillaCameras;
     private final List<VanillaParticleEmitter> vanillaParticles;
     private final List<VanillaSoundEmitter> vanillaSounds;
@@ -175,6 +191,7 @@ final class PortableProgram {
         Map<String, VanillaInputSource> vanillaInputs,
         List<VanillaBlockProjection> vanillaProjections,
         List<VanillaTextProjection> vanillaTexts,
+        List<VanillaActorProjection> vanillaActors,
         List<VanillaCamera> vanillaCameras,
         List<VanillaParticleEmitter> vanillaParticles,
         List<VanillaSoundEmitter> vanillaSounds,
@@ -194,6 +211,7 @@ final class PortableProgram {
         this.vanillaInputs = Collections.unmodifiableMap(new LinkedHashMap<>(vanillaInputs));
         this.vanillaProjections = List.copyOf(vanillaProjections);
         this.vanillaTexts = List.copyOf(vanillaTexts);
+        this.vanillaActors = List.copyOf(vanillaActors);
         this.vanillaCameras = List.copyOf(vanillaCameras);
         this.vanillaParticles = List.copyOf(vanillaParticles);
         this.vanillaSounds = List.copyOf(vanillaSounds);
@@ -208,6 +226,7 @@ final class PortableProgram {
     Map<String, VanillaInputSource> vanillaInputs() { return vanillaInputs; }
     List<VanillaBlockProjection> vanillaProjections() { return vanillaProjections; }
     List<VanillaTextProjection> vanillaTexts() { return vanillaTexts; }
+    List<VanillaActorProjection> vanillaActors() { return vanillaActors; }
     List<VanillaCamera> vanillaCameras() { return vanillaCameras; }
     List<VanillaParticleEmitter> vanillaParticles() { return vanillaParticles; }
     List<VanillaSoundEmitter> vanillaSounds() { return vanillaSounds; }

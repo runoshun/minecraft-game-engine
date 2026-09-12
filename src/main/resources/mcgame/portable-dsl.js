@@ -54,6 +54,7 @@
     const vanillaInputs = Object.create(null);
     const projections = [];
     const texts = [];
+    const actorProjections = [];
     const cameras = [];
     const particles = [];
     const sounds = [];
@@ -379,12 +380,26 @@
     function textProjection(id, spec) {
       if (typeof id !== "string" || id.length === 0) fail("text id must be a non-empty string");
       if (spec == null || typeof spec !== "object") fail("text " + id + " spec must be an object");
-      if (typeof spec.text !== "string") fail("text " + id + " requires a text string");
-      if (spec.text.length > 256) fail("text " + id + " exceeds 256 characters");
+      let content;
+      if (typeof spec.text === "string") {
+        if (spec.text.length > 256) fail("text " + id + " exceeds 256 characters");
+        content = spec.text;
+      } else if (Array.isArray(spec.text) && spec.text.length >= 1 && spec.text.length <= 32) {
+        content = spec.text.map((token, index) => {
+          if (typeof token === "string") {
+            if (token.length > 128) fail("text " + id + " token " + index + " exceeds 128 characters");
+            return { text: token };
+          }
+          if (token && (token[REF] === "state" || token[REF] === "input")) return { value: unwrapValue(token) };
+          fail("text " + id + " token " + index + " must be a string, state, or input reference");
+        });
+      } else {
+        fail("text " + id + " requires a string or an array with 1..32 string/state/input tokens");
+      }
       const projection = {
         id,
         dimension: spec.dimension === undefined ? "minecraft:overworld" : spec.dimension,
-        text: spec.text,
+        text: content,
         x: normalizeCoordinate(spec.x, "text " + id + " x"),
         y: normalizeCoordinate(spec.y, "text " + id + " y"),
         z: normalizeCoordinate(spec.z, "text " + id + " z"),
@@ -399,6 +414,26 @@
       }
       if (spec.when !== undefined) projection.when = serializedCondition(spec.when, "text " + id + " when");
       texts.push(projection);
+    }
+
+    function actorProjection(id, spec) {
+      if (typeof id !== "string" || id.length === 0) fail("actor id must be a non-empty string");
+      if (spec == null || typeof spec !== "object") fail("actor " + id + " spec must be an object");
+      const entityType = spec.entityType === undefined ? "minecraft:mannequin" : spec.entityType;
+      if (!["minecraft:mannequin", "minecraft:zombie", "minecraft:skeleton"].includes(entityType)) {
+        fail("actor " + id + " entityType must be minecraft:mannequin, minecraft:zombie, or minecraft:skeleton");
+      }
+      const actor = {
+        id,
+        dimension: spec.dimension === undefined ? "minecraft:overworld" : spec.dimension,
+        entityType,
+        x: normalizeCoordinate(spec.x, "actor " + id + " x"),
+        y: normalizeCoordinate(spec.y, "actor " + id + " y"),
+        z: normalizeCoordinate(spec.z, "actor " + id + " z"),
+        yaw: normalizeCoordinate(spec.yaw === undefined ? 0 : spec.yaw, "actor " + id + " yaw"),
+      };
+      if (spec.when !== undefined) actor.when = serializedCondition(spec.when, "actor " + id + " when");
+      actorProjections.push(actor);
     }
 
     function cameraProjection(id, spec) {
@@ -496,6 +531,7 @@
       flipper,
       block,
       text: textProjection,
+      actor: actorProjection,
       camera: cameraProjection,
       particle: particleEmitter,
       sound: soundEmitter,
@@ -507,17 +543,18 @@
     if (Object.keys(stateValues).length === 0) fail("at least one state(...) is required");
 
     const spec = {
-      version: 6,
+      version: 7,
       fixedPoint,
       state: stateValues,
       tick: tickActions,
     };
     if (Object.keys(inputValues).length > 0) spec.inputs = inputValues;
-    if (Object.keys(vanillaInputs).length > 0 || projections.length > 0 || texts.length > 0 || cameras.length > 0 || particles.length > 0 || sounds.length > 0 || huds.length > 0) {
+    if (Object.keys(vanillaInputs).length > 0 || projections.length > 0 || texts.length > 0 || actorProjections.length > 0 || cameras.length > 0 || particles.length > 0 || sounds.length > 0 || huds.length > 0) {
       spec.vanilla = {};
       if (Object.keys(vanillaInputs).length > 0) spec.vanilla.inputs = vanillaInputs;
       if (projections.length > 0) spec.vanilla.projections = projections;
       if (texts.length > 0) spec.vanilla.texts = texts;
+      if (actorProjections.length > 0) spec.vanilla.actors = actorProjections;
       if (cameras.length > 0) spec.vanilla.cameras = cameras;
       if (particles.length > 0) spec.vanilla.particles = particles;
       if (sounds.length > 0) spec.vanilla.sounds = sounds;
@@ -555,6 +592,42 @@
       if (typeof coordinate === "number") return coordinate;
       return (coordinate.base || 0) + portable.get(coordinate.state);
     };
+
+    if (actorProjections.length > 0) {
+      const actorId = actor => "pdsl_actor_" + actor.id;
+      const visible = new Set();
+      const shouldShow = actor => actor.when === undefined || runtimeTest(actor.when);
+      const dynamicActor = actor =>
+        typeof actor.x !== "number" || typeof actor.y !== "number" || typeof actor.z !== "number" || typeof actor.yaw !== "number";
+      const actorOptions = actor => ({
+        entityType: actor.entityType,
+        dimension: actor.dimension,
+        x: runtimeCoordinate(actor.x),
+        y: runtimeCoordinate(actor.y),
+        z: runtimeCoordinate(actor.z),
+        yaw: runtimeCoordinate(actor.yaw),
+      });
+      const spawnActor = actor => {
+        actors.spawn(actorId(actor), actorOptions(actor));
+        visible.add(actor.id);
+      };
+      game.onStart(() => {
+        for (const actor of actorProjections) if (shouldShow(actor)) spawnActor(actor);
+      });
+      game.onTick(() => {
+        for (const actor of actorProjections) {
+          const show = shouldShow(actor);
+          const isVisible = visible.has(actor.id);
+          if (show && !isVisible) spawnActor(actor);
+          if (!show && isVisible) {
+            actors.remove(actorId(actor));
+            visible.delete(actor.id);
+            continue;
+          }
+          if (show && dynamicActor(actor)) actors.move(actorId(actor), actorOptions(actor));
+        }
+      });
+    }
 
     if (projections.length > 0) {
       const renderId = projection => "pdsl_" + projection.id;
@@ -604,9 +677,14 @@
       const renderTextId = text => "pdsl_text_" + text.id;
       const visible = new Set();
       const shouldShow = text => text.when === undefined || runtimeTest(text.when);
+      const dynamicText = text => Array.isArray(text.text) && text.text.some(token => token.value !== undefined);
+      const runtimeText = text => {
+        if (typeof text.text === "string") return text.text;
+        return text.text.map(token => token.text !== undefined ? token.text : String(Math.trunc(runtimeValue(token.value)))).join("");
+      };
       const spawnText = text => {
         render.spawn(renderTextId(text), {
-          visual: { kind: "text", text: text.text },
+          visual: { kind: "text", text: runtimeText(text) },
           dimension: text.dimension,
           x: runtimeCoordinate(text.x),
           y: runtimeCoordinate(text.y),
@@ -630,12 +708,16 @@
             continue;
           }
           if (!show) continue;
-          if (typeof text.x === "number" && typeof text.y === "number" && typeof text.z === "number") continue;
-          render.update(renderTextId(text), {
-            x: runtimeCoordinate(text.x),
-            y: runtimeCoordinate(text.y),
-            z: runtimeCoordinate(text.z),
-          });
+          const dynamicPosition = typeof text.x !== "number" || typeof text.y !== "number" || typeof text.z !== "number";
+          if (!dynamicPosition && !dynamicText(text)) continue;
+          const patch = {};
+          if (dynamicPosition) {
+            patch.x = runtimeCoordinate(text.x);
+            patch.y = runtimeCoordinate(text.y);
+            patch.z = runtimeCoordinate(text.z);
+          }
+          if (dynamicText(text)) patch.visual = { kind: "text", text: runtimeText(text) };
+          render.update(renderTextId(text), patch);
         }
       });
     }
