@@ -60,6 +60,8 @@ final class PortableStateMachine {
                 case PortableProgram.IfAction branch -> execute(test(branch.condition()) ? branch.thenActions() : branch.elseActions());
                 case PortableProgram.AabbIfAction branch -> execute(overlaps(branch.a(), branch.b()) ? branch.thenActions() : branch.elseActions());
                 case PortableProgram.CircleIfAction branch -> execute(overlaps(branch.a(), branch.b()) ? branch.thenActions() : branch.elseActions());
+                case PortableProgram.CircleCapsuleIfAction branch -> execute(overlaps(branch.circle(), branch.capsule()) ? branch.thenActions() : branch.elseActions());
+                case PortableProgram.TriggerIfAction branch -> execute(inside(branch.trigger(), branch.point()) ? branch.thenActions() : branch.elseActions());
             }
         }
     }
@@ -94,6 +96,46 @@ final class PortableStateMachine {
         long dy = (resolve(a.y()) - (long) resolve(b.y())) / divisor;
         long radius = (a.radiusRaw() + (long) b.radiusRaw()) / divisor;
         return dx * dx + dy * dy <= radius * radius;
+    }
+
+    private boolean overlaps(PortableProgram.Circle2d circle, PortableProgram.Capsule2d capsule) {
+        long divisor = program.collisionDivisor();
+        long px = resolve(circle.x()) / divisor;
+        long py = resolve(circle.y()) / divisor;
+        long ax = capsule.axRaw() / divisor;
+        long ay = capsule.ayRaw() / divisor;
+        long bx = capsule.bxRaw() / divisor;
+        long by = capsule.byRaw() / divisor;
+        long radius = (circle.radiusRaw() + (long) capsule.radiusRaw()) / divisor;
+        if (px < Math.min(ax, bx) - radius || px > Math.max(ax, bx) + radius
+            || py < Math.min(ay, by) - radius || py > Math.max(ay, by) + radius) {
+            return false;
+        }
+        long vx = bx - ax;
+        long vy = by - ay;
+        long wx = px - ax;
+        long wy = py - ay;
+        long len2 = vx * vx + vy * vy;
+        long dot = wx * vx + wy * vy;
+        if (dot <= 0) return wx * wx + wy * wy <= radius * radius;
+        if (dot >= len2) {
+            long dx = px - bx;
+            long dy = py - by;
+            return dx * dx + dy * dy <= radius * radius;
+        }
+        long cross = wx * vy - wy * vx;
+        return cross * cross <= radius * radius * len2;
+    }
+
+    private boolean inside(PortableProgram.Aabb2d trigger, PortableProgram.Point2d point) {
+        long x = resolve(point.x());
+        long y = resolve(point.y());
+        long cx = resolve(trigger.x());
+        long cy = resolve(trigger.y());
+        return x >= cx - trigger.halfWidthRaw()
+            && x <= cx + trigger.halfWidthRaw()
+            && y >= cy - trigger.halfHeightRaw()
+            && y <= cy + trigger.halfHeightRaw();
     }
 
     private int resolve(PortableProgram.ValueRef value) {

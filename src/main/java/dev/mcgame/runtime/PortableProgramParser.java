@@ -373,6 +373,29 @@ final class PortableProgramParser {
                     }
                     yield new PortableProgram.CircleIfAction(a, b, thenActions, elseActions);
                 }
+                case "if_circle_capsule" -> {
+                    if (version < PortableProgram.VERSION_6) throw new IllegalArgumentException(actionPath + ".op requires portable version 6");
+                    PortableProgram.Circle2d circle = parseCircle(requiredObject(action, "circle", actionPath), states, inputs, fixedPoint, actionPath + ".circle");
+                    PortableProgram.Capsule2d capsule = parseCapsule(requiredObject(action, "capsule", actionPath), fixedPoint, actionPath + ".capsule");
+                    validateCircleCapsuleBounds(circle, capsule, fixedPoint, actionPath);
+                    List<PortableProgram.Action> thenActions = parseActions(requiredArray(action, "then", actionPath), states, inputs, fixedPoint, version, depth + 1, counter, actionPath + ".then");
+                    List<PortableProgram.Action> elseActions = List.of();
+                    if (action.hasMember("else")) {
+                        elseActions = parseActions(requiredArray(action, "else", actionPath), states, inputs, fixedPoint, version, depth + 1, counter, actionPath + ".else");
+                    }
+                    yield new PortableProgram.CircleCapsuleIfAction(circle, capsule, thenActions, elseActions);
+                }
+                case "if_trigger" -> {
+                    if (version < PortableProgram.VERSION_6) throw new IllegalArgumentException(actionPath + ".op requires portable version 6");
+                    PortableProgram.Aabb2d trigger = parseAabb(requiredObject(action, "trigger", actionPath), states, inputs, fixedPoint, actionPath + ".trigger");
+                    PortableProgram.Point2d point = parsePoint(requiredObject(action, "point", actionPath), states, inputs, fixedPoint, actionPath + ".point");
+                    List<PortableProgram.Action> thenActions = parseActions(requiredArray(action, "then", actionPath), states, inputs, fixedPoint, version, depth + 1, counter, actionPath + ".then");
+                    List<PortableProgram.Action> elseActions = List.of();
+                    if (action.hasMember("else")) {
+                        elseActions = parseActions(requiredArray(action, "else", actionPath), states, inputs, fixedPoint, version, depth + 1, counter, actionPath + ".else");
+                    }
+                    yield new PortableProgram.TriggerIfAction(trigger, point, thenActions, elseActions);
+                }
                 default -> throw new IllegalArgumentException(actionPath + ".op unsupported portable operation: " + op);
             });
         }
@@ -400,6 +423,48 @@ final class PortableProgramParser {
         int raw = scale(radius, fixedPoint, path + ".radius");
         if (raw < 1) throw new IllegalArgumentException(path + ".radius is below fixed-point resolution");
         return new PortableProgram.Circle2d(x, y, raw);
+    }
+
+    private static PortableProgram.Capsule2d parseCapsule(Value value, int fixedPoint, String path) {
+        double ax = requiredNumber(value, "ax", path);
+        double ay = requiredNumber(value, "ay", path);
+        double bx = requiredNumber(value, "bx", path);
+        double by = requiredNumber(value, "by", path);
+        double radius = requiredNumber(value, "radius", path);
+        if (Math.abs(ax) > 64 || Math.abs(ay) > 64 || Math.abs(bx) > 64 || Math.abs(by) > 64) {
+            throw new IllegalArgumentException(path + " endpoints must stay within -64..64 logic units");
+        }
+        if (radius < 0 || radius > 16) throw new IllegalArgumentException(path + ".radius must be between 0 and 16");
+        int axRaw = scale(ax, fixedPoint, path + ".ax");
+        int ayRaw = scale(ay, fixedPoint, path + ".ay");
+        int bxRaw = scale(bx, fixedPoint, path + ".bx");
+        int byRaw = scale(by, fixedPoint, path + ".by");
+        int radiusRaw = scale(radius, fixedPoint, path + ".radius");
+        if (axRaw == bxRaw && ayRaw == byRaw) throw new IllegalArgumentException(path + " endpoints must not be identical");
+        return new PortableProgram.Capsule2d(axRaw, ayRaw, bxRaw, byRaw, radiusRaw);
+    }
+
+    private static PortableProgram.Point2d parsePoint(Value value, Set<String> states, Set<String> inputs, int fixedPoint, String path) {
+        return new PortableProgram.Point2d(
+            parseValue(requiredMember(value, "x", path), states, inputs, fixedPoint, path + ".x"),
+            parseValue(requiredMember(value, "y", path), states, inputs, fixedPoint, path + ".y")
+        );
+    }
+
+    private static void validateCircleCapsuleBounds(PortableProgram.Circle2d circle, PortableProgram.Capsule2d capsule, int fixedPoint, String path) {
+        long combinedRadius = circle.radiusRaw() + (long) capsule.radiusRaw();
+        long maxRadius = 16L * fixedPoint;
+        if (combinedRadius > maxRadius) {
+            throw new IllegalArgumentException(path + " combined circle/capsule radius must be <= 16 logic units");
+        }
+        int divisor = Math.max(1, (fixedPoint + 99) / 100);
+        int ax = capsule.axRaw() / divisor;
+        int ay = capsule.ayRaw() / divisor;
+        int bx = capsule.bxRaw() / divisor;
+        int by = capsule.byRaw() / divisor;
+        if (ax == bx && ay == by) {
+            throw new IllegalArgumentException(path + " capsule length is below collision quantization resolution");
+        }
     }
 
     private static PortableProgram.Condition parseCondition(Value value, Set<String> states, Set<String> inputs, int fixedPoint, String path) {

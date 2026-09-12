@@ -601,6 +601,8 @@ final class PortableDatapackCompiler {
                 }
                 case PortableProgram.AabbIfAction branch -> compileAabbIf(branch, lines, context);
                 case PortableProgram.CircleIfAction branch -> compileCircleIf(branch, lines, context);
+                case PortableProgram.CircleCapsuleIfAction branch -> compileCircleCapsuleIf(branch, lines, context);
+                case PortableProgram.TriggerIfAction branch -> compileTriggerIf(branch, lines, context);
             }
         }
     }
@@ -659,6 +661,144 @@ final class PortableDatapackCompiler {
         }
         String radius = context.constantHolder((int) radiusSquared);
         compileCollisionBranches(dx, "<=", radius, branch.thenActions(), branch.elseActions(), lines, context);
+    }
+
+    private void compileCircleCapsuleIf(PortableProgram.CircleCapsuleIfAction branch, List<String> lines, CompileContext context) {
+        int divisor = Math.max(1, context.fixedPointDivisor);
+        PortableProgram.Capsule2d capsule = branch.capsule();
+        int ax = capsule.axRaw() / divisor;
+        int ay = capsule.ayRaw() / divisor;
+        int bx = capsule.bxRaw() / divisor;
+        int by = capsule.byRaw() / divisor;
+        int vx = bx - ax;
+        int vy = by - ay;
+        long len2Long = (long) vx * vx + (long) vy * vy;
+        if (len2Long <= 0 || len2Long > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("portable capsule length is outside scoreboard collision range");
+        }
+        int len2 = (int) len2Long;
+        long radiusUnitsLong = (branch.circle().radiusRaw() + (long) capsule.radiusRaw()) / divisor;
+        long radiusSquaredLong = radiusUnitsLong * radiusUnitsLong;
+        if (radiusUnitsLong < 0 || radiusUnitsLong > Integer.MAX_VALUE || radiusSquaredLong > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("portable circle/capsule radius exceeds scoreboard collision range");
+        }
+        int radius = (int) radiusUnitsLong;
+        int radiusSquared = (int) radiusSquaredLong;
+
+        String px = context.nextCollisionTemp();
+        lines.add("scoreboard players operation " + px + " " + context.objective + " = " + holder(branch.circle().x(), context) + " " + context.objective);
+        if (divisor > 1) lines.add("scoreboard players operation " + px + " " + context.objective + " /= " + context.constantHolder(divisor) + " " + context.objective);
+        String py = context.nextCollisionTemp();
+        lines.add("scoreboard players operation " + py + " " + context.objective + " = " + holder(branch.circle().y(), context) + " " + context.objective);
+        if (divisor > 1) lines.add("scoreboard players operation " + py + " " + context.objective + " /= " + context.constantHolder(divisor) + " " + context.objective);
+
+        String flag = context.nextCollisionTemp();
+        lines.add("scoreboard players set " + flag + " " + context.objective + " 0");
+
+        List<String> detail = new ArrayList<>();
+        String wx = context.nextCollisionTemp();
+        detail.add("scoreboard players operation " + wx + " " + context.objective + " = " + px + " " + context.objective);
+        detail.add("scoreboard players operation " + wx + " " + context.objective + " -= " + context.constantHolder(ax) + " " + context.objective);
+        String wy = context.nextCollisionTemp();
+        detail.add("scoreboard players operation " + wy + " " + context.objective + " = " + py + " " + context.objective);
+        detail.add("scoreboard players operation " + wy + " " + context.objective + " -= " + context.constantHolder(ay) + " " + context.objective);
+
+        String dot = context.nextCollisionTemp();
+        detail.add("scoreboard players operation " + dot + " " + context.objective + " = " + wx + " " + context.objective);
+        detail.add("scoreboard players operation " + dot + " " + context.objective + " *= " + context.constantHolder(vx) + " " + context.objective);
+        String dotY = context.nextCollisionTemp();
+        detail.add("scoreboard players operation " + dotY + " " + context.objective + " = " + wy + " " + context.objective);
+        detail.add("scoreboard players operation " + dotY + " " + context.objective + " *= " + context.constantHolder(vy) + " " + context.objective);
+        detail.add("scoreboard players operation " + dot + " " + context.objective + " += " + dotY + " " + context.objective);
+
+        String distA = squaredDistance(wx, wy, detail, context);
+        String dxB = context.nextCollisionTemp();
+        detail.add("scoreboard players operation " + dxB + " " + context.objective + " = " + px + " " + context.objective);
+        detail.add("scoreboard players operation " + dxB + " " + context.objective + " -= " + context.constantHolder(bx) + " " + context.objective);
+        String dyB = context.nextCollisionTemp();
+        detail.add("scoreboard players operation " + dyB + " " + context.objective + " = " + py + " " + context.objective);
+        detail.add("scoreboard players operation " + dyB + " " + context.objective + " -= " + context.constantHolder(by) + " " + context.objective);
+        String distB = squaredDistance(dxB, dyB, detail, context);
+
+        String cross = context.nextCollisionTemp();
+        detail.add("scoreboard players operation " + cross + " " + context.objective + " = " + wx + " " + context.objective);
+        detail.add("scoreboard players operation " + cross + " " + context.objective + " *= " + context.constantHolder(vy) + " " + context.objective);
+        String crossOther = context.nextCollisionTemp();
+        detail.add("scoreboard players operation " + crossOther + " " + context.objective + " = " + wy + " " + context.objective);
+        detail.add("scoreboard players operation " + crossOther + " " + context.objective + " *= " + context.constantHolder(vx) + " " + context.objective);
+        detail.add("scoreboard players operation " + cross + " " + context.objective + " -= " + crossOther + " " + context.objective);
+
+        String radiusSquaredHolder = context.constantHolder(radiusSquared);
+        String len2Holder = context.constantHolder(len2);
+        long crossLimitSquared = radiusSquaredLong * len2Long;
+        int crossLimit = (int) Math.floor(Math.sqrt(crossLimitSquared));
+        detail.add("execute if score " + dot + " " + context.objective + " matches ..0 if score " + distA + " " + context.objective + " <= " + radiusSquaredHolder + " " + context.objective
+            + " run scoreboard players set " + flag + " " + context.objective + " 1");
+        detail.add("execute if score " + dot + " " + context.objective + " matches 1.. if score " + dot + " " + context.objective + " < " + len2Holder + " " + context.objective
+            + " if score " + cross + " " + context.objective + " matches " + (-crossLimit) + ".." + crossLimit
+            + " run scoreboard players set " + flag + " " + context.objective + " 1");
+        detail.add("execute if score " + dot + " " + context.objective + " >= " + len2Holder + " " + context.objective + " if score " + distB + " " + context.objective + " <= " + radiusSquaredHolder + " " + context.objective
+            + " run scoreboard players set " + flag + " " + context.objective + " 1");
+
+        String detailFunction = context.nextBranchFunctionName();
+        context.functions.put(detailFunction, detail);
+        int minX = Math.min(ax, bx) - radius;
+        int maxX = Math.max(ax, bx) + radius;
+        int minY = Math.min(ay, by) - radius;
+        int maxY = Math.max(ay, by) + radius;
+        lines.add("execute if score " + px + " " + context.objective + " matches " + minX + ".." + maxX
+            + " if score " + py + " " + context.objective + " matches " + minY + ".." + maxY
+            + " run function " + context.namespace + ":portable/" + detailFunction);
+        compileBooleanBranches(flag, branch.thenActions(), branch.elseActions(), lines, context);
+    }
+
+    private void compileTriggerIf(PortableProgram.TriggerIfAction branch, List<String> lines, CompileContext context) {
+        String left = aabbEdge(branch.trigger().x(), -branch.trigger().halfWidthRaw(), lines, context);
+        String right = aabbEdge(branch.trigger().x(), branch.trigger().halfWidthRaw(), lines, context);
+        String bottom = aabbEdge(branch.trigger().y(), -branch.trigger().halfHeightRaw(), lines, context);
+        String top = aabbEdge(branch.trigger().y(), branch.trigger().halfHeightRaw(), lines, context);
+        String flag = context.nextCollisionTemp();
+        lines.add("scoreboard players set " + flag + " " + context.objective + " 0");
+        lines.add("execute if score " + holder(branch.point().x(), context) + " " + context.objective + " >= " + left + " " + context.objective
+            + " if score " + holder(branch.point().x(), context) + " " + context.objective + " <= " + right + " " + context.objective
+            + " if score " + holder(branch.point().y(), context) + " " + context.objective + " >= " + bottom + " " + context.objective
+            + " if score " + holder(branch.point().y(), context) + " " + context.objective + " <= " + top + " " + context.objective
+            + " run scoreboard players set " + flag + " " + context.objective + " 1");
+        compileBooleanBranches(flag, branch.thenActions(), branch.elseActions(), lines, context);
+    }
+
+    private String squaredDistance(String dx, String dy, List<String> lines, CompileContext context) {
+        String dxSquared = context.nextCollisionTemp();
+        lines.add("scoreboard players operation " + dxSquared + " " + context.objective + " = " + dx + " " + context.objective);
+        lines.add("scoreboard players operation " + dxSquared + " " + context.objective + " *= " + dxSquared + " " + context.objective);
+        String dySquared = context.nextCollisionTemp();
+        lines.add("scoreboard players operation " + dySquared + " " + context.objective + " = " + dy + " " + context.objective);
+        lines.add("scoreboard players operation " + dySquared + " " + context.objective + " *= " + dySquared + " " + context.objective);
+        lines.add("scoreboard players operation " + dxSquared + " " + context.objective + " += " + dySquared + " " + context.objective);
+        return dxSquared;
+    }
+
+    private void compileBooleanBranches(
+        String flag,
+        List<PortableProgram.Action> thenActions,
+        List<PortableProgram.Action> elseActions,
+        List<String> lines,
+        CompileContext context
+    ) {
+        if (!thenActions.isEmpty()) {
+            String function = context.nextBranchFunctionName();
+            List<String> body = new ArrayList<>();
+            compileActions(thenActions, body, context);
+            context.functions.put(function, body);
+            lines.add("execute if score " + flag + " " + context.objective + " matches 1 run function " + context.namespace + ":portable/" + function);
+        }
+        if (!elseActions.isEmpty()) {
+            String function = context.nextBranchFunctionName();
+            List<String> body = new ArrayList<>();
+            compileActions(elseActions, body, context);
+            context.functions.put(function, body);
+            lines.add("execute unless score " + flag + " " + context.objective + " matches 1 run function " + context.namespace + ":portable/" + function);
+        }
     }
 
     private void compileCollisionBranches(

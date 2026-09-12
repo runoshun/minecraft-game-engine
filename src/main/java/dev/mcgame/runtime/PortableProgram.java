@@ -11,7 +11,8 @@ final class PortableProgram {
     static final int VERSION_3 = 3;
     static final int VERSION_4 = 4;
     static final int VERSION_5 = 5;
-    static final int CURRENT_VERSION = VERSION_5;
+    static final int VERSION_6 = 6;
+    static final int CURRENT_VERSION = VERSION_6;
 
     sealed interface ValueRef permits StateValue, InputValue, ConstantValue {}
     record StateValue(String name) implements ValueRef {}
@@ -114,8 +115,10 @@ final class PortableProgram {
 
     record Aabb2d(ValueRef x, ValueRef y, int halfWidthRaw, int halfHeightRaw) {}
     record Circle2d(ValueRef x, ValueRef y, int radiusRaw) {}
+    record Capsule2d(int axRaw, int ayRaw, int bxRaw, int byRaw, int radiusRaw) {}
+    record Point2d(ValueRef x, ValueRef y) {}
 
-    sealed interface Action permits SetAction, AddAction, SubAction, NegateAction, IfAction, AabbIfAction, CircleIfAction {}
+    sealed interface Action permits SetAction, AddAction, SubAction, NegateAction, IfAction, AabbIfAction, CircleIfAction, CircleCapsuleIfAction, TriggerIfAction {}
     record SetAction(String target, ValueRef value) implements Action {}
     record AddAction(String target, ValueRef value) implements Action {}
     record SubAction(String target, ValueRef value) implements Action {}
@@ -134,6 +137,18 @@ final class PortableProgram {
     }
     record CircleIfAction(Circle2d a, Circle2d b, List<Action> thenActions, List<Action> elseActions) implements Action {
         CircleIfAction {
+            thenActions = List.copyOf(thenActions);
+            elseActions = List.copyOf(elseActions);
+        }
+    }
+    record CircleCapsuleIfAction(Circle2d circle, Capsule2d capsule, List<Action> thenActions, List<Action> elseActions) implements Action {
+        CircleCapsuleIfAction {
+            thenActions = List.copyOf(thenActions);
+            elseActions = List.copyOf(elseActions);
+        }
+    }
+    record TriggerIfAction(Aabb2d trigger, Point2d point, List<Action> thenActions, List<Action> elseActions) implements Action {
+        TriggerIfAction {
             thenActions = List.copyOf(thenActions);
             elseActions = List.copyOf(elseActions);
         }

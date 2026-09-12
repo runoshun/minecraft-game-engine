@@ -4,6 +4,9 @@
   const COORDINATE = Symbol("mcgame.portableDsl.coordinate");
   const BOX = Symbol("mcgame.portableDsl.box");
   const CIRCLE = Symbol("mcgame.portableDsl.circle");
+  const CAPSULE = Symbol("mcgame.portableDsl.capsule");
+  const TRIGGER = Symbol("mcgame.portableDsl.trigger");
+  const FLIPPER = Symbol("mcgame.portableDsl.flipper");
 
   function fail(message) {
     throw new Error("portableDsl: " + message);
@@ -229,26 +232,129 @@
       return { x: value.x, y: value.y, radius: value.radius };
     }
 
+    function staticLogicNumber(value, label) {
+      const number = finiteNumber(value, label);
+      if (number < -64 || number > 64) fail(label + " must be between -64 and 64");
+      return number;
+    }
+
+    function makeCapsule(id, spec, allowZeroRadius, kind) {
+      if (typeof id !== "string" || id.length === 0) fail(kind + " id must be a non-empty string");
+      if (spec == null || typeof spec !== "object") fail(kind + " " + id + " spec must be an object");
+      const ax = staticLogicNumber(spec.ax, kind + " " + id + " ax");
+      const ay = staticLogicNumber(spec.ay, kind + " " + id + " ay");
+      const bx = staticLogicNumber(spec.bx, kind + " " + id + " bx");
+      const by = staticLogicNumber(spec.by, kind + " " + id + " by");
+      const radius = finiteNumber(spec.radius === undefined ? 0 : spec.radius, kind + " " + id + " radius");
+      if (allowZeroRadius ? (radius < 0 || radius > 16) : (radius <= 0 || radius > 16)) {
+        fail(kind + " " + id + " radius must be " + (allowZeroRadius ? "between 0 and 16" : "> 0 and <= 16"));
+      }
+      if (ax === bx && ay === by) fail(kind + " " + id + " endpoints must not be identical");
+      return Object.freeze({ [CAPSULE]: true, id, ax, ay, bx, by, radius });
+    }
+
+    function segment(id, spec) {
+      return makeCapsule(id, { ...spec, radius: 0 }, true, "segment");
+    }
+
+    function capsule(id, spec) {
+      return makeCapsule(id, spec, false, "capsule");
+    }
+
+    function serializeCapsule(value, label) {
+      if (!value || value[CAPSULE] !== true) fail(label + " must be created by segment(...), capsule(...), or flipper(...)");
+      return { ax: value.ax, ay: value.ay, bx: value.bx, by: value.by, radius: value.radius };
+    }
+
+    function trigger(id, spec) {
+      const zone = box(id, spec);
+      return Object.freeze({ [TRIGGER]: true, id, zone });
+    }
+
+    function flipper(id, spec) {
+      if (typeof id !== "string" || id.length === 0) fail("flipper id must be a non-empty string");
+      if (spec == null || typeof spec !== "object") fail("flipper " + id + " spec must be an object");
+      const pivotX = staticLogicNumber(spec.pivotX, "flipper " + id + " pivotX");
+      const pivotY = staticLogicNumber(spec.pivotY, "flipper " + id + " pivotY");
+      const length = finiteNumber(spec.length, "flipper " + id + " length");
+      const radius = finiteNumber(spec.radius, "flipper " + id + " radius");
+      const restAngle = finiteNumber(spec.restAngle, "flipper " + id + " restAngle");
+      const activeAngle = finiteNumber(spec.activeAngle, "flipper " + id + " activeAngle");
+      if (length <= 0 || length > 16) fail("flipper " + id + " length must be > 0 and <= 16");
+      if (radius <= 0 || radius > 4) fail("flipper " + id + " radius must be > 0 and <= 4");
+      const activeWhen = serializedCondition(spec.activeWhen, "flipper " + id + " activeWhen");
+      function pose(suffix, degrees) {
+        const radians = degrees * Math.PI / 180;
+        return makeCapsule(id + "_" + suffix, {
+          ax: pivotX, ay: pivotY,
+          bx: pivotX + Math.cos(radians) * length,
+          by: pivotY + Math.sin(radians) * length,
+          radius,
+        }, false, "flipper");
+      }
+      return Object.freeze({
+        [FLIPPER]: true, id,
+        rest: pose("rest", restAngle),
+        active: pose("active", activeAngle),
+        activeWhen,
+      });
+    }
+
+    function circleCapsuleAction(circleValue, capsuleValue, thenActions, elseActions) {
+      const action = {
+        op: "if_circle_capsule",
+        circle: serializeCircle(circleValue, "circle/capsule circle"),
+        capsule: serializeCapsule(capsuleValue, "circle/capsule capsule"),
+        then: thenActions,
+      };
+      if (elseActions !== undefined) action.else = elseActions;
+      return action;
+    }
+
     function whenColliding(a, b, thenCallback, elseCallback) {
+      const thenActions = captureActions(thenCallback, "whenColliding then");
+      const elseActions = elseCallback === undefined ? undefined : captureActions(elseCallback, "whenColliding else");
       let action;
       if (a && b && a[BOX] === true && b[BOX] === true) {
-        action = {
-          op: "if_aabb",
-          a: serializeBox(a, "whenColliding first box"),
-          b: serializeBox(b, "whenColliding second box"),
-          then: captureActions(thenCallback, "whenColliding then"),
-        };
+        action = { op: "if_aabb", a: serializeBox(a, "whenColliding first box"), b: serializeBox(b, "whenColliding second box"), then: thenActions };
+        if (elseActions !== undefined) action.else = elseActions;
       } else if (a && b && a[CIRCLE] === true && b[CIRCLE] === true) {
+        action = { op: "if_circle", a: serializeCircle(a, "whenColliding first circle"), b: serializeCircle(b, "whenColliding second circle"), then: thenActions };
+        if (elseActions !== undefined) action.else = elseActions;
+      } else if (a && b && a[CIRCLE] === true && b[CAPSULE] === true) {
+        action = circleCapsuleAction(a, b, thenActions, elseActions);
+      } else if (a && b && a[CAPSULE] === true && b[CIRCLE] === true) {
+        action = circleCapsuleAction(b, a, thenActions, elseActions);
+      } else if (a && b && a[CIRCLE] === true && b[FLIPPER] === true) {
         action = {
-          op: "if_circle",
-          a: serializeCircle(a, "whenColliding first circle"),
-          b: serializeCircle(b, "whenColliding second circle"),
-          then: captureActions(thenCallback, "whenColliding then"),
+          op: "if", condition: b.activeWhen,
+          then: [circleCapsuleAction(a, b.active, thenActions, elseActions)],
+          else: [circleCapsuleAction(a, b.rest, thenActions, elseActions)],
+        };
+      } else if (a && b && a[FLIPPER] === true && b[CIRCLE] === true) {
+        action = {
+          op: "if", condition: a.activeWhen,
+          then: [circleCapsuleAction(b, a.active, thenActions, elseActions)],
+          else: [circleCapsuleAction(b, a.rest, thenActions, elseActions)],
         };
       } else {
-        fail("whenColliding currently requires box/box or circle/circle shapes");
+        fail("whenColliding requires box/box, circle/circle, circle/segment, circle/capsule, or circle/flipper shapes");
       }
-      if (elseCallback !== undefined) action.else = captureActions(elseCallback, "whenColliding else");
+      emit(action);
+    }
+
+    function whenTriggered(triggerValue, watched, thenCallback, elseCallback) {
+      if (!triggerValue || triggerValue[TRIGGER] !== true) fail("whenTriggered first argument must be created by trigger(...)");
+      if (!watched || (watched[CIRCLE] !== true && watched[BOX] !== true)) {
+        fail("whenTriggered currently watches the center of a circle(...) or box(...)");
+      }
+      const action = {
+        op: "if_trigger",
+        trigger: serializeBox(triggerValue.zone, "whenTriggered trigger"),
+        point: { x: watched.x, y: watched.y },
+        then: captureActions(thenCallback, "whenTriggered then"),
+      };
+      if (elseCallback !== undefined) action.else = captureActions(elseCallback, "whenTriggered else");
       emit(action);
     }
 
@@ -380,9 +486,14 @@
       repeat,
       when,
       whenColliding,
+      whenTriggered,
       at,
       box,
       circle,
+      segment,
+      capsule,
+      trigger,
+      flipper,
       block,
       text: textProjection,
       camera: cameraProjection,
@@ -396,7 +507,7 @@
     if (Object.keys(stateValues).length === 0) fail("at least one state(...) is required");
 
     const spec = {
-      version: 5,
+      version: 6,
       fixedPoint,
       state: stateValues,
       tick: tickActions,

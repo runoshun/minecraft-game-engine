@@ -116,17 +116,21 @@ type PortableComparison = {
 };
 type PortableAabb = { x: PortableValue; y: PortableValue; width: number; height: number };
 type PortableCircle = { x: PortableValue; y: PortableValue; radius: number };
+type PortableCapsule = { ax: number; ay: number; bx: number; by: number; radius: number };
+type PortablePoint = { x: PortableValue; y: PortableValue };
 type PortableAction =
   | { op: "set" | "add" | "sub"; target: string; value: PortableValue }
   | { op: "negate"; target: string }
   | { op: "if"; condition: PortableComparison; then: PortableAction[]; else?: PortableAction[] }
   | { op: "if_aabb"; a: PortableAabb; b: PortableAabb; then: PortableAction[]; else?: PortableAction[] }
-  | { op: "if_circle"; a: PortableCircle; b: PortableCircle; then: PortableAction[]; else?: PortableAction[] };
+  | { op: "if_circle"; a: PortableCircle; b: PortableCircle; then: PortableAction[]; else?: PortableAction[] }
+  | { op: "if_circle_capsule"; circle: PortableCircle; capsule: PortableCapsule; then: PortableAction[]; else?: PortableAction[] }
+  | { op: "if_trigger"; trigger: PortableAabb; point: PortablePoint; then: PortableAction[]; else?: PortableAction[] };
 type PortableProgramSpecV1 = {
   version?: 1;
   fixedPoint?: number;
   state: Record<string, number>;
-  tick: Exclude<PortableAction, { op: "if_aabb" } | { op: "if_circle" }>[];
+  tick: Exclude<PortableAction, { op: "if_aabb" } | { op: "if_circle" } | { op: "if_circle_capsule" } | { op: "if_trigger" }>[];
 };
 type PortableVanillaInputBindingV2 = { source: "first_player_hotbar_slot" };
 type PortableVanillaInputSource =
@@ -206,7 +210,7 @@ type PortableProgramSpecV2 = {
     inputs?: Record<string, PortableVanillaInputBindingV2>;
     projections?: Array<Omit<PortableVanillaBlockProjection, "when">>;
   };
-  tick: Exclude<PortableAction, { op: "if_aabb" } | { op: "if_circle" }>[];
+  tick: Exclude<PortableAction, { op: "if_aabb" } | { op: "if_circle" } | { op: "if_circle_capsule" } | { op: "if_trigger" }>[];
 };
 type PortableProgramSpecV3 = {
   version: 3;
@@ -219,7 +223,7 @@ type PortableProgramSpecV3 = {
     cameras?: PortableVanillaCamera[];
     particles?: PortableVanillaParticleEmitter[];
   };
-  tick: Exclude<PortableAction, { op: "if_aabb" } | { op: "if_circle" }>[];
+  tick: Exclude<PortableAction, { op: "if_aabb" } | { op: "if_circle" } | { op: "if_circle_capsule" } | { op: "if_trigger" }>[];
 };
 type PortableProgramSpecV4 = {
   version: 4;
@@ -235,7 +239,7 @@ type PortableProgramSpecV4 = {
     sounds?: PortableVanillaSoundEmitter[];
     huds?: PortableVanillaHud[];
   };
-  tick: Exclude<PortableAction, { op: "if_circle" }>[];
+  tick: Exclude<PortableAction, { op: "if_circle" } | { op: "if_circle_capsule" } | { op: "if_trigger" }>[];
 };
 type PortableProgramSpecV5 = {
   version: 5;
@@ -251,9 +255,17 @@ type PortableProgramSpecV5 = {
     sounds?: PortableVanillaSoundEmitter[];
     huds?: PortableVanillaHud[];
   };
+  tick: Exclude<PortableAction, { op: "if_circle_capsule" } | { op: "if_trigger" }>[];
+};
+type PortableProgramSpecV6 = {
+  version: 6;
+  fixedPoint?: number;
+  state: Record<string, number>;
+  inputs?: Record<string, number>;
+  vanilla?: PortableProgramSpecV5["vanilla"];
   tick: PortableAction[];
 };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5;
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -337,7 +349,22 @@ type PortableDslBox = { readonly __portableDslBox?: never };
 type PortableDslBoxSpec = { x: PortableDslValue; y: PortableDslValue; width: number; height: number };
 type PortableDslCircle = { readonly __portableDslCircle?: never };
 type PortableDslCircleSpec = { x: PortableDslValue; y: PortableDslValue; radius: number };
-type PortableDslCollider = PortableDslBox | PortableDslCircle;
+type PortableDslSegment = { readonly __portableDslSegment?: never };
+type PortableDslSegmentSpec = { ax: number; ay: number; bx: number; by: number };
+type PortableDslCapsule = { readonly __portableDslCapsule?: never };
+type PortableDslCapsuleSpec = PortableDslSegmentSpec & { radius: number };
+type PortableDslTrigger = { readonly __portableDslTrigger?: never };
+type PortableDslFlipper = { readonly __portableDslFlipper?: never };
+type PortableDslFlipperSpec = {
+  pivotX: number;
+  pivotY: number;
+  length: number;
+  radius: number;
+  restAngle: number;
+  activeAngle: number;
+  activeWhen: PortableDslCondition;
+};
+type PortableDslCollider = PortableDslBox | PortableDslCircle | PortableDslSegment | PortableDslCapsule | PortableDslFlipper;
 type PortableDslHudSpec = { text: string | Array<string | PortableDslState | PortableDslInput> };
 type PortableDsl = {
   state(name: string, initial: number): PortableDslState;
@@ -347,8 +374,15 @@ type PortableDsl = {
   when(condition: PortableDslCondition, thenCallback: () => void, elseCallback?: () => void): void;
   box(id: string, spec: PortableDslBoxSpec): PortableDslBox;
   circle(id: string, spec: PortableDslCircleSpec): PortableDslCircle;
+  segment(id: string, spec: PortableDslSegmentSpec): PortableDslSegment;
+  capsule(id: string, spec: PortableDslCapsuleSpec): PortableDslCapsule;
+  trigger(id: string, spec: PortableDslBoxSpec): PortableDslTrigger;
+  flipper(id: string, spec: PortableDslFlipperSpec): PortableDslFlipper;
   whenColliding(a: PortableDslBox, b: PortableDslBox, thenCallback: () => void, elseCallback?: () => void): void;
   whenColliding(a: PortableDslCircle, b: PortableDslCircle, thenCallback: () => void, elseCallback?: () => void): void;
+  whenColliding(a: PortableDslCircle, b: PortableDslSegment | PortableDslCapsule | PortableDslFlipper, thenCallback: () => void, elseCallback?: () => void): void;
+  whenColliding(a: PortableDslSegment | PortableDslCapsule | PortableDslFlipper, b: PortableDslCircle, thenCallback: () => void, elseCallback?: () => void): void;
+  whenTriggered(trigger: PortableDslTrigger, watched: PortableDslCircle | PortableDslBox, thenCallback: () => void, elseCallback?: () => void): void;
   at(state: PortableDslState, base?: number): PortableDslCoordinate;
   block(id: string, spec: PortableDslBlockSpec): void;
   text(id: string, spec: PortableDslTextSpec): void;

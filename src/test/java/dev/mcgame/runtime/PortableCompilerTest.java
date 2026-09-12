@@ -142,7 +142,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(5, program.version());
+        assertEquals(6, program.version());
         assertEquals(2, program.initialState().size());
         assertEquals(1, program.initialInputs().size());
         assertEquals(1, program.vanillaProjections().size());
@@ -194,7 +194,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(5, program.version());
+        assertEquals(6, program.version());
         assertEquals(2, program.initialInputs().size());
         assertEquals(1, program.vanillaCameras().size());
         assertEquals(1, program.vanillaParticles().size());
@@ -266,7 +266,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(5, program.version());
+        assertEquals(6, program.version());
         assertEquals(1, program.vanillaTexts().size());
         assertEquals(1, program.vanillaSounds().size());
         assertEquals(1, program.vanillaHuds().size());
@@ -340,7 +340,7 @@ class PortableCompilerTest {
             """;
 
         PortableProgram program = extract(source);
-        assertEquals(5, program.version());
+        assertEquals(6, program.version());
         assertEquals(3, program.vanillaProjections().size());
         assertEquals(1, program.vanillaTexts().size());
         assertTrue(program.tickActions().stream().anyMatch(PortableProgram.CircleIfAction.class::isInstance));
@@ -361,6 +361,84 @@ class PortableCompilerTest {
         assertTrue(tick.contains("transformation.scale set value [0f,0f,0f]"));
         assertTrue(tick.contains(" *= #q"));
         assertTrue(tick.contains(" <= #c"));
+    }
+
+    @Test
+    void versionSixDslCompilesSegmentTriggerAndFlipper() throws Exception {
+        String source = """
+            portableDsl({ fixedPoint: 1000 }, game => {
+              const x = game.state("x", 0);
+              const y = game.state("y", 0.15);
+              const active = game.state("active", 1);
+              const wallHit = game.state("wallHit", 0);
+              const triggerHit = game.state("triggerHit", 0);
+              const flipperHit = game.state("flipperHit", 0);
+              const wallMiss = game.state("wallMiss", 0);
+              const triggerMiss = game.state("triggerMiss", 0);
+              const ball = game.circle("ball", { x, y, radius: 0.2 });
+              const farBall = game.circle("farBall", { x: 0, y: 3, radius: 0.2 });
+              const wall = game.segment("wall", { ax: -1, ay: 0, bx: 1, by: 0 });
+              const drain = game.trigger("drain", { x: 0, y: 0, width: 2, height: 1 });
+              const flipper = game.flipper("left", {
+                pivotX: -1, pivotY: -1, length: 2, radius: 0.15,
+                restAngle: 0, activeAngle: 45, activeWhen: active.eq(1)
+              });
+
+              game.tick(() => {
+                wallHit.set(0);
+                triggerHit.set(0);
+                flipperHit.set(0);
+                game.whenColliding(ball, wall, () => wallHit.set(1));
+                game.whenColliding(farBall, wall, () => wallMiss.set(1));
+                game.whenTriggered(drain, ball, () => triggerHit.set(1));
+                game.whenTriggered(drain, farBall, () => triggerMiss.set(1));
+                game.whenColliding(ball, flipper, () => flipperHit.set(1));
+              });
+            });
+            """;
+
+        PortableProgram program = extract(source);
+        assertEquals(6, program.version());
+        assertTrue(program.tickActions().stream().anyMatch(PortableProgram.CircleCapsuleIfAction.class::isInstance));
+        assertTrue(program.tickActions().stream().anyMatch(PortableProgram.TriggerIfAction.class::isInstance));
+
+        PortableStateMachine machine = new PortableStateMachine(program);
+        machine.tick();
+        assertEquals(1.0, machine.get("wallHit"), 0.0001);
+        assertEquals(0.0, machine.get("wallMiss"), 0.0001);
+        assertEquals(1.0, machine.get("triggerHit"), 0.0001);
+        assertEquals(0.0, machine.get("triggerMiss"), 0.0001);
+        assertEquals(1.0, machine.get("flipperHit"), 0.0001);
+
+        Path output = Files.createTempDirectory("mcgame-portable-v6-test");
+        new PortableDatapackCompiler().compile(program, "portable_v6", output);
+        StringBuilder functions = new StringBuilder();
+        try (var paths = Files.walk(output.resolve("data/portable_v6/function/portable"))) {
+            for (Path path : paths.filter(Files::isRegularFile).toList()) functions.append(Files.readString(path));
+        }
+        String generated = functions.toString();
+        assertTrue(generated.contains("matches ..0 if score"));
+        assertTrue(generated.contains("matches 1.. if score"));
+        assertTrue(generated.contains("run scoreboard players set #q"));
+    }
+
+    @Test
+    void versionFiveRejectsVersionSixCollisionActions() {
+        String source = """
+            portable.define({
+              version: 5,
+              fixedPoint: 1000,
+              state: { x: 0, y: 0 },
+              tick: [{
+                op: "if_circle_capsule",
+                circle: { x: { state: "x" }, y: { state: "y" }, radius: 0.2 },
+                capsule: { ax: -1, ay: 0, bx: 1, by: 0, radius: 0.1 },
+                then: []
+              }]
+            });
+            """;
+        RuntimeException error = assertThrows(RuntimeException.class, () -> extract(source));
+        assertTrue(error.getMessage().contains("requires portable version 6"));
     }
 
     @Test

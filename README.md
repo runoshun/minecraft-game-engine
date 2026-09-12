@@ -10,7 +10,7 @@ Verified against Minecraft 26.1:
 
 - `portableDsl(...)` TypeScript lowers to versioned Portable IR at build time
 - generated datapacks run on a mod-free vanilla server
-- held input, spectator camera, block/text displays, particles, sound, actionbar HUD, fixed-point state, AABB collision, conditional projection visibility, and circle/circle collision are supported by the vanilla backend
+- held input, spectator camera, block/text displays, particles, sound, actionbar HUD, fixed-point state, AABB collision, circle/circle collision, static segment/capsule collision, trigger zones, two-pose flippers, and conditional projection visibility are supported by the vanilla backend
 - compile-time `repeat(...)` expands bounded static object fields such as brick grids
 - the optional Fabric backend still executes the same portable declarations for development and compatibility
 
@@ -71,11 +71,11 @@ portableDsl({ fixedPoint: 1000 }, game => {
 });
 ```
 
-A minimal example lives under [`examples/demo-datapack`](examples/demo-datapack), [`examples/portable-bounce`](examples/portable-bounce) is the low-level portable IR smoke example, [`examples/portable-breakout-core`](examples/portable-breakout-core) demonstrates the TypeScript DSL compiling to a mod-free vanilla datapack, and the validated game loop lives under [`examples/topdown-roguelike`](examples/topdown-roguelike). Presentation API details and adapter guidance are in [`docs/presentation-api.md`](docs/presentation-api.md).
+A minimal example lives under [`examples/demo-datapack`](examples/demo-datapack), [`examples/portable-bounce`](examples/portable-bounce) is the low-level portable IR smoke example, [`examples/portable-breakout-core`](examples/portable-breakout-core) is the mod-free brick-breaker acceptance game, [`examples/portable-pinball-core`](examples/portable-pinball-core) is the v6 segment/capsule/trigger/flipper acceptance game, and the legacy Fabric-heavy game loop lives under [`examples/topdown-roguelike`](examples/topdown-roguelike). Presentation API details and adapter guidance are in [`docs/presentation-api.md`](docs/presentation-api.md).
 
 ## Current API
 
-- `portableDsl(...)` (primary TS authoring frontend; portable v5 adds compile-time static collections, conditional block/text visibility, and circle/circle collision to the v4 arcade feature set)
+- `portableDsl(...)` (primary TS authoring frontend; portable v6 adds bounded segment/capsule collision, trigger zones, and two-pose flippers on top of the v5 arcade feature set)
 - `portable.define(spec)` / `portable.get(state)` / `portable.raw(state)` / input register access (low-level portable API)
 - `game.onStart(callback)` / `game.onBeforeTick(callback)` / `game.onTick(callback)`
 - `game.log(...values)`
@@ -105,7 +105,7 @@ Requires Java 25.
 ./gradlew build
 ```
 
-The primary deployment path compiles supported portable DSL programs to standalone vanilla datapacks. The current v5 backend supports normal held player input (W/A/S/D, jump, sneak, sprint), block/text-display projections with optional state-controlled visibility, one spectator camera, bounded particle/sound emitters, one actionbar HUD, deterministic 2D AABB and circle/circle collision, and compile-time static collection expansion in addition to fixed-point game logic:
+The primary deployment path compiles supported portable DSL programs to standalone vanilla datapacks. The current v6 backend supports normal held player input (W/A/S/D, jump, sneak, sprint), block/text-display projections with optional state-controlled visibility, one spectator camera, bounded particle/sound emitters, one actionbar HUD, deterministic 2D AABB and circle/circle collision, static segment/capsule collision, center-point trigger zones, two-pose flippers, and compile-time static collection expansion in addition to fixed-point game logic:
 
 ```bash
 ./gradlew compilePortable \

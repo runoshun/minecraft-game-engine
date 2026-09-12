@@ -24,4 +24,4 @@ Compile it with:
 
 `build/portable/portable_breakout` is the deployment artifact. Minecraft 26.1 can run it with no Fabric, Fabric API, GraalJS, TypeScript, or MC Game Runtime mod installed. The build machine still needs this repository and Java 25.
 
-The generated camera currently owns one controller and restores that player to Adventure mode during `portable/cleanup`, rather than remembering the exact previous gamemode. Collision is logic-space arcade collision; it does not query Minecraft entity/block hitboxes. Circle/circle collision also exists in v5 for pinball-oriented work, while segment/capsule/flipper primitives are planned next.
+The generated camera currently owns one controller and restores that player to Adventure mode during `portable/cleanup`, rather than remembering the exact previous gamemode. Collision is logic-space arcade collision; it does not query Minecraft entity/block hitboxes. Circle/circle collision was added in v5. Portable v6 now also provides bounded static segment/capsule collision, trigger zones, and two-pose flippers; see `examples/portable-pinball-core` for the corresponding mod-free acceptance game.
