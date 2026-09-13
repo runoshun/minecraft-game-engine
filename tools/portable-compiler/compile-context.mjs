@@ -75,7 +75,11 @@ export class CompileContext {
       });
     });
     this.gridWorldSlots = new Map();
-    [...(program.gridWorlds || [])].map(value => value.id).sort().forEach((id, index) => this.gridWorldSlots.set(id, index));
+    let gridWorldIndex = 0;
+    [...(program.gridWorlds || [])].map(value => value.id).sort().forEach(id => this.gridWorldSlots.set(`global:${id}`, gridWorldIndex++));
+    [...(program.sessions || [])].sort((a, b) => a.id.localeCompare(b.id)).forEach(session => {
+      [...(session.gridWorlds || [])].map(value => value.id).sort().forEach(id => this.gridWorldSlots.set(`session:${session.id}:${id}`, gridWorldIndex++));
+    });
     this.nextConstant = 0;
     this.nextBranch = 0;
     this.nextPlayer = 0;
@@ -130,14 +134,15 @@ export class CompileContext {
     if (!holder) fail(`unknown session RNG holder: ${session}.${id}`);
     return holder;
   }
-  gridWorldSlot(id) {
-    const index = this.gridWorldSlots.get(id);
-    if (index === undefined) fail(`unknown grid-world projection: ${id}`);
+  gridWorldSlot(id, session = null) {
+    const key = session ? `session:${session}:${id}` : `global:${id}`;
+    const index = this.gridWorldSlots.get(key);
+    if (index === undefined) fail(`unknown ${session ? `session ${session} ` : ""}grid-world projection: ${id}`);
     return slot(index);
   }
-  gridWorldReadyHolder(id) { return `#w${this.gridWorldSlot(id)}r`; }
-  gridWorldActiveHolder(id) { return `#w${this.gridWorldSlot(id)}a`; }
-  gridWorldCursorHolder(id) { return `#w${this.gridWorldSlot(id)}c`; }
+  gridWorldReadyHolder(id, session = null) { return `#w${this.gridWorldSlot(id, session)}r`; }
+  gridWorldActiveHolder(id, session = null) { return `#w${this.gridWorldSlot(id, session)}a`; }
+  gridWorldCursorHolder(id, session = null) { return `#w${this.gridWorldSlot(id, session)}c`; }
   textValueHolder(id, index) {
     const key = `${id}:${index}`;
     if (!this.textValues.has(key)) this.textValues.set(key, `#t${this.nextText++}`);
@@ -155,7 +160,7 @@ export class CompileContext {
       case "input": return { holder: inputHolder(value.name), objective: this.objective };
       case "player_state": return { holder: "@s", objective: this.playerStateObjective(value.name) };
       case "player_input": return { holder: "@s", objective: this.playerInputObjective(value.name) };
-      case "grid_world_ready": return { holder: this.gridWorldReadyHolder(value.name), objective: this.objective };
+      case "grid_world_ready": return { holder: this.gridWorldReadyHolder(value.name, value.session ?? null), objective: this.objective };
       case "constant": return { holder: this.constantHolder(value.raw), objective: this.objective };
       default: fail(`unknown portable value kind: ${value.kind}`);
     }

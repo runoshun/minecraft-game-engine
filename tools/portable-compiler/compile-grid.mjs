@@ -179,9 +179,9 @@ export function compileGridAction(action, lines, ctx) {
     return true;
   }
   if (action.op === "grid_world_rebuild") {
-    lines.push(`scoreboard players set ${ctx.gridWorldCursorHolder(action.target)} ${ctx.objective} 0`);
-    lines.push(`scoreboard players set ${ctx.gridWorldReadyHolder(action.target)} ${ctx.objective} 0`);
-    lines.push(`scoreboard players set ${ctx.gridWorldActiveHolder(action.target)} ${ctx.objective} 1`);
+    lines.push(`scoreboard players set ${ctx.gridWorldCursorHolder(action.target, action.session ?? null)} ${ctx.objective} 0`);
+    lines.push(`scoreboard players set ${ctx.gridWorldReadyHolder(action.target, action.session ?? null)} ${ctx.objective} 0`);
+    lines.push(`scoreboard players set ${ctx.gridWorldActiveHolder(action.target, action.session ?? null)} ${ctx.objective} 1`);
     return true;
   }
   return false;
@@ -222,6 +222,15 @@ export function compileGridLoad(program, lines, ctx) {
     lines.push(`scoreboard players set ${ctx.gridWorldActiveHolder(projection.id)} ${ctx.objective} 0`);
     lines.push(`scoreboard players set ${ctx.gridWorldCursorHolder(projection.id)} ${ctx.objective} 0`);
   }
+  if (program.version >= 16) {
+    for (const sessionValue of program.sessions) {
+      for (const projection of sessionValue.gridWorlds) {
+        lines.push(`scoreboard players set ${ctx.gridWorldReadyHolder(projection.id, sessionValue.id)} ${ctx.objective} 0`);
+        lines.push(`scoreboard players set ${ctx.gridWorldActiveHolder(projection.id, sessionValue.id)} ${ctx.objective} 0`);
+        lines.push(`scoreboard players set ${ctx.gridWorldCursorHolder(projection.id, sessionValue.id)} ${ctx.objective} 0`);
+      }
+    }
+  }
 }
 
 export function gridCleanupLines(program, ctx) {
@@ -240,8 +249,8 @@ function chunkIsOwned(program, projection, blockX, blockZ) {
     && cz >= floorDiv(program.ownership.minZ, 16) && cz <= floorDiv(program.ownership.maxZ, 16);
 }
 
-function projectionSliceBody(program, projection, gridValue, start, end, ctx) {
-  const objective = ctx.gridObjective(gridValue.id);
+function projectionSliceBody(program, projection, gridValue, start, end, ctx, sessionId = null) {
+  const objective = scopedGridObjective(ctx, sessionId, gridValue.id);
   const byChunk = new Map();
   for (let index = start; index < end; index++) {
     const x = projection.originX + (index % gridValue.width);
@@ -264,29 +273,41 @@ function projectionSliceBody(program, projection, gridValue, start, end, ctx) {
     if (!owned) body.push(`execute in ${projection.dimension} run forceload remove ${bx} ${bz}`);
   }
   if (end >= gridValue.width * gridValue.height) {
-    body.push(`scoreboard players set ${ctx.gridWorldCursorHolder(projection.id)} ${ctx.objective} ${gridValue.width * gridValue.height}`);
-    body.push(`scoreboard players set ${ctx.gridWorldActiveHolder(projection.id)} ${ctx.objective} 0`);
-    body.push(`scoreboard players set ${ctx.gridWorldReadyHolder(projection.id)} ${ctx.objective} ${program.fixedPoint}`);
+    body.push(`scoreboard players set ${ctx.gridWorldCursorHolder(projection.id, sessionId)} ${ctx.objective} ${gridValue.width * gridValue.height}`);
+    body.push(`scoreboard players set ${ctx.gridWorldActiveHolder(projection.id, sessionId)} ${ctx.objective} 0`);
+    body.push(`scoreboard players set ${ctx.gridWorldReadyHolder(projection.id, sessionId)} ${ctx.objective} ${program.fixedPoint}`);
   } else {
-    body.push(`scoreboard players set ${ctx.gridWorldCursorHolder(projection.id)} ${ctx.objective} ${end}`);
+    body.push(`scoreboard players set ${ctx.gridWorldCursorHolder(projection.id, sessionId)} ${ctx.objective} ${end}`);
   }
   return body;
 }
 
+function compileProjectionService(program, projection, tick, ctx, sessionId = null, resetGuard = false) {
+  const gridValue = grid(program, projection.grid, sessionId);
+  const total = gridValue.width * gridValue.height;
+  if (resetGuard) tick.push(`scoreboard players set #ws ${ctx.objective} 0`);
+  let sliceIndex = 0;
+  for (let start = 0; start < total; start += projection.cellsPerTick) {
+    const end = Math.min(total, start + projection.cellsPerTick);
+    const prefix = sessionId ? `session_${sessionId}_grid_world_${projection.id}` : `grid_world_${projection.id}`;
+    const name = `${prefix}_slice_${String(sliceIndex++).padStart(3, "0")}`;
+    const body = [`scoreboard players set #ws ${ctx.objective} 1`, ...projectionSliceBody(program, projection, gridValue, start, end, ctx, sessionId)];
+    ctx.functions.set(name, body);
+    tick.push(`execute if score #ws ${ctx.objective} matches 0 if score ${ctx.gridWorldActiveHolder(projection.id, sessionId)} ${ctx.objective} matches 1 if score ${ctx.gridWorldCursorHolder(projection.id, sessionId)} ${ctx.objective} matches ${start} run function ${ctx.namespace}:portable/${name}`);
+  }
+}
+
 export function compileGridWorldServices(program, tick, ctx) {
   if (program.version < 13) return;
-  if (!program.gridWorlds.length) return;
-  tick.push(`scoreboard players set #ws ${ctx.objective} 0`);
-  for (const projection of program.gridWorlds) {
-    const gridValue = grid(program, projection.grid);
-    const total = gridValue.width * gridValue.height;
-    let sliceIndex = 0;
-    for (let start = 0; start < total; start += projection.cellsPerTick) {
-      const end = Math.min(total, start + projection.cellsPerTick);
-      const name = `grid_world_${projection.id}_slice_${String(sliceIndex++).padStart(3, "0")}`;
-      const body = [`scoreboard players set #ws ${ctx.objective} 1`, ...projectionSliceBody(program, projection, gridValue, start, end, ctx)];
-      ctx.functions.set(name, body);
-      tick.push(`execute if score #ws ${ctx.objective} matches 0 if score ${ctx.gridWorldActiveHolder(projection.id)} ${ctx.objective} matches 1 if score ${ctx.gridWorldCursorHolder(projection.id)} ${ctx.objective} matches ${start} run function ${ctx.namespace}:portable/${name}`);
+  if (program.gridWorlds.length) {
+    tick.push(`scoreboard players set #ws ${ctx.objective} 0`);
+    for (const projection of program.gridWorlds) compileProjectionService(program, projection, tick, ctx);
+  }
+  if (program.version >= 16) {
+    for (const sessionValue of program.sessions) {
+      for (const projection of sessionValue.gridWorlds) {
+        compileProjectionService(program, projection, tick, ctx, sessionValue.id, true);
+      }
     }
   }
 }

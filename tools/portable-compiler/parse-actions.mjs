@@ -132,11 +132,17 @@ export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }
     }
     if (op === "grid_world_rebuild") {
       if (ctx.version < 13) fail(`${p}.op requires portable version 13`);
-      if (ctx.sessionScope) fail(`${p}.op is global world projection and is not available inside SessionContext`);
       if (ctx.playerScope === "multi") fail(`${p}.op is shared world projection and is not allowed inside multi-player PlayerContext`);
       const target = requiredString(a, "target", p);
-      if (!ctx.gridWorlds.has(target)) fail(`${p}.target references unknown grid-world projection ${target}`);
-      out.push({ op, target });
+      if (ctx.sessionScope) {
+        if (ctx.version < 16) fail(`${p}.op session-local world projection requires portable version 16`);
+        const session = currentSession(ctx, p);
+        if (!session.gridWorlds.has(target)) fail(`${p}.target references unknown session grid-world projection ${ctx.sessionScope}.${target}`);
+        out.push({ op, session: ctx.sessionScope, target });
+      } else {
+        if (!ctx.gridWorlds.has(target)) fail(`${p}.target references unknown grid-world projection ${target}`);
+        out.push({ op, target });
+      }
       continue;
     }
     if (op === "if") {

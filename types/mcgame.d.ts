@@ -129,8 +129,12 @@ type PortablePlayerHudToken = { text: string } | { value: PortablePlayerValue };
 type PortableVanillaPlayerHud = { id: string; audience: "all_online"; tokens: PortablePlayerHudToken[] };
 type PortableVanillaPlayerHudV14 = { id: string; audience: PortablePlayerSetRefV14; tokens: PortablePlayerHudToken[] };
 type PortableV15Value = PortableV13Value | PortableSessionStateRef;
+type PortableSessionGridWorldReadyRef = { sessionGridWorldReady: { session: string; gridWorld: string } };
+type PortableV16Value = PortableV15Value | PortableSessionGridWorldReadyRef;
+type PortableV16PlayerHudToken = { text: string } | { value: PortableV16Value };
 type PortableV15PlayerHudToken = { text: string } | { value: PortableV15Value };
 type PortableVanillaPlayerHudV15 = { id: string; audience: PortablePlayerSetRefV14; session?: string; tokens: PortableV15PlayerHudToken[] };
+type PortableVanillaPlayerHudV16 = { id: string; audience: PortablePlayerSetRefV14; session?: string; tokens: PortableV16PlayerHudToken[] };
 type PortableVanillaSidebarRow = { id: string; tokens: PortableHudToken[] };
 type PortableVanillaSidebar = { id: string; title: string; rows: PortableVanillaSidebarRow[] };
 type PortableVanillaOwnershipRegion = { dimension?: string; minX: number; minZ: number; maxX: number; maxZ: number };
@@ -380,7 +384,43 @@ type PortableProgramSpecV15 = {
   };
   tick: PortableV15Action[];
 };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14 | PortableProgramSpecV15;
+type PortableV16Comparison = { op: "eq" | "ne" | "lt" | "lte" | "gt" | "gte"; left: PortableV16Value; right: PortableV16Value };
+type PortableV16Aabb = { x: PortableV16Value; y: PortableV16Value; width: number; height: number };
+type PortableV16Circle = { x: PortableV16Value; y: PortableV16Value; radius: number };
+type PortableV16Point = { x: PortableV16Value; y: PortableV16Value };
+type PortableV16Action =
+  | { op: "set" | "add" | "sub"; target: string; value: PortableV16Value }
+  | { op: "negate"; target: string }
+  | { op: "player_set" | "player_add" | "player_sub"; target: string; value: PortableV16Value }
+  | { op: "player_negate"; target: string }
+  | { op: "grid_fill"; grid: string; value: PortableV16Value }
+  | { op: "grid_get"; grid: string; x: PortableV16Value; z: PortableV16Value; target: string }
+  | { op: "grid_set"; grid: string; x: PortableV16Value; z: PortableV16Value; value: PortableV16Value }
+  | { op: "grid_fill_rect"; grid: string; x: PortableV16Value; z: PortableV16Value; width: PortableV16Value; height: PortableV16Value; value: PortableV16Value }
+  | { op: "rng_reset"; rng: string } | { op: "rng_int"; rng: string; target: string; min: number; max: number }
+  | { op: "grid_world_rebuild"; target: string }
+  | { op: "if"; condition: PortableV16Comparison; then: PortableV16Action[]; else?: PortableV16Action[] }
+  | { op: "if_aabb"; a: PortableV16Aabb; b: PortableV16Aabb; then: PortableV16Action[]; else?: PortableV16Action[] }
+  | { op: "if_circle"; a: PortableV16Circle; b: PortableV16Circle; then: PortableV16Action[]; else?: PortableV16Action[] }
+  | { op: "if_circle_capsule"; circle: PortableV16Circle; capsule: PortableCapsule; then: PortableV16Action[]; else?: PortableV16Action[] }
+  | { op: "if_trigger"; trigger: PortableV16Aabb; point: PortableV16Point; then: PortableV16Action[]; else?: PortableV16Action[] }
+  | { op: "for_each_player" | "for_single_player"; players: PortablePlayerSetRefV14; actions: PortableV16Action[] }
+  | { op: "for_session"; session: string; actions: PortableV16Action[] };
+type PortableSessionSpecV16 = PortableSessionSpecV15 & { gridWorlds?: PortableGridWorldSpec[] };
+type PortableProgramSpecV16 = {
+  version: 16;
+  fixedPoint?: number;
+  state: Record<string, number>;
+  playerState?: Record<string, number>;
+  playerInputs?: PortablePlayerInputName[];
+  playerSets?: Array<{ team: string }>;
+  sessions?: PortableSessionSpecV16[];
+  grids?: PortableGridSpec[];
+  rngs?: PortableRngSpec[];
+  vanilla?: Omit<NonNullable<PortableProgramSpecV15["vanilla"]>, "playerHuds"> & { playerHuds?: PortableVanillaPlayerHudV16[] };
+  tick: PortableV16Action[];
+};
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14 | PortableProgramSpecV15 | PortableProgramSpecV16;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -485,6 +525,7 @@ type PortableDslGridWorldSpec = {
   palette: Array<{ value: number; block: string }>;
   cellsPerTick?: number;
 };
+type PortableDslSessionGridWorldSpec = Omit<PortableDslGridWorldSpec, "grid"> & { grid: PortableDslSessionGrid };
 type PortableDslPlayerSet = { readonly __portableDslPlayerSet?: never };
 type PortableDslCameraSpec = {
   dimension?: string;
@@ -582,6 +623,7 @@ type PortableDslSessionContext = {
   state(name: string, initial: number): PortableDslSessionState;
   grid(id: string, spec: { width: number; height: number; initial?: number; outside?: number }): PortableDslSessionGrid;
   rng(id: string, spec: { seed: number }): PortableDslSessionRng;
+  gridWorld(id: string, spec: PortableDslSessionGridWorldSpec): PortableDslGridWorld;
   forEachPlayer(callback: (player: PortableDslPlayerContext) => void): void;
   forSinglePlayer(callback: (player: PortableDslPlayerContext) => void): void;
 };

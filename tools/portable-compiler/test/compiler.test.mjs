@@ -623,6 +623,140 @@ test("v15 rejects session scope escapes unsafe mutation and invalid membership",
   }), /aggregate session grid cell count 16384/);
 });
 
+test("v16 session grid-world projections isolate source grids and readiness", () => {
+  const { program, output, result } = compileSource(`
+    portableDsl({ ownership: { minX: 400, minZ: 0, maxX: 448, maxZ: 16 } }, game => {
+      const red = game.teamPlayers("v16_red");
+      const blue = game.teamPlayers("v16_blue");
+      game.tick(() => {
+        game.session("red", red, session => {
+          const initialized = session.state("initialized", 0);
+          const readySeen = session.state("readySeen", 0);
+          const map = session.grid("map", { width: 2, height: 2, initial: 0, outside: 0 });
+          const terrain = session.gridWorld("terrain", {
+            grid: map, originX: 404, y: 100, originZ: 4, cellsPerTick: 2,
+            palette: [{ value: 0, block: "minecraft:black_concrete" }, { value: 1, block: "minecraft:red_concrete" }],
+          });
+          game.when(initialized.eq(0), () => { map.set(0, 0, 1); terrain.rebuild(); initialized.set(1); });
+          game.when(terrain.ready.eq(1), () => readySeen.set(1));
+        });
+        game.session("blue", blue, session => {
+          const initialized = session.state("initialized", 0);
+          const readySeen = session.state("readySeen", 0);
+          const map = session.grid("map", { width: 2, height: 2, initial: 0, outside: 0 });
+          const terrain = session.gridWorld("terrain", {
+            grid: map, originX: 436, y: 100, originZ: 4, cellsPerTick: 2,
+            palette: [{ value: 0, block: "minecraft:black_concrete" }, { value: 1, block: "minecraft:blue_concrete" }],
+          });
+          game.when(initialized.eq(0), () => { map.set(1, 1, 1); terrain.rebuild(); initialized.set(1); });
+          game.when(terrain.ready.eq(1), () => readySeen.set(1));
+        });
+      });
+    });
+  `, "portable_v16_session_world");
+
+  assert.equal(program.version, 16);
+  assert.equal(result.sessionGridWorldCount, 2);
+  const marker = Object.fromEntries(read(output, ".mcgame-portable-generated").trim().split("\n").map(line => {
+    const index = line.indexOf("=");
+    return [line.slice(0, index), line.slice(index + 1)];
+  }));
+  assert.notEqual(marker["session.red.gridWorld.terrain.ready"], marker["session.blue.gridWorld.terrain.ready"]);
+  const redSlice = read(output, "data/portable_v16_session_world/function/portable/session_red_grid_world_terrain_slice_000.mcfunction");
+  const blueSlice = read(output, "data/portable_v16_session_world/function/portable/session_blue_grid_world_terrain_slice_000.mcfunction");
+  assert.ok(redSlice.includes(marker["session.red.grid.map"]));
+  assert.ok(blueSlice.includes(marker["session.blue.grid.map"]));
+  assert.match(redSlice, /setblock 404 100 4 minecraft:red_concrete/);
+  assert.match(blueSlice, /setblock 436 100 4 minecraft:blue_concrete/);
+  const tick = read(output, "data/portable_v16_session_world/function/portable/tick.mcfunction");
+  assert.match(tick, /session_red_grid_world_terrain_slice_000/);
+  assert.match(tick, /session_blue_grid_world_terrain_slice_000/);
+});
+
+test("v16 rejects session grid-world scope escapes unsafe rebuilds ownership violations and overlaps", () => {
+  assert.throws(() => extract(`
+    portableDsl(game => {
+      const red = game.teamPlayers("red");
+      let escaped;
+      game.tick(() => {
+        game.session("red", red, session => {
+          const map = session.grid("map", { width: 1, height: 1 });
+          escaped = session.gridWorld("terrain", { grid: map, originX: 0, y: 80, originZ: 0, palette: [{ value: 0, block: "minecraft:stone" }] }).ready;
+        });
+        game.when(escaped.eq(1), () => {});
+      });
+    });
+  `), /session grid-world ready reference escaped its SessionContext/);
+
+  assert.throws(() => extract(`
+    portableDsl(game => {
+      const red = game.teamPlayers("red");
+      game.tick(() => game.session("red", red, session => {
+        const map = session.grid("map", { width: 1, height: 1 });
+        const terrain = session.gridWorld("terrain", { grid: map, originX: 0, y: 80, originZ: 0, palette: [{ value: 0, block: "minecraft:stone" }] });
+        session.forEachPlayer(() => terrain.rebuild());
+      }));
+    });
+  `), /session-shared mutation.*multi-player PlayerContext/);
+
+  assert.throws(() => extract(`
+    portableDsl({ ownership: { minX: 0, minZ: 0, maxX: 8, maxZ: 8 } }, game => {
+      const red = game.teamPlayers("red");
+      const blue = game.teamPlayers("blue");
+      game.tick(() => {
+        game.session("red", red, session => {
+          const map = session.grid("map", { width: 2, height: 2 });
+          session.gridWorld("terrain", { grid: map, originX: 0, y: 80, originZ: 0, palette: [{ value: 0, block: "minecraft:stone" }] });
+        });
+        game.session("blue", blue, session => {
+          const map = session.grid("map", { width: 2, height: 2 });
+          session.gridWorld("terrain", { grid: map, originX: 1, y: 80, originZ: 1, palette: [{ value: 0, block: "minecraft:dirt" }] });
+        });
+      });
+    });
+  `), /grid-world footprints overlap/);
+
+  assert.throws(() => extract(`
+    portableDsl(game => {
+      const red = game.teamPlayers("red");
+      game.tick(() => game.session("red", red, session => {
+        const map = session.grid("map", { width: 1, height: 1 });
+        session.gridWorld("terrain", { grid: map, originX: 0, y: 80, originZ: 0, palette: [{ value: 0, block: "minecraft:stone" }] });
+      }));
+    });
+  `), /session grid-world projection requires vanilla\.ownership/);
+
+  assert.throws(() => extract(`
+    portableDsl({ ownership: { minX: 0, minZ: 0, maxX: 3, maxZ: 3 } }, game => {
+      const red = game.teamPlayers("red");
+      game.tick(() => game.session("red", red, session => {
+        const map = session.grid("map", { width: 2, height: 2 });
+        session.gridWorld("terrain", { grid: map, originX: 3, y: 80, originZ: 3, palette: [{ value: 0, block: "minecraft:stone" }] });
+      }));
+    });
+  `), /session grid-world projection red\.terrain must be inside vanilla\.ownership/);
+
+  assert.throws(() => extract(`
+    portableDsl({ ownership: { minX: 0, minZ: 0, maxX: 8, maxZ: 8 } }, game => {
+      const globalMap = game.grid("global_map", { width: 2, height: 2 });
+      game.gridWorld("global_terrain", { grid: globalMap, originX: 1, y: 80, originZ: 1, palette: [{ value: 0, block: "minecraft:stone" }] });
+      const red = game.teamPlayers("red");
+      game.tick(() => game.session("red", red, session => {
+        const map = session.grid("map", { width: 2, height: 2 });
+        session.gridWorld("terrain", { grid: map, originX: 2, y: 80, originZ: 2, palette: [{ value: 0, block: "minecraft:red_concrete" }] });
+      }));
+    });
+  `), /grid-world footprints overlap.*global global_terrain.*session red\.terrain/);
+
+  assert.throws(() => parseProgram({
+    version: 15,
+    state: {},
+    playerSets: [{ team: "red" }],
+    sessions: [{ id: "red", players: { team: "red" }, grids: [{ id: "map", width: 1, height: 1, initial: 0, outside: 0 }], gridWorlds: [{ id: "terrain", grid: "map", originX: 0, y: 80, originZ: 0, cellsPerTick: 1, palette: [{ value: 0, block: "minecraft:stone" }] }] }],
+    tick: [],
+  }), /gridWorlds requires portable version 16/);
+});
+
 test("representative checked-in examples compile deterministically", () => {
   const cases = [
     ["examples/portable-bounce/datapack/data/portable_bounce/mcgame/main.ts", "portable_bounce", 1],
@@ -636,6 +770,7 @@ test("representative checked-in examples compile deterministically", () => {
     ["examples/portable-procedural-roguelike/datapack/data/portable_roguelike/mcgame/main.ts", "portable_roguelike", 13],
     ["examples/portable-team-player-sets/datapack/data/portable_team_players/mcgame/main.ts", "portable_team_players", 14],
     ["examples/portable-session-local/datapack/data/portable_sessions/mcgame/main.ts", "portable_sessions", 15],
+    ["examples/portable-session-grid-world/datapack/data/portable_session_world/mcgame/main.ts", "portable_session_world", 16],
     ["examples/portable-session-local/datapack/data/portable_sessions/mcgame/main.ts", "portable_sessions", 15],
   ];
   for (const [relative, namespace, expectedVersion] of cases) {

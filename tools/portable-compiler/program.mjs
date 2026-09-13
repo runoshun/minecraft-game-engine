@@ -6,6 +6,42 @@ import { parseGrids, parseRngs } from "./parse-runtime.mjs";
 import { parsePlayerSetDeclarations } from "./player-set.mjs";
 import { parseSessions, sessionContextMap } from "./session.mjs";
 
+function validateSessionGridWorldFootprints(grids, sessions, globalGridWorlds, ownership, api) {
+  const globalGrids = new Map(grids.map(grid => [grid.id, grid]));
+  const footprints = [];
+  for (const projection of globalGridWorlds) {
+    const grid = globalGrids.get(projection.grid);
+    footprints.push({ session: null, id: projection.id, projection, grid });
+  }
+  for (const session of sessions) {
+    const sessionGrids = new Map(session.grids.map(grid => [grid.id, grid]));
+    for (const projection of session.gridWorlds || []) {
+      const grid = sessionGrids.get(projection.grid);
+      if (!ownership) fail(`${api}.sessions session grid-world projection requires vanilla.ownership`);
+      const maxX = projection.originX + grid.width - 1, maxZ = projection.originZ + grid.height - 1;
+      if (projection.dimension !== ownership.dimension
+        || projection.originX < ownership.minX || maxX > ownership.maxX
+        || projection.originZ < ownership.minZ || maxZ > ownership.maxZ) {
+        fail(`${api}.sessions session grid-world projection ${session.id}.${projection.id} must be inside vanilla.ownership`);
+      }
+      footprints.push({ session: session.id, id: projection.id, projection, grid });
+    }
+  }
+  for (let i = 0; i < footprints.length; i++) {
+    for (let j = i + 1; j < footprints.length; j++) {
+      const a = footprints[i], b = footprints[j];
+      if (a.session === null && b.session === null) continue;
+      if (a.projection.dimension !== b.projection.dimension || a.projection.y !== b.projection.y) continue;
+      const overlapX = a.projection.originX < b.projection.originX + b.grid.width && b.projection.originX < a.projection.originX + a.grid.width;
+      const overlapZ = a.projection.originZ < b.projection.originZ + b.grid.height && b.projection.originZ < a.projection.originZ + a.grid.height;
+      if (overlapX && overlapZ) {
+        const label = value => value.session ? `session ${value.session}.${value.id}` : `global ${value.id}`;
+        fail(`${api} grid-world footprints overlap at the same dimension/y: ${label(a)} and ${label(b)}`);
+      }
+    }
+  }
+}
+
 export function parseProgram(spec, api = "portable.define") {
   if (!isObject(spec)) fail(`${api} requires an object`);
   const version = has(spec, "version") ? boundedInteger(spec.version, 1, CURRENT_VERSION, `${api}.version`) : 1;
@@ -80,6 +116,7 @@ export function parseProgram(spec, api = "portable.define") {
   if (version >= 12 && Object.keys(vanilla.inputs).length) fail(`${api}.vanilla.inputs first_player_* bindings are v1-v11 compatibility only; use player.input.* in v12`);
   if (version >= 12 && vanilla.huds.length) fail(`${api}.vanilla.huds is single-controller v1-v11 presentation; use player.hud(...) in v12`);
   ctx.gridWorlds = new Set(vanilla.gridWorlds.map(value => value.id));
+  if (version >= 16) validateSessionGridWorldFootprints(grids, sessions, vanilla.gridWorlds, vanilla.ownership, api);
 
   const tickActions = parseActions(requiredArray(spec, "tick", api), ctx, `${api}.tick`);
   return {

@@ -135,6 +135,7 @@ export function compileDatapack(program, namespace, outputRoot) {
       for (const name of Object.keys(session.initialState).sort()) marker += `session.${session.id}.state.${name}=${ctx.sessionStateHolder(session.id, name)}\n`;
       for (const value of [...session.grids].sort((a, b) => a.id.localeCompare(b.id))) marker += `session.${session.id}.grid.${value.id}=${ctx.sessionGridObjective(session.id, value.id)}\n`;
       for (const value of [...session.rngs].sort((a, b) => a.id.localeCompare(b.id))) marker += `session.${session.id}.rng.${value.id}=${ctx.sessionRngHolder(session.id, value.id)}\n`;
+      for (const value of [...(session.gridWorlds || [])].sort((a, b) => a.id.localeCompare(b.id))) marker += `session.${session.id}.gridWorld.${value.id}.ready=${ctx.gridWorldReadyHolder(value.id, session.id)}\n`;
     }
   }
   write(path.join(outputRoot, ".mcgame-portable-generated"), marker);
@@ -150,6 +151,7 @@ export function compileDatapack(program, namespace, outputRoot) {
     sessionStateCount: (program.sessions || []).reduce((sum, session) => sum + Object.keys(session.initialState).length, 0),
     sessionGridCount: (program.sessions || []).reduce((sum, session) => sum + session.grids.length, 0),
     sessionRngCount: (program.sessions || []).reduce((sum, session) => sum + session.rngs.length, 0),
+    sessionGridWorldCount: (program.sessions || []).reduce((sum, session) => sum + (session.gridWorlds?.length ?? 0), 0),
     gridCount: program.grids?.length ?? 0,
     rngCount: program.rngs?.length ?? 0,
     gridWorldCount: program.gridWorlds?.length ?? 0,

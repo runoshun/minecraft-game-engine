@@ -81,6 +81,8 @@
     const sessions = [];
     const sessionTeams = new Set();
     let sessionGridCellCount = 0;
+    let sessionGridWorldCount = 0;
+    let sessionGridWorldCellCount = 0;
     const grids = [];
     const rngs = [];
     const gridWorlds = [];
@@ -111,6 +113,7 @@
     let usesV13 = false;
     let usesV14 = false;
     let usesV15 = false;
+    let usesV16 = false;
 
     function assertUnique(name) {
       if (Object.prototype.hasOwnProperty.call(stateValues, name) || Object.prototype.hasOwnProperty.call(inputValues, name)) {
@@ -122,7 +125,9 @@
       return value && (value[REF] === "player_state" || value[REF] === "player_input");
     }
 
-    function isSessionRef(value) { return value && value[REF] === "session_state"; }
+    function isSessionRef(value) {
+      return value && (value[REF] === "session_state" || (value[REF] === "grid_world_ready" && value.session !== null));
+    }
 
     function unwrapValue(value) {
       if (typeof value === "number") return finiteNumber(value, "value");
@@ -142,7 +147,15 @@
         if (activePlayerScope === null || value[PLAYER_SCOPE] !== activePlayerScope) fail("player input reference escaped its PlayerContext");
         return { playerInput: value.name };
       }
-      if (value && value[REF] === "grid_world_ready") return { gridWorldReady: value.name };
+      if (value && value[REF] === "grid_world_ready") {
+        if (value.session !== null) {
+          if (activeSessionScope === null || value[SESSION_SCOPE] !== activeSessionScope || value.session !== activeSessionId) {
+            fail("session grid-world ready reference escaped its SessionContext");
+          }
+          return { sessionGridWorldReady: { session: value.session, gridWorld: value.name } };
+        }
+        return { gridWorldReady: value.name };
+      }
       fail("value must be a number or portable scalar reference");
     }
 
@@ -380,7 +393,7 @@
       sessionTeams.add(setKey);
       const scope = ++nextSessionScope;
       const declarationIds = new Set();
-      const declaration = { id, players: serializedSet, state: Object.create(null), grids: [], rngs: [] };
+      const declaration = { id, players: serializedSet, state: Object.create(null), grids: [], rngs: [], gridWorlds: [] };
       sessions.push(declaration);
 
       function assertSessionActive(label) {
@@ -459,6 +472,43 @@
           },
         });
       }
+      function sessionGridWorld(gridWorldId, spec) {
+        assertSessionActive("session.gridWorld(...)");
+        localId(gridWorldId, "session gridWorld");
+        if (declaration.gridWorlds.length >= 4) fail("portable v16 supports at most 4 grid-world projections per session");
+        if (sessionGridWorldCount >= 16) fail("portable v16 supports at most 16 session grid-world projections total");
+        if (spec == null || typeof spec !== "object") fail("session gridWorld " + gridWorldId + " spec must be an object");
+        if (!spec.grid || spec.grid[GRID] !== true || spec.grid[SESSION_SCOPE] !== scope || spec.grid.session !== id) {
+          fail("session gridWorld " + gridWorldId + " grid must be returned by session.grid(...) from the same session");
+        }
+        if (!Array.isArray(spec.palette) || spec.palette.length < 1 || spec.palette.length > 8) fail("session gridWorld " + gridWorldId + " palette must contain 1..8 entries");
+        const palette = spec.palette.map((entry, index) => {
+          if (entry == null || typeof entry !== "object") fail("session gridWorld " + gridWorldId + " palette " + index + " must be an object");
+          if (typeof entry.block !== "string" || entry.block.length === 0) fail("session gridWorld " + gridWorldId + " palette " + index + " block must be a resource id string");
+          return { value: finiteNumber(entry.value, "session gridWorld " + gridWorldId + " palette " + index + " value"), block: entry.block };
+        });
+        const projectedCells = spec.grid.width * spec.grid.height;
+        if (sessionGridWorldCellCount + projectedCells > 16384) fail("portable v16 session grid-world projections exceed aggregate 16384 cells");
+        sessionGridWorldCellCount += projectedCells;
+        sessionGridWorldCount++;
+        const projection = {
+          id: gridWorldId, grid: spec.grid.id,
+          dimension: spec.dimension === undefined ? "minecraft:overworld" : spec.dimension,
+          originX: finiteInteger(spec.originX, "session gridWorld " + gridWorldId + " originX", -30000000, 30000000),
+          y: finiteInteger(spec.y, "session gridWorld " + gridWorldId + " y", -2048, 2048),
+          originZ: finiteInteger(spec.originZ, "session gridWorld " + gridWorldId + " originZ", -30000000, 30000000),
+          palette,
+          cellsPerTick: finiteInteger(spec.cellsPerTick === undefined ? 128 : spec.cellsPerTick, "session gridWorld " + gridWorldId + " cellsPerTick", 1, 256),
+        };
+        if (typeof projection.dimension !== "string" || projection.dimension.length === 0) fail("session gridWorld " + gridWorldId + " dimension must be a resource id string");
+        declaration.gridWorlds.push(projection);
+        usesV16 = true;
+        const ready = Object.freeze(comparable("grid_world_ready", gridWorldId, null, scope, id));
+        return Object.freeze({
+          [GRID_WORLD]: true, id: gridWorldId, ready, [SESSION_SCOPE]: scope, session: id,
+          rebuild() { assertSessionSharedMutation("session gridWorld.rebuild(...)"); emit({ op: "grid_world_rebuild", target: gridWorldId }); },
+        });
+      }
 
       const sessionContext = Object.freeze({
         id,
@@ -466,6 +516,7 @@
         state: sessionState,
         grid: sessionGrid,
         rng: sessionRng,
+        gridWorld: sessionGridWorld,
         forEachPlayer(playerCallback) { assertSessionActive("session.forEachPlayer(...)"); capturePlayerContext(set, playerCallback, "multi", "for_each_player", "session.forEachPlayer"); },
         forSinglePlayer(playerCallback) { assertSessionActive("session.forSinglePlayer(...)"); capturePlayerContext(set, playerCallback, "single", "for_single_player", "session.forSinglePlayer"); },
       });
@@ -764,7 +815,7 @@
     }
 
     function gridWorldDeclaration(id, spec) {
-      if (activeSessionScope !== null) fail("game.gridWorld(...) is global and is not available inside SessionContext in v15");
+      if (activeSessionScope !== null) fail("game.gridWorld(...) is global; use session.gridWorld(...) inside SessionContext in v16");
       assertV13Id(id, "gridWorld");
       if (gridWorlds.length >= 4) fail("portable v13 supports at most 4 grid-world projections");
       if (spec == null || typeof spec !== "object") fail("gridWorld " + id + " spec must be an object");
@@ -1095,14 +1146,18 @@
 
     const usesSpectateCamera = cameras.some(camera => camera.mode === "spectate");
     const spec = {
-      version: usesV15 ? 15 : (usesV14 ? 14 : (usesV13 ? 13 : (usesPlayerApi ? 12 : (usesSpectateCamera ? 11 : (ownership === null ? 9 : 10))))),
+      version: usesV16 ? 16 : (usesV15 ? 15 : (usesV14 ? 14 : (usesV13 ? 13 : (usesPlayerApi ? 12 : (usesSpectateCamera ? 11 : (ownership === null ? 9 : 10)))))),
       fixedPoint,
       state: stateValues,
       tick: tickActions,
     };
     if (Object.keys(inputValues).length > 0) spec.inputs = inputValues;
     if (playerTeams.size > 0) spec.playerSets = Array.from(playerTeams).sort().map(team => ({ team }));
-    if (sessions.length > 0) spec.sessions = sessions;
+    if (sessions.length > 0) spec.sessions = sessions.map(session => {
+      if (session.gridWorlds.length > 0) return session;
+      const { gridWorlds: _gridWorlds, ...legacySession } = session;
+      return legacySession;
+    });
     if (grids.length > 0) spec.grids = grids;
     if (rngs.length > 0) spec.rngs = rngs;
     if (usesPlayerApi) {

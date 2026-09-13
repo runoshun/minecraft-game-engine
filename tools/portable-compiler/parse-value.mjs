@@ -41,6 +41,16 @@ export function parseValue(value, ctx, path) {
     if (!ctx.gridWorlds.has(value.gridWorldReady)) fail(`${path} references unknown grid-world projection ${value.gridWorldReady}`);
     return { kind: "grid_world_ready", name: value.gridWorldReady };
   }
+  if (has(value, "sessionGridWorldReady")) {
+    if (ctx.version < 16) fail(`${path}.sessionGridWorldReady requires portable version 16`);
+    if (!isObject(value.sessionGridWorldReady)) fail(`${path}.sessionGridWorldReady must be an object`);
+    const session = requiredString(value.sessionGridWorldReady, "session", `${path}.sessionGridWorldReady`);
+    const name = requiredString(value.sessionGridWorldReady, "gridWorld", `${path}.sessionGridWorldReady`);
+    if (!ctx.sessionScope || ctx.sessionScope !== session) fail(`${path} uses session-local grid-world readiness outside its SessionContext`);
+    const declaration = ctx.sessions?.get(session);
+    if (!declaration || !declaration.gridWorlds.has(name)) fail(`${path} references unknown session grid-world projection ${session}.${name}`);
+    return { kind: "grid_world_ready", session, name };
+  }
   fail(`${path} must be a number or portable scalar reference`);
 }
 

@@ -56,6 +56,7 @@ export function main(argv = process.argv.slice(2)) {
   if (result.sessionStateCount) console.log(`  session states: ${result.sessionStateCount}`);
   if (result.sessionGridCount) console.log(`  session grids: ${result.sessionGridCount}`);
   if (result.sessionRngCount) console.log(`  session rngs: ${result.sessionRngCount}`);
+  if (result.sessionGridWorldCount) console.log(`  session grid worlds: ${result.sessionGridWorldCount}`);
   if (result.gridCount) console.log(`  grids: ${result.gridCount}`);
   if (result.rngCount) console.log(`  rngs: ${result.rngCount}`);
   if (result.gridWorldCount) console.log(`  grid worlds: ${result.gridWorldCount}`);

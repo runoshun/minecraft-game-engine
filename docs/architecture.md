@@ -209,7 +209,19 @@ Session-local references are lexical: they may not escape to global rules or ano
 
 Each session may reuse the same local scalar, Grid, and RNG names as another session because lowering qualifies holders/objectives by session slot. Session Grids keep the v13 per-grid bounds and are additionally subject to a bounded aggregate session-grid budget. `/reload` or generated-pack replacement resets every session to its declarations. An empty team does not delete/reset its logical session, and `portable/cleanup` removes compiler-owned session state while leaving external vanilla teams and membership untouched.
 
-V15 is logic isolation, not private world isolation. Existing `gridWorld`, block/entity projection, ownership regions, and vanilla sidebar remain global. Session-local grid-to-world projection, arena allocation/private scenes, dynamic matchmaking, session-local player state, cross-session reductions, and persistent saves are deliberately deferred.
+V15 is logic isolation, not private world isolation. Existing `gridWorld`, block/entity projection, ownership regions, and vanilla sidebar remain global. V16 adds the first session-local world boundary described below; automatic arena allocation/private scenes, dynamic matchmaking, session-local player state, cross-session reductions, and persistent saves remain deferred.
+
+## Session-local GridWorld projection v16
+
+ADR 0025 is the implemented and accepted v16 contract. V16 adds `session.gridWorld(id, spec)`, which projects a Grid declared by the same SessionContext into an explicit fixed block footprint. The API mirrors the v13 global GridWorld shape (`grid`, optional `dimension`, `originX`, `y`, `originZ`, `palette`, optional `cellsPerTick`) and exposes session-qualified `rebuild()` plus read-only `ready`. The same local Grid and GridWorld ids may be reused by another session because Grid objectives and projection ready/active/cursor holders are qualified by session slot.
+
+Every session GridWorld must lie completely inside the program's one declared `vanilla.ownership` rectangle and use that ownership dimension. This is the chunk-lifecycle boundary: the existing ownership startup force-loads the bounded rectangle, reaches staged `#ready=1`, and only then permits authored tick logic and session projections. V16 does not add transient per-session chunk leasing, per-session ownership rectangles, or automatic arena allocation.
+
+If either side is session-local, two GridWorld footprints may not overlap at the same dimension and Y level; session-vs-session and session-vs-global overlaps are compile-time errors. Existing global-vs-global semantics are unchanged for compatibility. Distinct footprints provide independent terrain state but are not visibility-private scenes.
+
+A session projection owns independent `ready`, `active`, and `cursor` state. After authored rules, each active session projection may advance one bounded `cellsPerTick` slice per tick, so one session does not consume another session's projection budget. The legacy global GridWorld scheduler is unchanged. `rebuild()` is a session-shared mutation: it is allowed at session scope and inside exact-cardinality `session.forSinglePlayer`, but rejected in multi-player `session.forEachPlayer`. `ready` is lexical and may not escape its SessionContext.
+
+V16 permits at most four GridWorld projections per session, sixteen session GridWorld projections in aggregate, and 16,384 aggregate projected session cells; `cellsPerTick` remains bounded to 1..256. Projected blocks are persistent world state: `/reload` deterministically resets/rebuilds them, while `portable/cleanup` removes generated objective/storage/force-load state but does not restore terrain.
 
 ## Current limitations
 
@@ -220,14 +232,22 @@ V15 is logic isolation, not private world isolation. Existing `gridWorld`, block
 - one server-global sidebar; v14 permits up to eight camera declarations only for disjoint external-team audiences;
 - bounded 2D logic collision only, not Minecraft hitbox queries or 3D/swept physics;
 - v8 world projection is compile-time declared and persistent; v13 additionally provides bounded incremental runtime grid projection, also persistent;
-- v15 adds independent team-bound logical sessions for shared scalar state, Grids, and RNG, but private/session-local world scenes, automatic arena allocation, dynamic matchmaking, independent per-player vanilla sidebars, persistent saves, and cross-player/session reductions are not implemented.
+- v15 adds independent team-bound logical sessions; v16 adds explicit session-local Grid-to-world footprints inside one shared ownership rectangle. Automatic arena allocation, per-session ownership/private visibility scenes, dynamic matchmaking, independent per-player vanilla sidebars, persistent saves, and cross-player/session reductions are not implemented.
 
 ## Validation baseline
 
-Portable v1-v15 compiler behavior is covered by the Node regression suite; generated v1-v15 milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
+Portable v1-v16 compiler behavior is covered by the Node regression suite; generated milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
 
 Node migration ADR 0021 additionally established byte-for-byte output parity with the retired Java compiler for representative v1, v9, v10, and v11 programs including Bounce, Pinball, Breakout, Presentation, UI, World, JRPG, and spectate-camera cases. Node compiler regression tests are now the maintained build-time acceptance suite.
 
+
+### v16 session GridWorld validation
+
+Portable v16 passed its mod-free Minecraft 26.1 acceptance on `second` using real clients `Camera` and `Camera2` in external teams `v16_red` and `v16_blue`. The checked-in `examples/portable-session-grid-world` pack deliberately reuses session-local Grid `map` and GridWorld `terrain` while projecting red at x=404..407 / z=4..7 / y=100 and blue at x=436..439 / z=4..7 / y=100 inside one ownership rectangle. Staged startup reached `#ready=1`, both session GridWorld ready values and session-local `readySeen` values reached `1000`, eight ownership chunks were force-loaded, and both 4 x 4 footprints initially contained 16 black-concrete blocks.
+
+With both clients online simultaneously, real A input from Camera changed only red `hits` from `0 -> 1000` and rebuilt red terrain to 15 black + one red block at `(404,100,4)`; blue remained `hits=0` with 16 black blocks. Real D input from Camera2 then changed only blue `hits` to `1000` and rebuilt blue terrain to 15 black + one blue block at `(436,100,4)` while red state remained unchanged. This validates same-name Grid/GridWorld qualification, lexical readiness, independent rebuild state, and distinct fixed footprints.
+
+`/reload` reset both hit counters to `0`, restored both readiness values to `1000`, returned both footprints to 16 black blocks, and preserved external team membership. Final `portable/cleanup` removed every scoreboard objective and all eight ownership force-loaded chunks while the teams still retained their members. Explicit teardown cleared all 32 persistent projected blocks, then removed the temporary teams and datapack; the final server state had zero objectives, zero force-loaded chunks, and zero teams. The Node regression suite was 19/19 green.
 
 ### v15 session-local logical-match validation
 
