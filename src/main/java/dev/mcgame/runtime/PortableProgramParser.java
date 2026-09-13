@@ -27,6 +27,7 @@ final class PortableProgramParser {
     private static final int MAX_HUD_TOKENS = 32;
     private static final int MAX_SIDEBARS = 1;
     private static final int MAX_SIDEBAR_ROWS = 15;
+    private static final int MAX_OWNERSHIP_CHUNKS = 64;
     private static final int MAX_ACTIONS = 2048;
     private static final int MAX_DEPTH = 16;
 
@@ -81,6 +82,7 @@ final class PortableProgramParser {
         List<PortableProgram.VanillaSoundEmitter> vanillaSounds = new ArrayList<>();
         List<PortableProgram.VanillaHud> vanillaHuds = new ArrayList<>();
         List<PortableProgram.VanillaSidebar> vanillaSidebars = new ArrayList<>();
+        PortableProgram.VanillaOwnershipRegion vanillaOwnership = null;
 
         if (spec.hasMember("vanilla")) {
             if (version < PortableProgram.VERSION_2) throw new IllegalArgumentException(api + ".vanilla requires portable version 2");
@@ -381,6 +383,24 @@ final class PortableProgramParser {
                 }
             }
 
+            if (vanilla.hasMember("ownership")) {
+                if (version < PortableProgram.VERSION_10) throw new IllegalArgumentException(api + ".vanilla.ownership requires portable version 10");
+                Value ownership = requiredObject(vanilla, "ownership", api + ".vanilla");
+                String path = api + ".vanilla.ownership";
+                String dimension = memberResource(ownership, "dimension", "minecraft:overworld", path);
+                int minX = requiredBoundedInteger(ownership, "minX", -30_000_000, 30_000_000, path);
+                int minZ = requiredBoundedInteger(ownership, "minZ", -30_000_000, 30_000_000, path);
+                int maxX = requiredBoundedInteger(ownership, "maxX", -30_000_000, 30_000_000, path);
+                int maxZ = requiredBoundedInteger(ownership, "maxZ", -30_000_000, 30_000_000, path);
+                if (minX > maxX || minZ > maxZ) throw new IllegalArgumentException(path + " requires minX <= maxX and minZ <= maxZ");
+                long chunkWidth = (long) Math.floorDiv(maxX, 16) - Math.floorDiv(minX, 16) + 1;
+                long chunkDepth = (long) Math.floorDiv(maxZ, 16) - Math.floorDiv(minZ, 16) + 1;
+                if (chunkWidth * chunkDepth > MAX_OWNERSHIP_CHUNKS) {
+                    throw new IllegalArgumentException(path + " exceeds max owned chunk count " + MAX_OWNERSHIP_CHUNKS);
+                }
+                vanillaOwnership = new PortableProgram.VanillaOwnershipRegion(dimension, minX, minZ, maxX, maxZ);
+            }
+
             if (vanilla.hasMember("sidebars")) {
                 if (version < PortableProgram.VERSION_9) throw new IllegalArgumentException(api + ".vanilla.sidebars requires portable version 9");
                 Value sidebars = requiredArray(vanilla, "sidebars", api + ".vanilla");
@@ -451,6 +471,7 @@ final class PortableProgramParser {
             vanillaSounds,
             vanillaHuds,
             vanillaSidebars,
+            vanillaOwnership,
             actions
         );
     }

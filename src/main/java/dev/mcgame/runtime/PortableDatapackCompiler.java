@@ -45,11 +45,11 @@ final class PortableDatapackCompiler {
         if (!NAMESPACE.matcher(namespace).matches()) {
             throw new IllegalArgumentException("portable namespace must match " + NAMESPACE.pattern());
         }
+        validateOwnershipCoverage(program);
         String objective = objectiveName(namespace);
-        CompileContext context = new CompileContext(namespace, objective, program.collisionDivisor());
+        CompileContext context = new CompileContext(namespace, objective, program);
         List<String> tick = new ArrayList<>();
 
-        compileVanillaCameraAttach(program, tick, context);
         compileVanillaInputs(program, tick, context);
         compileActions(program.tickActions(), tick, context);
         compileVanillaProjections(program, tick, context);
@@ -57,15 +57,18 @@ final class PortableDatapackCompiler {
         compileVanillaActorUpdates(program, tick, context);
         prepareVanillaWorldBatches(program, tick, context);
         compileVanillaCameraUpdates(program, tick, context);
+        compileVanillaCameraLock(program, tick, context);
         compileVanillaParticles(program, tick, context);
         compileVanillaSounds(program, tick, context);
         compileVanillaHuds(program, tick, context);
         compileVanillaSidebars(program, tick, context);
         if (tick.isEmpty()) tick.add("# no portable tick actions");
+        if (program.vanillaOwnership() != null) {
+            tick.add(0, "execute unless score #ready " + objective + " matches 1 run return 0");
+        }
 
         List<String> load = new ArrayList<>();
         load.add("scoreboard objectives add " + objective + " dummy");
-        if (!program.vanillaCameras().isEmpty()) load.add("scoreboard players set #enabled " + objective + " 1");
         for (Map.Entry<String, Integer> entry : program.initialState().entrySet()) {
             load.add("scoreboard players set " + stateHolder(entry.getKey()) + " " + objective + " " + entry.getValue());
         }
@@ -77,12 +80,29 @@ final class PortableDatapackCompiler {
             load.add("scoreboard players set " + entry.getValue() + " " + objective + " " + entry.getKey());
         }
         compileVanillaWorldBatchLoadCalls(program, load, context);
-        compileVanillaProjectionLoad(program, load, context);
-        compileVanillaTextLoad(program, load, context);
-        compileVanillaActorLoad(program, load, context);
-        compileVanillaCameraLoad(program, load, context);
-        compileVanillaParticleLoad(program, load, context);
-        compileVanillaSoundLoad(program, load, context);
+        if (program.vanillaOwnership() != null) {
+            PortableProgram.VanillaOwnershipRegion ownership = program.vanillaOwnership();
+            load.add("scoreboard players set #ready " + objective + " 0");
+            load.add(ownershipForceloadCommand(ownership, true));
+            List<String> ownedInit = new ArrayList<>();
+            ownedInit.add("execute in " + ownership.dimension() + " run kill @e[tag=" + ownerTag(context.namespace) + "]");
+            compileVanillaProjectionLoad(program, ownedInit, context);
+            compileVanillaTextLoad(program, ownedInit, context);
+            compileVanillaActorLoad(program, ownedInit, context);
+            compileVanillaCameraLoad(program, ownedInit, context);
+            compileVanillaParticleLoad(program, ownedInit, context);
+            compileVanillaSoundLoad(program, ownedInit, context);
+            ownedInit.add("scoreboard players set #ready " + objective + " 1");
+            context.functions.put("owned_init", ownedInit);
+            load.add("schedule function " + namespace + ":portable/owned_init 2t replace");
+        } else {
+            compileVanillaProjectionLoad(program, load, context);
+            compileVanillaTextLoad(program, load, context);
+            compileVanillaActorLoad(program, load, context);
+            compileVanillaCameraLoad(program, load, context);
+            compileVanillaParticleLoad(program, load, context);
+            compileVanillaSoundLoad(program, load, context);
+        }
         compileVanillaSidebarLoad(program, load, context);
 
         JsonObject pack = new JsonObject();
@@ -159,22 +179,6 @@ final class PortableDatapackCompiler {
         }
     }
 
-    private void compileVanillaCameraAttach(PortableProgram program, List<String> lines, CompileContext context) {
-        if (program.vanillaCameras().isEmpty()) return;
-        PortableProgram.VanillaCamera camera = program.vanillaCameras().getFirst();
-        String userTag = cameraUserTag(context.namespace);
-        String cameraTag = cameraTag(context.namespace, camera.id());
-        List<String> attach = List.of(
-            "tag @s add " + userTag,
-            "gamemode spectator @s",
-            "execute in " + camera.dimension() + " run spectate @e[type=minecraft:armor_stand,tag=" + cameraTag + ",limit=1] @s"
-        );
-        context.functions.put("camera_attach", attach);
-        lines.add("execute if score #enabled " + context.objective + " matches 1 unless entity @a[tag=" + userTag
-            + "] as @a[gamemode=!spectator,tag=!" + userTag + ",limit=1,sort=arbitrary] run function "
-            + context.namespace + ":portable/camera_attach");
-    }
-
     private void compileVanillaInputs(PortableProgram program, List<String> lines, CompileContext context) {
         String selector = controllerSelector(program, context);
         for (Map.Entry<String, PortableProgram.VanillaInputSource> entry : program.vanillaInputs().entrySet()) {
@@ -196,7 +200,6 @@ final class PortableDatapackCompiler {
     }
 
     private static String controllerSelector(PortableProgram program, CompileContext context) {
-        if (!program.vanillaCameras().isEmpty()) return "@a[tag=" + cameraUserTag(context.namespace) + ",limit=1]";
         return "@a[gamemode=!spectator,limit=1,sort=arbitrary]";
     }
 
@@ -221,11 +224,11 @@ final class PortableDatapackCompiler {
             double z = logicalCoordinate(program, projection.z());
             int chunkBlockX = (int) Math.floor(x);
             int chunkBlockZ = (int) Math.floor(z);
-            lines.add("execute in " + projection.dimension() + " run forceload add " + chunkBlockX + " " + chunkBlockZ);
+            if (program.vanillaOwnership() == null) lines.add("execute in " + projection.dimension() + " run forceload add " + chunkBlockX + " " + chunkBlockZ);
             lines.add("execute in " + projection.dimension() + " run kill @e[tag=" + tag + "]");
             PortableProgram.VanillaVec3 scale = projection.scale();
             PortableProgram.VanillaVec3 translation = projection.translation();
-            String snbt = "{Tags:[\"" + tag + "\"],block_state:{Name:\"" + projection.block() + "\"},transformation:{"
+            String snbt = "{" + entityTagsSnbt(context, tag) + ",block_state:{Name:\"" + projection.block() + "\"},transformation:{"
                 + "translation:[" + floatLiteral(translation.x()) + "," + floatLiteral(translation.y()) + "," + floatLiteral(translation.z()) + "],"
                 + "left_rotation:[0f,0f,0f,1f],"
                 + "scale:[" + floatLiteral(scale.x()) + "," + floatLiteral(scale.y()) + "," + floatLiteral(scale.z()) + "],"
@@ -234,7 +237,7 @@ final class PortableDatapackCompiler {
                 "execute in %s run summon minecraft:block_display %.6f %.6f %.6f %s",
                 projection.dimension(), x, y, z, snbt));
             compileVisibility(projection.dimension(), tag, projection.scale(), projection.condition(), lines, context);
-            lines.add("execute in " + projection.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
+            if (program.vanillaOwnership() == null) lines.add("execute in " + projection.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
         }
     }
 
@@ -248,17 +251,17 @@ final class PortableDatapackCompiler {
             int chunkBlockZ = (int) Math.floor(z);
             PortableProgram.VanillaVec3 scale = text.scale();
             prepareTextValues(program, text, lines, context);
-            String snbt = "{Tags:[\"" + tag + "\"],text:" + textComponentSnbt(text, context)
+            String snbt = "{" + entityTagsSnbt(context, tag) + ",text:" + textComponentSnbt(text, context)
                 + ",billboard:\"" + text.billboard() + "\",transformation:{translation:[0f,0f,0f],left_rotation:[0f,0f,0f,1f],scale:["
                 + floatLiteral(scale.x()) + "," + floatLiteral(scale.y()) + "," + floatLiteral(scale.z())
                 + "],right_rotation:[0f,0f,0f,1f]}}";
-            lines.add("execute in " + text.dimension() + " run forceload add " + chunkBlockX + " " + chunkBlockZ);
+            if (program.vanillaOwnership() == null) lines.add("execute in " + text.dimension() + " run forceload add " + chunkBlockX + " " + chunkBlockZ);
             lines.add("execute in " + text.dimension() + " run kill @e[tag=" + tag + "]");
             lines.add(String.format(Locale.ROOT,
                 "execute in %s run summon minecraft:text_display %.6f %.6f %.6f %s",
                 text.dimension(), x, y, z, snbt));
             compileVisibility(text.dimension(), tag, text.scale(), text.condition(), lines, context);
-            lines.add("execute in " + text.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
+            if (program.vanillaOwnership() == null) lines.add("execute in " + text.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
         }
     }
 
@@ -270,7 +273,7 @@ final class PortableDatapackCompiler {
             int chunkBlockX = (int) Math.floor(x);
             int chunkBlockZ = (int) Math.floor(z);
             ensureActorSpawnFunction(program, actor, context);
-            lines.add("execute in " + actor.dimension() + " run forceload add " + chunkBlockX + " " + chunkBlockZ);
+            if (program.vanillaOwnership() == null) lines.add("execute in " + actor.dimension() + " run forceload add " + chunkBlockX + " " + chunkBlockZ);
             lines.add("execute in " + actor.dimension() + " run kill @e[tag=" + tag + "]");
             String spawnFunction = context.namespace + ":portable/actor_" + actor.id() + "_spawn";
             if (actor.condition() == null) {
@@ -278,7 +281,7 @@ final class PortableDatapackCompiler {
             } else {
                 lines.add("execute " + condition(actor.condition(), true, context) + " run function " + spawnFunction);
             }
-            lines.add("execute in " + actor.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
+            if (program.vanillaOwnership() == null) lines.add("execute in " + actor.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
         }
     }
 
@@ -293,9 +296,9 @@ final class PortableDatapackCompiler {
         int chunkBlockX = (int) Math.floor(x);
         int chunkBlockZ = (int) Math.floor(z);
         List<String> body = new ArrayList<>();
-        body.add("execute in " + actor.dimension() + " run forceload add " + chunkBlockX + " " + chunkBlockZ);
-        String snbt = String.format(Locale.ROOT,
-            "{Tags:[\"%s\"],NoGravity:1b,Invulnerable:1b,Silent:1b,Rotation:[%.3ff,0f]}", tag, yaw);
+        if (program.vanillaOwnership() == null) body.add("execute in " + actor.dimension() + " run forceload add " + chunkBlockX + " " + chunkBlockZ);
+        String snbt = "{" + entityTagsSnbt(context, tag) + String.format(Locale.ROOT,
+            ",NoGravity:1b,Invulnerable:1b,Silent:1b,Rotation:[%.3ff,0f]}", yaw);
         body.add(String.format(Locale.ROOT,
             "execute in %s run summon minecraft:mannequin %.6f %.6f %.6f %s", actor.dimension(), x, y, z, snbt));
         String headItem = switch (actor.entityType()) {
@@ -306,7 +309,7 @@ final class PortableDatapackCompiler {
         if (headItem != null) {
             body.add("execute in " + actor.dimension() + " run item replace entity @e[tag=" + tag + ",limit=1] armor.head with " + headItem);
         }
-        body.add("execute in " + actor.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
+        if (program.vanillaOwnership() == null) body.add("execute in " + actor.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
         context.functions.put(function, body);
     }
 
@@ -363,15 +366,15 @@ final class PortableDatapackCompiler {
             double z = logicalCoordinate(program, camera.z());
             int chunkBlockX = (int) Math.floor(x);
             int chunkBlockZ = (int) Math.floor(z);
-            lines.add("execute in " + camera.dimension() + " run forceload add " + chunkBlockX + " " + chunkBlockZ);
+            if (program.vanillaOwnership() == null) lines.add("execute in " + camera.dimension() + " run forceload add " + chunkBlockX + " " + chunkBlockZ);
             lines.add("execute in " + camera.dimension() + " run kill @e[tag=" + tag + "]");
-            String snbt = String.format(Locale.ROOT,
-                "{Tags:[\"%s\"],Invisible:1b,Invulnerable:1b,NoGravity:1b,Marker:1b,Rotation:[%.3ff,%.3ff]}",
-                tag, camera.yaw(), camera.pitch());
+            String snbt = "{" + entityTagsSnbt(context, tag) + String.format(Locale.ROOT,
+                ",Invisible:1b,Invulnerable:1b,NoGravity:1b,Marker:1b,Rotation:[%.3ff,%.3ff]}",
+                camera.yaw(), camera.pitch());
             lines.add(String.format(Locale.ROOT,
                 "execute in %s run summon minecraft:armor_stand %.6f %.6f %.6f %s",
                 camera.dimension(), x, y, z, snbt));
-            lines.add("execute in " + camera.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
+            if (program.vanillaOwnership() == null) lines.add("execute in " + camera.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
         }
     }
 
@@ -384,12 +387,12 @@ final class PortableDatapackCompiler {
             double z = logicalCoordinate(program, emitter.z());
             int chunkBlockX = (int) Math.floor(x);
             int chunkBlockZ = (int) Math.floor(z);
-            lines.add("execute in " + emitter.dimension() + " run forceload add " + chunkBlockX + " " + chunkBlockZ);
+            if (program.vanillaOwnership() == null) lines.add("execute in " + emitter.dimension() + " run forceload add " + chunkBlockX + " " + chunkBlockZ);
             lines.add("execute in " + emitter.dimension() + " run kill @e[tag=" + tag + "]");
             lines.add(String.format(Locale.ROOT,
-                "execute in %s run summon minecraft:marker %.6f %.6f %.6f {Tags:[\"%s\"]}",
-                emitter.dimension(), x, y, z, tag));
-            lines.add("execute in " + emitter.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
+                "execute in %s run summon minecraft:marker %.6f %.6f %.6f {%s}",
+                emitter.dimension(), x, y, z, entityTagsSnbt(context, tag)));
+            if (program.vanillaOwnership() == null) lines.add("execute in " + emitter.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
         }
     }
 
@@ -402,12 +405,12 @@ final class PortableDatapackCompiler {
             double z = logicalCoordinate(program, emitter.z());
             int chunkBlockX = (int) Math.floor(x);
             int chunkBlockZ = (int) Math.floor(z);
-            lines.add("execute in " + emitter.dimension() + " run forceload add " + chunkBlockX + " " + chunkBlockZ);
+            if (program.vanillaOwnership() == null) lines.add("execute in " + emitter.dimension() + " run forceload add " + chunkBlockX + " " + chunkBlockZ);
             lines.add("execute in " + emitter.dimension() + " run kill @e[tag=" + tag + "]");
             lines.add(String.format(Locale.ROOT,
-                "execute in %s run summon minecraft:marker %.6f %.6f %.6f {Tags:[\"%s\"]}",
-                emitter.dimension(), x, y, z, tag));
-            lines.add("execute in " + emitter.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
+                "execute in %s run summon minecraft:marker %.6f %.6f %.6f {%s}",
+                emitter.dimension(), x, y, z, entityTagsSnbt(context, tag)));
+            if (program.vanillaOwnership() == null) lines.add("execute in " + emitter.dimension() + " run forceload remove " + chunkBlockX + " " + chunkBlockZ);
         }
     }
 
@@ -416,12 +419,17 @@ final class PortableDatapackCompiler {
         if (!program.vanillaHuds().isEmpty()) {
             lines.add("execute as " + controllerSelector(program, context) + " run title @s actionbar {\"text\":\"\"}");
         }
-        if (!program.vanillaCameras().isEmpty()) {
-            lines.add("scoreboard players set #enabled " + context.objective + " 0");
-            String userTag = cameraUserTag(context.namespace);
-            lines.add("execute as @a[tag=" + userTag + "] run spectate");
-            lines.add("gamemode adventure @a[tag=" + userTag + "]");
-            lines.add("tag @a[tag=" + userTag + "] remove " + userTag);
+        if (program.vanillaOwnership() != null) {
+            PortableProgram.VanillaOwnershipRegion ownership = program.vanillaOwnership();
+            lines.add("schedule clear " + context.namespace + ":portable/owned_init");
+            lines.add("scoreboard players set #ready " + context.objective + " 0");
+            lines.add("execute in " + ownership.dimension() + " run kill @e[tag=" + ownerTag(context.namespace) + "]");
+            if (!program.vanillaSidebars().isEmpty()) {
+                lines.add("scoreboard objectives remove " + sidebarObjectiveName(context.namespace));
+            }
+            lines.add(ownershipForceloadCommand(ownership, false));
+            lines.add("scoreboard objectives remove " + context.objective);
+            return lines;
         }
         for (PortableProgram.VanillaBlockProjection projection : program.vanillaProjections()) {
             appendEntityCleanup(lines, program, projection.dimension(), projectionTag(context.namespace, projection.id()), projection.x(), projection.z());
@@ -579,6 +587,15 @@ final class PortableDatapackCompiler {
         }
     }
 
+
+    private void compileVanillaCameraLock(PortableProgram program, List<String> lines, CompileContext context) {
+        if (program.vanillaCameras().isEmpty()) return;
+        PortableProgram.VanillaCamera camera = program.vanillaCameras().getFirst();
+        String tag = cameraTag(context.namespace, camera.id());
+        lines.add("execute as " + controllerSelector(program, context) + " in " + camera.dimension()
+            + " if entity @e[type=minecraft:armor_stand,tag=" + tag + ",limit=1] run teleport @s @e[type=minecraft:armor_stand,tag=" + tag + ",limit=1]");
+    }
+
     private void compileVanillaParticles(PortableProgram program, List<String> lines, CompileContext context) {
         String storeScale = storeScale(program.fixedPoint());
         for (PortableProgram.VanillaParticleEmitter emitter : program.vanillaParticles()) {
@@ -726,10 +743,25 @@ final class PortableDatapackCompiler {
     ) {
         if (!coordinate.dynamic()) return;
         String sourceHolder = stateHolder(coordinate.state());
-        if (coordinate.baseRaw() != 0) {
+        PortableProgram.VanillaOwnershipRegion ownership = context.program.vanillaOwnership();
+        boolean clampOwnership = ownership != null && ownership.dimension().equals(dimension)
+            && (nbtPath.equals("Pos[0]") || nbtPath.equals("Pos[2]"));
+        if (coordinate.baseRaw() != 0 || clampOwnership) {
             String temp = context.nextProjectionTemp();
             lines.add("scoreboard players operation " + temp + " " + context.objective + " = " + sourceHolder + " " + context.objective);
-            lines.add("scoreboard players operation " + temp + " " + context.objective + " += " + context.constantHolder(coordinate.baseRaw()) + " " + context.objective);
+            if (coordinate.baseRaw() != 0) {
+                lines.add("scoreboard players operation " + temp + " " + context.objective + " += " + context.constantHolder(coordinate.baseRaw()) + " " + context.objective);
+            }
+            if (clampOwnership) {
+                int minRaw = context.program.scale(nbtPath.equals("Pos[0]") ? ownership.minX() : ownership.minZ());
+                int maxRaw = context.program.scale(nbtPath.equals("Pos[0]") ? ownership.maxX() : ownership.maxZ());
+                String minHolder = context.constantHolder(minRaw);
+                String maxHolder = context.constantHolder(maxRaw);
+                lines.add("execute if score " + temp + " " + context.objective + " < " + minHolder + " " + context.objective
+                    + " run scoreboard players operation " + temp + " " + context.objective + " = " + minHolder + " " + context.objective);
+                lines.add("execute if score " + temp + " " + context.objective + " > " + maxHolder + " " + context.objective
+                    + " run scoreboard players operation " + temp + " " + context.objective + " = " + maxHolder + " " + context.objective);
+            }
             sourceHolder = temp;
         }
         lines.add("execute in " + dimension + " store result entity @e[tag=" + tag + ",limit=1] " + nbtPath
@@ -783,9 +815,7 @@ final class PortableDatapackCompiler {
         return "mcg_c_" + Integer.toUnsignedString(namespace.hashCode(), 36) + "_" + id;
     }
 
-    private static String cameraUserTag(String namespace) {
-        return "mcg_cu_" + Integer.toUnsignedString(namespace.hashCode(), 36);
-    }
+
 
     private static String particleTag(String namespace, String id) {
         return "mcg_p_" + Integer.toUnsignedString(namespace.hashCode(), 36) + "_" + id;
@@ -1121,6 +1151,65 @@ final class PortableDatapackCompiler {
         };
     }
 
+    private static String entityTagsSnbt(CompileContext context, String specificTag) {
+        if (context.program.vanillaOwnership() == null) return "Tags:[\"" + specificTag + "\"]";
+        return "Tags:[\"" + specificTag + "\",\"" + ownerTag(context.namespace) + "\"]";
+    }
+
+    private static String ownerTag(String namespace) {
+        return "mcg_o_" + Integer.toUnsignedString(namespace.hashCode(), 36);
+    }
+
+    private static String ownershipForceloadCommand(PortableProgram.VanillaOwnershipRegion ownership, boolean add) {
+        return "execute in " + ownership.dimension() + " run forceload " + (add ? "add " : "remove ")
+            + ownership.minX() + " " + ownership.minZ() + " " + ownership.maxX() + " " + ownership.maxZ();
+    }
+
+    private static void validateOwnershipCoverage(PortableProgram program) {
+        PortableProgram.VanillaOwnershipRegion ownership = program.vanillaOwnership();
+        if (ownership == null) return;
+        for (PortableProgram.VanillaBlockProjection projection : program.vanillaProjections()) {
+            validateOwnedPoint(program, ownership, projection.dimension(), projection.x(), projection.z(), "projection " + projection.id());
+        }
+        for (PortableProgram.VanillaTextProjection text : program.vanillaTexts()) {
+            validateOwnedPoint(program, ownership, text.dimension(), text.x(), text.z(), "text " + text.id());
+        }
+        for (PortableProgram.VanillaActorProjection actor : program.vanillaActors()) {
+            validateOwnedPoint(program, ownership, actor.dimension(), actor.x(), actor.z(), "actor " + actor.id());
+        }
+        for (PortableProgram.VanillaCamera camera : program.vanillaCameras()) {
+            validateOwnedPoint(program, ownership, camera.dimension(), camera.x(), camera.z(), "camera " + camera.id());
+        }
+        for (PortableProgram.VanillaParticleEmitter emitter : program.vanillaParticles()) {
+            if (dynamic(emitter.x(), emitter.y(), emitter.z())) {
+                validateOwnedPoint(program, ownership, emitter.dimension(), emitter.x(), emitter.z(), "particle " + emitter.id());
+            }
+        }
+        for (PortableProgram.VanillaSoundEmitter emitter : program.vanillaSounds()) {
+            if (dynamic(emitter.x(), emitter.y(), emitter.z())) {
+                validateOwnedPoint(program, ownership, emitter.dimension(), emitter.x(), emitter.z(), "sound " + emitter.id());
+            }
+        }
+    }
+
+    private static void validateOwnedPoint(
+        PortableProgram program,
+        PortableProgram.VanillaOwnershipRegion ownership,
+        String dimension,
+        PortableProgram.VanillaCoordinate x,
+        PortableProgram.VanillaCoordinate z,
+        String label
+    ) {
+        if (!ownership.dimension().equals(dimension)) {
+            throw new IllegalArgumentException(label + " dimension is outside portable ownership region: " + dimension);
+        }
+        double initialX = logicalCoordinate(program, x);
+        double initialZ = logicalCoordinate(program, z);
+        if (initialX < ownership.minX() || initialX > ownership.maxX() || initialZ < ownership.minZ() || initialZ > ownership.maxZ()) {
+            throw new IllegalArgumentException(label + " initial position is outside portable ownership region");
+        }
+    }
+
     private static String stateHolder(String state) { return "#" + state; }
     private static String inputHolder(String input) { return "#in_" + input; }
     private static String objectiveName(String namespace) { return String.format(Locale.ROOT, "mcg%08x", namespace.hashCode()); }
@@ -1143,6 +1232,7 @@ final class PortableDatapackCompiler {
     private static final class CompileContext {
         final String namespace;
         final String objective;
+        final PortableProgram program;
         final int fixedPointDivisor;
         final Map<Integer, String> constantHolders = new LinkedHashMap<>();
         final Map<String, String> textValueHolders = new LinkedHashMap<>();
@@ -1157,10 +1247,11 @@ final class PortableDatapackCompiler {
         int nextCollisionTemp;
         boolean usesNegate;
 
-        CompileContext(String namespace, String objective, int fixedPointDivisor) {
+        CompileContext(String namespace, String objective, PortableProgram program) {
             this.namespace = namespace;
             this.objective = objective;
-            this.fixedPointDivisor = fixedPointDivisor;
+            this.program = program;
+            this.fixedPointDivisor = program.collisionDivisor();
         }
 
         String constantHolder(int raw) {

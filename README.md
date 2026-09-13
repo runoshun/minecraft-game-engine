@@ -10,7 +10,7 @@ Verified against Minecraft 26.1:
 
 - `portableDsl(...)` TypeScript lowers to versioned Portable IR at build time
 - generated datapacks run on a mod-free vanilla server
-- held input, spectator camera, block/text displays, particles, sound, actionbar HUD, fixed-point state, AABB collision, circle/circle collision, static segment/capsule collision, trigger zones, two-pose flippers, bounded mannequin/zombie/skeleton actor projections, state-backed world-text tokens, bounded compile-time world batches/fills, and conditional projection visibility are supported by the vanilla backend
+- held input, fixed camera, bounded v10 generated-entity ownership, block/text displays, particles, sound, actionbar HUD, fixed-point state, AABB collision, circle/circle collision, static segment/capsule collision, trigger zones, two-pose flippers, bounded mannequin/zombie/skeleton actor projections, state-backed world-text tokens, bounded compile-time world batches/fills, and conditional projection visibility are supported by the vanilla backend
 - compile-time `repeat(...)` expands bounded static object fields such as brick grids
 - the optional Fabric backend still executes the same portable declarations for development and compatibility
 
@@ -75,7 +75,7 @@ A minimal example lives under [`examples/demo-datapack`](examples/demo-datapack)
 
 ## Current API
 
-- `portableDsl(...)` (primary TS authoring frontend; portable v9 adds a bounded vanilla sidebar and formalizes held-input edge actions on top of v8 world projection)
+- `portableDsl(...)` (primary TS authoring frontend; portable v10 adds bounded generated-entity ownership/reload semantics on top of the v9 sidebar/input slice)
 - `portable.define(spec)` / `portable.get(state)` / `portable.raw(state)` / input register access (low-level portable API)
 - `game.onStart(callback)` / `game.onBeforeTick(callback)` / `game.onTick(callback)`
 - `game.log(...values)`
@@ -105,7 +105,7 @@ Requires Java 25.
 ./gradlew build
 ```
 
-The primary deployment path compiles supported portable DSL programs to standalone vanilla datapacks. The current v9 backend supports normal held player input (W/A/S/D, jump, sneak, sprint), state-authored rising-edge actions, block/text-display projections with optional state-controlled visibility, one spectator camera, bounded particle/sound emitters, one actionbar HUD, one bounded 15-row vanilla sidebar, deterministic 2D AABB and circle/circle collision, static segment/capsule collision, center-point trigger zones, two-pose flippers, bounded mannequin/zombie/skeleton actor projections, state-backed world-text tokens, bounded compile-time world batches/fills, and compile-time static collection expansion in addition to fixed-point game logic:
+The primary deployment path compiles supported portable DSL programs to standalone vanilla datapacks. The current v10 backend supports normal held player input (W/A/S/D, jump, sneak, sprint), state-authored rising-edge actions, block/text-display projections with optional state-controlled visibility, one fixed player-position camera, bounded particle/sound emitters, one actionbar HUD, one bounded 15-row vanilla sidebar, deterministic 2D AABB and circle/circle collision, static segment/capsule collision, center-point trigger zones, two-pose flippers, bounded mannequin/zombie/skeleton actor projections, state-backed world-text tokens, bounded compile-time world batches/fills, and compile-time static collection expansion in addition to fixed-point game logic:
 
 ```bash
 ./gradlew compilePortable \
@@ -114,7 +114,7 @@ The primary deployment path compiles supported portable DSL programs to standalo
   -PportableOutput=build/portable/portable_breakout
 ```
 
-The reference Breakout uses A/D to move, Space to launch, a compile-time-expanded brick field with per-brick alive state/AABB/conditional Display visibility, lives and scoring, a generated fixed camera, world-space title, actionbar HUD, particles, and sound. On a vanilla target the compiler emits player-input predicates, scoreboard/mcfunction logic, owned display/camera/marker entities, `particle`/`playsound`, and actionbar commands; the TypeScript source itself is not shipped or executed.
+The reference Breakout uses A/D to move, Space to launch, a compile-time-expanded brick field with per-brick alive state/AABB/conditional Display visibility, lives and scoring, a generated fixed camera, world-space title, actionbar HUD, particles, and sound. Its v10 declaration also reserves a bounded ownership rectangle so generated Displays/camera/effect anchors have deterministic delayed reload and cleanup semantics without mutating persistent player gamemode or tags. On a vanilla target the compiler emits player-input predicates, scoreboard/mcfunction logic, owned display/camera/marker entities, `particle`/`playsound`, and actionbar commands; the TypeScript source itself is not shipped or executed.
 
 The Fabric server mod is still emitted locally to `build/libs/mc-game-runtime-<version>.jar` as an optional development/compatibility backend. ADR 0013 defines the conditions for retiring it.
 

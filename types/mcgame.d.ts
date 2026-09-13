@@ -220,6 +220,7 @@ type PortableHudToken = { text: string } | { value: PortableValue };
 type PortableVanillaHud = { id: string; tokens: PortableHudToken[] };
 type PortableVanillaSidebarRow = { id: string; tokens: PortableHudToken[] };
 type PortableVanillaSidebar = { id: string; title: string; rows: PortableVanillaSidebarRow[] };
+type PortableVanillaOwnershipRegion = { dimension?: string; minX: number; minZ: number; maxX: number; maxZ: number };
 type PortableProgramSpecV2 = {
   version: 2;
   fixedPoint?: number;
@@ -308,7 +309,15 @@ type PortableProgramSpecV9 = {
   vanilla?: PortableProgramSpecV8["vanilla"] & { sidebars?: PortableVanillaSidebar[] };
   tick: PortableAction[];
 };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9;
+type PortableProgramSpecV10 = {
+  version: 10;
+  fixedPoint?: number;
+  state: Record<string, number>;
+  inputs?: Record<string, number>;
+  vanilla?: PortableProgramSpecV9["vanilla"] & { ownership?: PortableVanillaOwnershipRegion };
+  tick: PortableAction[];
+};
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -464,7 +473,7 @@ type PortableDsl = {
 };
 
 declare function portableDsl(build: (game: PortableDsl) => void): void;
-declare function portableDsl(options: { fixedPoint?: number }, build: (game: PortableDsl) => void): void;
+declare function portableDsl(options: { fixedPoint?: number; ownership?: PortableVanillaOwnershipRegion }, build: (game: PortableDsl) => void): void;
 
 declare const game: {
   onStart(callback: () => void): void;

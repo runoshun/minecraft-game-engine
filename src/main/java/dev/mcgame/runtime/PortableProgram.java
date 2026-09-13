@@ -15,7 +15,8 @@ final class PortableProgram {
     static final int VERSION_7 = 7;
     static final int VERSION_8 = 8;
     static final int VERSION_9 = 9;
-    static final int CURRENT_VERSION = VERSION_9;
+    static final int VERSION_10 = 10;
+    static final int CURRENT_VERSION = VERSION_10;
 
     sealed interface ValueRef permits StateValue, InputValue, ConstantValue {}
     record StateValue(String name) implements ValueRef {}
@@ -46,6 +47,8 @@ final class PortableProgram {
     }
 
     record VanillaVec3(double x, double y, double z) {}
+
+    record VanillaOwnershipRegion(String dimension, int minX, int minZ, int maxX, int maxZ) {}
 
     record VanillaBlockProjection(
         String id,
@@ -197,6 +200,7 @@ final class PortableProgram {
     private final List<VanillaSoundEmitter> vanillaSounds;
     private final List<VanillaHud> vanillaHuds;
     private final List<VanillaSidebar> vanillaSidebars;
+    private final VanillaOwnershipRegion vanillaOwnership;
     private final List<Action> tickActions;
 
     PortableProgram(
@@ -214,6 +218,7 @@ final class PortableProgram {
         List<VanillaSoundEmitter> vanillaSounds,
         List<VanillaHud> vanillaHuds,
         List<VanillaSidebar> vanillaSidebars,
+        VanillaOwnershipRegion vanillaOwnership,
         List<Action> tickActions
     ) {
         if (version < VERSION_1 || version > CURRENT_VERSION) {
@@ -236,6 +241,7 @@ final class PortableProgram {
         this.vanillaSounds = List.copyOf(vanillaSounds);
         this.vanillaHuds = List.copyOf(vanillaHuds);
         this.vanillaSidebars = List.copyOf(vanillaSidebars);
+        this.vanillaOwnership = vanillaOwnership;
         this.tickActions = List.copyOf(tickActions);
     }
 
@@ -253,6 +259,7 @@ final class PortableProgram {
     List<VanillaSoundEmitter> vanillaSounds() { return vanillaSounds; }
     List<VanillaHud> vanillaHuds() { return vanillaHuds; }
     List<VanillaSidebar> vanillaSidebars() { return vanillaSidebars; }
+    VanillaOwnershipRegion vanillaOwnership() { return vanillaOwnership; }
     List<Action> tickActions() { return tickActions; }
 
     double logicalValue(int raw) {

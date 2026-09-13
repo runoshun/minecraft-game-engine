@@ -214,12 +214,12 @@ class PortableCompilerTest {
         assertTrue(load.contains("summon minecraft:armor_stand"));
         assertTrue(load.contains("summon minecraft:marker"));
 
-        String attach = Files.readString(output.resolve("data/portable_v3/function/portable/camera_attach.mcfunction"));
-        assertTrue(attach.contains("gamemode spectator @s"));
-        assertTrue(attach.contains("spectate @e[type=minecraft:armor_stand"));
+        assertFalse(Files.exists(output.resolve("data/portable_v3/function/portable/camera_attach.mcfunction")));
 
         String tick = Files.readString(output.resolve("data/portable_v3/function/portable/tick.mcfunction"));
-        assertTrue(tick.contains("if score #enabled " + result.objective() + " matches 1"));
+        assertTrue(tick.contains("run teleport @s @e[type=minecraft:armor_stand,tag=mcg_c_"));
+        assertFalse(tick.contains("gamemode spectator"));
+        assertFalse(tick.contains("spectate @e"));
         assertTrue(tick.contains("if predicate portable_v3:portable/input/left"));
         assertTrue(tick.contains("if predicate portable_v3:portable/input/jump"));
         assertTrue(tick.contains("particle minecraft:end_rod"));
@@ -227,8 +227,8 @@ class PortableCompilerTest {
         assertTrue(tick.contains("Pos[0] double 0.001"));
 
         String cleanup = Files.readString(output.resolve("data/portable_v3/function/portable/cleanup.mcfunction"));
-        assertTrue(cleanup.contains("run spectate"));
-        assertTrue(cleanup.contains("gamemode adventure"));
+        assertFalse(cleanup.contains("spectate"));
+        assertFalse(cleanup.contains("gamemode adventure"));
     }
 
 
@@ -592,6 +592,53 @@ class PortableCompilerTest {
         assertTrue(tick.contains("SELECT "));
         assertTrue(tick.contains("\"score\":{\"name\""));
         assertTrue(cleanup.contains("scoreboard objectives remove mcgu"));
+    }
+
+    @Test
+    void versionTenOwnershipStagesOwnedEntitiesAndAvoidsPersistentPlayerCameraState() throws Exception {
+        String source = """
+            portableDsl({
+              fixedPoint: 1000,
+              ownership: { minX: 32, minZ: -16, maxX: 48, maxZ: 16 }
+            }, game => {
+              const x = game.state("x", 0);
+              const left = game.input("left", 0, { source: "first_player_left" });
+              game.block("mover", {
+                block: "minecraft:sea_lantern",
+                x: game.at(x, 40), y: 80, z: 0
+              });
+              game.camera("main", { x: 40, y: 84, z: -12, yaw: 0, pitch: 10 });
+              game.tick(() => {
+                game.when(left.eq(1), () => x.sub(40));
+              });
+            });
+            """;
+
+        PortableProgram program = extract(source);
+        assertEquals(10, program.version());
+        assertTrue(program.vanillaOwnership() != null);
+        assertEquals(32, program.vanillaOwnership().minX());
+
+        Path output = Files.createTempDirectory("mcgame-portable-v10-ownership-test");
+        new PortableDatapackCompiler().compile(program, "portable_v10_life", output);
+        String load = Files.readString(output.resolve("data/portable_v10_life/function/portable/load.mcfunction"));
+        String init = Files.readString(output.resolve("data/portable_v10_life/function/portable/owned_init.mcfunction"));
+        String tick = Files.readString(output.resolve("data/portable_v10_life/function/portable/tick.mcfunction"));
+        String cleanup = Files.readString(output.resolve("data/portable_v10_life/function/portable/cleanup.mcfunction"));
+
+        assertTrue(load.contains("forceload add 32 -16 48 16"));
+        assertTrue(load.contains("schedule function portable_v10_life:portable/owned_init 2t replace"));
+        assertTrue(init.contains("kill @e[tag=mcg_o_"));
+        assertTrue(init.contains("summon minecraft:block_display"));
+        assertTrue(init.contains("scoreboard players set #ready"));
+        assertTrue(tick.startsWith("execute unless score #ready"));
+        assertTrue(tick.contains("run teleport @s @e[type=minecraft:armor_stand"));
+        assertTrue(tick.contains("matches" ) || tick.contains("scoreboard players operation"));
+        assertFalse(tick.contains("gamemode spectator"));
+        assertFalse(tick.contains("spectate"));
+        assertTrue(cleanup.contains("kill @e[tag=mcg_o_"));
+        assertTrue(cleanup.contains("forceload remove 32 -16 48 16"));
+        assertFalse(cleanup.contains("gamemode adventure"));
     }
 
     @Test

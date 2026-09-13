@@ -49,6 +49,24 @@
     if (typeof build !== "function") fail("build callback is required");
 
     const fixedPoint = options.fixedPoint === undefined ? 1000 : finiteNumber(options.fixedPoint, "fixedPoint");
+    let ownership = null;
+    if (options.ownership !== undefined) {
+      const value = options.ownership;
+      if (value == null || typeof value !== "object") fail("ownership must be an object");
+      const minX = finiteInteger(value.minX, "ownership.minX", -30000000, 30000000);
+      const minZ = finiteInteger(value.minZ, "ownership.minZ", -30000000, 30000000);
+      const maxX = finiteInteger(value.maxX, "ownership.maxX", -30000000, 30000000);
+      const maxZ = finiteInteger(value.maxZ, "ownership.maxZ", -30000000, 30000000);
+      if (minX > maxX || minZ > maxZ) fail("ownership requires minX <= maxX and minZ <= maxZ");
+      const minChunkX = Math.floor(minX / 16), maxChunkX = Math.floor(maxX / 16);
+      const minChunkZ = Math.floor(minZ / 16), maxChunkZ = Math.floor(maxZ / 16);
+      if ((maxChunkX - minChunkX + 1) * (maxChunkZ - minChunkZ + 1) > 64) fail("ownership exceeds max owned chunk count 64");
+      ownership = {
+        dimension: value.dimension === undefined ? "minecraft:overworld" : value.dimension,
+        minX, minZ, maxX, maxZ,
+      };
+      if (typeof ownership.dimension !== "string" || ownership.dimension.length === 0) fail("ownership.dimension must be a resource id string");
+    }
     const stateValues = Object.create(null);
     const inputValues = Object.create(null);
     const vanillaInputs = Object.create(null);
@@ -629,14 +647,15 @@
     if (Object.keys(stateValues).length === 0) fail("at least one state(...) is required");
 
     const spec = {
-      version: 9,
+      version: ownership === null ? 9 : 10,
       fixedPoint,
       state: stateValues,
       tick: tickActions,
     };
     if (Object.keys(inputValues).length > 0) spec.inputs = inputValues;
-    if (Object.keys(vanillaInputs).length > 0 || projections.length > 0 || texts.length > 0 || actorProjections.length > 0 || worldBatches.length > 0 || cameras.length > 0 || particles.length > 0 || sounds.length > 0 || huds.length > 0 || sidebars.length > 0) {
+    if (ownership !== null || Object.keys(vanillaInputs).length > 0 || projections.length > 0 || texts.length > 0 || actorProjections.length > 0 || worldBatches.length > 0 || cameras.length > 0 || particles.length > 0 || sounds.length > 0 || huds.length > 0 || sidebars.length > 0) {
       spec.vanilla = {};
+      if (ownership !== null) spec.vanilla.ownership = ownership;
       if (Object.keys(vanillaInputs).length > 0) spec.vanilla.inputs = vanillaInputs;
       if (projections.length > 0) spec.vanilla.projections = projections;
       if (texts.length > 0) spec.vanilla.texts = texts;

@@ -1,4 +1,4 @@
-portableDsl({ fixedPoint: 1000 }, game => {
+portableDsl({ fixedPoint: 1000, ownership: { minX: 176, minZ: -12, maxX: 192, maxZ: 8 } }, game => {
   const ready = game.state("ready", 1);
   const left = game.input("left", 0, { source: "first_player_left" });
   const right = game.input("right", 0, { source: "first_player_right" });

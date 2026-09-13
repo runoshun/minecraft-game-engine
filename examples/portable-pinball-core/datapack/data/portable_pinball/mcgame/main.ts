@@ -18,7 +18,7 @@ function poseEnd(pivotX: number, pivotY: number, length: number, angle: number) 
   return { x: pivotX + Math.cos(radians) * length, y: pivotY + Math.sin(radians) * length };
 }
 
-portableDsl({ fixedPoint: 1000 }, game => {
+portableDsl({ fixedPoint: 1000, ownership: { minX: 112, minZ: -24, maxX: 128, maxZ: 4 } }, game => {
   const left = game.input("left", 0, { source: "first_player_left" });
   const right = game.input("right", 0, { source: "first_player_right" });
   const jump = game.input("jump", 0, { source: "first_player_jump" });

@@ -1,6 +1,6 @@
 # ADR 0011: Add held input, spectator camera, and particle primitives to portable IR
 
-Status: accepted as experimental API
+Status: accepted as experimental API; vanilla camera implementation superseded by ADR 0018
 
 ## Context
 
@@ -43,3 +43,5 @@ Tradeoffs and limitations:
 - dynamic particle positions use owned marker entities because vanilla commands cannot directly substitute scoreboard fixed-point values into particle coordinates.
 
 ADR 0011 extends ADR 0009's portable backend contract and ADR 0010's authoring frontend. It does not make arbitrary TypeScript portable.
+
+ADR 0018 supersedes the vanilla spectator-camera implementation described above. The camera declaration API and held-input semantics remain, but current generated packs position-lock the first non-spectator controller without player tags or gamemode mutation.

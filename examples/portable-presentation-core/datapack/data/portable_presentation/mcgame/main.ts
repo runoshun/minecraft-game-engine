@@ -1,4 +1,4 @@
-portableDsl({ fixedPoint: 1000 }, game => {
+portableDsl({ fixedPoint: 1000, ownership: { minX: 132, minZ: -16, maxX: 148, maxZ: 4 } }, game => {
   const heroX = game.state("heroX", -2);
   const heroYaw = game.state("heroYaw", 0);
   const zombieVisible = game.state("zombieVisible", 1);
