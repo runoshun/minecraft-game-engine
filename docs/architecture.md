@@ -172,15 +172,33 @@ ADR 0020 is the implemented design contract. v12 provides one shared game instan
 
 v12 exists only in the Node compiler/generated-datapack backend; there is no compatibility backend to update. Objective names use namespace-derived short hashes and fixed slot suffixes so the complete possible bank can be removed on reload/cleanup even after declarations are renamed or deleted.
 
+## Planned procedural grid v13
+
+ADR 0022 is the accepted design contract for the next portable milestone. v13 is not implemented yet. It adds bounded shared runtime topology without restoring arbitrary JavaScript runtime collections:
+
+- `game.grid(id, { width, height, initial, outside })` declares a fixed-size shared 2D grid, initially limited to 4 grids and 2,048 cells per grid;
+- runtime `fill`, `get`, `set`, and clipped `fillRect` actions provide dynamic indexed access while remaining compiler-bounded;
+- grid values use the normal portable fixed-point representation, while runtime coordinates are interpreted as integer cell units;
+- `game.rng(id, { seed })` declares a deterministic shared random stream with `int(target, min, max)` and `reset()` actions;
+- the v13 RNG algorithm is versioned and deterministic, using a fixed 32-bit LCG step lowered to scoreboard arithmetic;
+- `game.gridWorld(...)` declares an incremental fixed-footprint projection from grid cell values to one block per Minecraft cell, with `rebuild()` and read-only `ready`;
+- projection runs after authored rules in bounded `cellsPerTick` slices and projected terrain remains persistent after cleanup;
+- grid/RNG/world-grid mutations are shared and are rejected inside v12 `PlayerContext`;
+- rooms, enemies, and loot remain fixed compile-time slot pools built from existing `game.repeat`, scalar state, and presentation primitives rather than generic runtime arrays.
+
+Minecraft 26.1 function macros are the intended internal lowering for dynamic grid indexes. A mod-free probe on `second` verified dynamic scoreboard holders of the form `g$(i)` can be written and read using namespace-owned command storage. Raw macros/storage are not exposed through the portable API.
+
+The v13 reference acceptance target is a regenerated top-down procedural roguelike: runtime room/corridor generation on a 29 x 37 grid, deterministic seed replay, floor-to-floor regeneration, grid-authoritative movement collision, bounded enemy/loot slots, and incremental terrain projection. Generic arrays/maps/sets, BFS/A*, runtime-created actors, persistent saves, player-local grids/RNG, and multi-layer cell templates remain out of scope for the first v13 implementation.
+
 ## Current limitations
 
 - single-file TypeScript; no import/module resolution;
 - v1-v11 remain single-controller-oriented for compatibility; v12 is the multiplayer model;
 - fixed-point arithmetic relies on Minecraft scoreboard 32-bit behavior; generated commands do not add generic overflow guards;
-- no runtime dynamic arrays/collections, arbitrary randomness/procedural topology, generic packet-event dispatch, clickable inventory/dialog UI, persistent game storage, or arbitrary Minecraft queries;
+- no runtime generic arrays/collections, arbitrary packet-event dispatch, clickable inventory/dialog UI, persistent game storage, or arbitrary Minecraft queries; bounded runtime grid/RNG/procedural topology is planned for v13 but is not implemented yet;
 - one server-global sidebar and one shared camera declaration;
 - bounded 2D logic collision only, not Minecraft hitbox queries or 3D/swept physics;
-- world projection is compile-time declared and persistent;
+- v8 world projection is compile-time declared and persistent; v13 plans a bounded incremental runtime grid projection, also persistent;
 - v12 currently has one shared game instance whose participant set is all online players; filtered teams/lobbies, simultaneous sessions, private world scenes, independent per-player vanilla sidebars, distinct per-player cameras, and cross-player reductions are not implemented.
 
 ## Validation baseline
