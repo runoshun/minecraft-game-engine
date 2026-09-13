@@ -7,10 +7,10 @@ MC Game Runtime is evolving into a TypeScript-to-vanilla-datapack game compiler.
 The primary portable loop is:
 
 ```text
-edit main.ts -> compilePortable -> copy/reload generated datapack -> play/test/capture -> edit main.ts
+edit main.ts -> Node portable compiler -> copy/reload generated datapack -> play/test/capture -> edit main.ts
 ```
 
-The Fabric runtime keeps the older `/reload`-direct TypeScript loop as an optional development/compatibility backend while the retirement gates in ADR 0013 remain open.
+The Node.js portable compiler is the canonical build path. The Fabric runtime remains temporarily only as a compatibility/reference implementation while Java/Fabric retirement is completed after ADR 0021 parity verification.
 
 ## Responsibility boundaries
 
@@ -20,7 +20,7 @@ Owns the authoritative Minecraft world and networking. Vanilla clients connect n
 
 ### Portable compiler / vanilla backend
 
-This is the primary backend for new portable games. It transpiles TypeScript for build-time DSL evaluation, captures versioned Portable IR, validates bounded declarations, and emits standalone Minecraft datapack resources. The generated pack owns its scoreboards, functions, predicates, Display/marker/camera entities, HUD projection, and cleanup function. The target server does not need the runtime mod.
+This is the primary backend for portable games. A Node.js 22 CLI transpiles TypeScript for build-time DSL evaluation, captures versioned Portable IR, validates bounded declarations, and emits standalone Minecraft datapack resources. The generated pack owns its scoreboards, functions, predicates, Display/marker/camera entities, HUD projection, and cleanup function. The target server does not need the runtime mod.
 
 ### MC Game Runtime Fabric backend (transitional)
 
@@ -210,7 +210,7 @@ Presentation follows ADR 0004 and `docs/presentation-api.md`. Game Core TypeScri
 
 ## Portable vanilla-datapack compilation
 
-ADR 0009 adds the vanilla backend for the restricted portable IR, ADR 0010 adds `portableDsl` as its TypeScript authoring frontend, ADR 0011 defines v3 held-input/camera/particle mappings, ADR 0012 defines v4 sound/text/HUD/collision mappings, ADR 0013 makes this backend primary while defining v5 static collections/visibility/circle collision, ADR 0014 defines the bounded v6 pinball primitives, ADR 0015 adds bounded v7 presentation projections, ADR 0016 adds bounded v8 world projection, ADR 0017 adds the bounded v9 sidebar plus the input-action portability policy, ADR 0018 adds the bounded v10 generated-entity ownership lifecycle, and ADR 0019 adds the v11 opt-in spectate camera mapping. `./gradlew compilePortable` transpiles the selected `main.ts`, installs the same bundled DSL prelude used by the Fabric runtime, evaluates top-level initialization in a sandbox with registration-only host stubs, captures the resulting `portable.define`, and emits a standalone datapack. The current backend maps:
+ADR 0009 adds the vanilla backend for the restricted portable IR, ADR 0010 adds `portableDsl` as its TypeScript authoring frontend, ADR 0011 defines v3 held-input/camera/particle mappings, ADR 0012 defines v4 sound/text/HUD/collision mappings, ADR 0013 makes this backend primary while defining v5 static collections/visibility/circle collision, ADR 0014 defines the bounded v6 pinball primitives, ADR 0015 adds bounded v7 presentation projections, ADR 0016 adds bounded v8 world projection, ADR 0017 adds the bounded v9 sidebar plus the input-action portability policy, ADR 0018 adds the bounded v10 generated-entity ownership lifecycle, ADR 0019 adds the v11 opt-in spectate camera mapping, and ADR 0021 moves compilation to Node.js before Java/Fabric retirement. `npm run compile:portable -- ...` transpiles the selected `main.ts` with TypeScript 5.9.2, installs the portable DSL prelude, evaluates top-level initialization in a Node `vm` context with registration-only host stubs, captures the resulting `portable.define`, validates the IR, and emits a standalone datapack. The current backend maps:
 
 - fixed-point state and input registers -> fake scoreboard players on a namespace-derived objective;
 - program initialization -> a `minecraft:load`-tagged function;
@@ -237,7 +237,7 @@ ADR 0009 adds the vanilla backend for the restricted portable IR, ADR 0010 adds 
 - `builder.repeat(...)` -> build-time declaration expansion only; no runtime loop is emitted;
 - portable v10 `ownership` -> one bounded (max 64 chunks) generated-entity region kept force-loaded while active; load gates tick execution behind `#ready`, schedules entity initialization two ticks later, clears the namespace-stable owner tag before respawn, and clamps dynamic X/Z entity projection to the owned rectangle; `portable/cleanup` cancels pending initialization, clears owned UI, kills the namespace owner tag, removes the force-load, and removes the state objective. v1-v9 retain their legacy per-resource lifecycle for compatibility.
 
-Ordinary arbitrary callback bodies and Minecraft host APIs are still not compiled. A DSL-only program using only supported portable primitives does not need the Fabric mod on the deployment server; the compiler/build environment still needs this repository's Java/Graal toolchain. `examples/portable-breakout-core` is the reference brick-breaker, `examples/portable-pinball-core` covers v6 pinball, `examples/portable-presentation-core` covers v7 bounded actors/dynamic labels, `examples/portable-world-core` is the v8 bounded world-projection acceptance example, and `examples/portable-ui-core` covers the v9 sidebar plus held-input rising-edge recipe.
+Ordinary arbitrary callback bodies and Minecraft host APIs are still not compiled. A DSL-only program using only supported portable primitives does not need the Fabric mod on the deployment server; the compiler/build environment requires Node.js 22 and does not require Java, Gradle, GraalVM, Fabric Loom, or Fabric API. `examples/portable-breakout-core` is the reference brick-breaker, `examples/portable-pinball-core` covers v6 pinball, `examples/portable-presentation-core` covers v7 bounded actors/dynamic labels, `examples/portable-world-core` is the v8 bounded world-projection acceptance example, and `examples/portable-ui-core` covers the v9 sidebar plus held-input rising-edge recipe.
 
 ### Planned portable multiplayer v12
 

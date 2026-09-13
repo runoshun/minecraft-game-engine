@@ -79,64 +79,63 @@ Therefore, changes involving the optional Fabric backend's script startup, watch
 
 ## Compiling the portable subset to a vanilla datapack
 
-The ADR 0009/0010/0011/0012/0013/0014/0015/0016 path compiles one portable program from a TypeScript `main.ts` into a dedicated vanilla datapack directory. The source may use low-level `portable.define(...)` or the bundled `portableDsl(...)` frontend. Use Java 25 and provide all three Gradle properties explicitly:
+The portable compiler compiles one portable program from a TypeScript `main.ts` into a dedicated vanilla datapack directory. The source may use low-level `portable.define(...)` or the bundled `portableDsl(...)` frontend. ADR 0021 makes the Node.js 22 CLI the canonical compiler. Provide source, namespace, and output explicitly:
 
 ```bash
-./gradlew compilePortable \
-  -PportableSource=examples/portable-breakout-core/datapack/data/portable_breakout/mcgame/main.ts \
-  -PportableNamespace=portable_breakout \
-  -PportableOutput=build/portable/portable_breakout
+npm run compile:portable -- \
+  --source examples/portable-breakout-core/datapack/data/portable_breakout/mcgame/main.ts \
+  --namespace portable_breakout \
+  --output build/portable/portable_breakout
 ```
 
 The v6 pinball retirement-gate example compiles with:
 
 ```bash
-./gradlew compilePortable \
-  -PportableSource=examples/portable-pinball-core/datapack/data/portable_pinball/mcgame/main.ts \
-  -PportableNamespace=portable_pinball \
-  -PportableOutput=build/portable/portable_pinball
+npm run compile:portable -- \
+  --source examples/portable-pinball-core/datapack/data/portable_pinball/mcgame/main.ts \
+  --namespace portable_pinball \
+  --output build/portable/portable_pinball
 ```
 
 The v7 bounded presentation acceptance example (actors + dynamic scalar labels) compiles with:
 
 ```bash
-./gradlew compilePortable \
-  -PportableSource=examples/portable-presentation-core/datapack/data/portable_presentation/mcgame/main.ts \
-  -PportableNamespace=portable_presentation \
-  -PportableOutput=build/portable/portable_presentation
+npm run compile:portable -- \
+  --source examples/portable-presentation-core/datapack/data/portable_presentation/mcgame/main.ts \
+  --namespace portable_presentation \
+  --output build/portable/portable_presentation
 ```
 
 The v8 bounded world-projection acceptance example compiles with:
 
 ```bash
-./gradlew compilePortable \
-  -PportableSource=examples/portable-world-core/datapack/data/portable_world/mcgame/main.ts \
-  -PportableNamespace=portable_world \
-  -PportableOutput=build/portable/portable_world
+npm run compile:portable -- \
+  --source examples/portable-world-core/datapack/data/portable_world/mcgame/main.ts \
+  --namespace portable_world \
+  --output build/portable/portable_world
 ```
 
 The v9 bounded sidebar/input acceptance example compiles with:
 
 ```bash
-./gradlew compilePortable \
-  -PportableSource=examples/portable-ui-core/datapack/data/portable_ui/mcgame/main.ts \
-  -PportableNamespace=portable_ui \
-  -PportableOutput=build/portable/portable_ui
+npm run compile:portable -- \
+  --source examples/portable-ui-core/datapack/data/portable_ui/mcgame/main.ts \
+  --namespace portable_ui \
+  --output build/portable/portable_ui
 ```
 
 The retained portable JRPG example compiles with:
 
 ```bash
-JAVA_HOME=/home/dev/.local/share/mise/installs/java/25.0.2 \
-  ./gradlew --no-daemon --max-workers=1 compilePortable \
-  -PportableSource=examples/jrpg-demo/datapack/data/jrpg_demo/mcgame/main.ts \
-  -PportableNamespace=jrpg_demo \
-  -PportableOutput=build/portable/jrpg_demo
+npm run compile:portable -- \
+  --source examples/jrpg-demo/datapack/data/jrpg_demo/mcgame/main.ts \
+  --namespace jrpg_demo \
+  --output build/portable/jrpg_demo
 ```
 
 The JRPG generated pack starts from its load function rather than carrying the former Fabric-host `/function jrpg_demo:start` / `stop` bridge. Before removing it from an acceptance world, run `jrpg_demo:portable/cleanup`, then explicitly restore the x=59..75 / y=99..104 / z=-1..13 arena footprint because portable world projection intentionally persists terrain.
 
-For a DSL-only source that uses only implemented portable primitives, the generated output is the deployment artifact: copy that directory into a Minecraft 26.1 world's `datapacks/` directory. Fabric, Fabric API, GraalJS, TypeScript, and MC Game Runtime are not required on that target server. They are build/runtime-development dependencies only. Portable v10 currently emits held player-input predicates, conditionally visible block/text-display projections, one fixed player-position camera, particle/sound emitters, one actionbar HUD, one bounded vanilla scoreboard sidebar, 2D AABB and circle/circle collision, circle/static-segment-or-capsule collision, center-point AABB triggers, two-pose flippers, bounded mannequin/zombie/skeleton actor projections, bounded state/input-backed world-text tokens, bounded compile-time world batches/fills, and declarations expanded by compile-time `repeat`.
+For a DSL-only source that uses only implemented portable primitives, the generated output is the deployment artifact: copy that directory into a Minecraft 26.1 world's `datapacks/` directory. Fabric, Fabric API, GraalJS, Java, TypeScript, Node.js, and MC Game Runtime are not required on that target server. Node.js and TypeScript are build-time compiler concerns only. Portable v10 currently emits held player-input predicates, conditionally visible block/text-display projections, one fixed player-position camera, particle/sound emitters, one actionbar HUD, one bounded vanilla scoreboard sidebar, 2D AABB and circle/circle collision, circle/static-segment-or-capsule collision, center-point AABB triggers, two-pose flippers, bounded mannequin/zombie/skeleton actor projections, bounded state/input-backed world-text tokens, bounded compile-time world batches/fills, and declarations expanded by compile-time `repeat`.
 
 The output directory is treated as generated content and contains `.mcgame-portable-generated`. Re-running the compiler may replace a directory carrying that marker; it refuses to delete a non-empty directory without the marker. Generated output belongs under `build/` and is not committed.
 
@@ -146,4 +145,4 @@ For v10 entity-heavy programs, declare a bounded `ownership` rectangle around al
 
 After URL deployment, inspect the pack state. Replacing the directory of a world pack that was previously disabled does not implicitly enable it; if `read_datapack` reports the generated pack as available but disabled, explicitly enable `file/<pack-name>` and reload before interpreting missing functions/objectives as a compiler failure.
 
-Validation for compiler changes should include both `./gradlew test` and loading a generated pack on Minecraft 26.1. For camera/input changes, use a real 26.1 client. For the default `position_lock` mode, verify that the generated camera position-locks the first non-spectator controller without changing persistent gamemode/tags, the view stays fixed, and held input predicates continue changing portable state. For portable v11 `mode: "spectate"`, explicitly place the acceptance controller in Spectator before the test, verify it observes the generated camera carrier without per-tick player teleports, verify held input still changes portable state while spectating, and confirm the generated tick/cleanup functions contain no `gamemode spectator`/`gamemode adventure` commands. Restore the acceptance controller gamemode as explicit test teardown because player gamemode is outside portable camera ownership. For particle/sound changes, load the generated commands and capture a short run where the emitter condition becomes true. For text/HUD changes, verify the text display and actionbar on a real client. For v9 sidebar changes, verify the real vanilla sidebar title/rows on a real client, mutate a referenced scalar through real held input, and prove a held Jump only triggers one rising-edge action until released. For collision changes, inspect generated state after a known overlap and a known miss for every affected shape family; v6 segment/capsule work also requires endpoint/interior coverage, while trigger work requires an inside and outside check. For flippers, use the real client and confirm A/D selects the active pose and produces the expected collision response rather than only checking generated text. For portable actors, verify state-backed position/yaw against entity `Pos`/`Rotation`, verify every supported appearance on the real client, and exercise false->true `when` lifetime so respawn re-applies appearance. For dynamic world text, mutate a referenced scalar and inspect/render the resulting `text_display.text` component, not only the generated mcfunction text. For v8 world projection, verify an unconditional batch on load plus a condition-driven batch using a real input predicate; inspect the actual blocks, and explicitly restore the test footprint because `portable/cleanup` intentionally does not roll terrain back. Do not validate zombie/skeleton by temporarily changing the server difficulty; the vanilla backend intentionally maps them through mannequin head equipment. For visibility changes, inspect the Display transformation before and after its `when` condition changes. Keep a player/bot online while observing `minecraft:tick` behavior because the development server can pause while empty. For v10 ownership-region packs, replacement reload is designed to remove/recreate namespace-owned entities without a pre-cleanup; still run `portable/cleanup` before final pack deletion so owner entities, ownership force-loads, optional sidebar state, and the main objective are removed. Legacy v1-v9 entity-heavy packs retain weaker initial-chunk cleanup semantics and should be explicitly cleaned with relevant chunks loaded before deletion or replacement.
+Validation for compiler changes should include `npm test` and loading a generated pack on Minecraft 26.1. For camera/input changes, use a real 26.1 client. For the default `position_lock` mode, verify that the generated camera position-locks the first non-spectator controller without changing persistent gamemode/tags, the view stays fixed, and held input predicates continue changing portable state. For portable v11 `mode: "spectate"`, explicitly place the acceptance controller in Spectator before the test, verify it observes the generated camera carrier without per-tick player teleports, verify held input still changes portable state while spectating, and confirm the generated tick/cleanup functions contain no `gamemode spectator`/`gamemode adventure` commands. Restore the acceptance controller gamemode as explicit test teardown because player gamemode is outside portable camera ownership. For particle/sound changes, load the generated commands and capture a short run where the emitter condition becomes true. For text/HUD changes, verify the text display and actionbar on a real client. For v9 sidebar changes, verify the real vanilla sidebar title/rows on a real client, mutate a referenced scalar through real held input, and prove a held Jump only triggers one rising-edge action until released. For collision changes, inspect generated state after a known overlap and a known miss for every affected shape family; v6 segment/capsule work also requires endpoint/interior coverage, while trigger work requires an inside and outside check. For flippers, use the real client and confirm A/D selects the active pose and produces the expected collision response rather than only checking generated text. For portable actors, verify state-backed position/yaw against entity `Pos`/`Rotation`, verify every supported appearance on the real client, and exercise false->true `when` lifetime so respawn re-applies appearance. For dynamic world text, mutate a referenced scalar and inspect/render the resulting `text_display.text` component, not only the generated mcfunction text. For v8 world projection, verify an unconditional batch on load plus a condition-driven batch using a real input predicate; inspect the actual blocks, and explicitly restore the test footprint because `portable/cleanup` intentionally does not roll terrain back. Do not validate zombie/skeleton by temporarily changing the server difficulty; the vanilla backend intentionally maps them through mannequin head equipment. For visibility changes, inspect the Display transformation before and after its `when` condition changes. Keep a player/bot online while observing `minecraft:tick` behavior because the development server can pause while empty. For v10 ownership-region packs, replacement reload is designed to remove/recreate namespace-owned entities without a pre-cleanup; still run `portable/cleanup` before final pack deletion so owner entities, ownership force-loads, optional sidebar state, and the main objective are removed. Legacy v1-v9 entity-heavy packs retain weaker initial-chunk cleanup semantics and should be explicitly cleaned with relevant chunks loaded before deletion or replacement.

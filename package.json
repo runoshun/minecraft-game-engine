@@ -1,0 +1,12 @@
+{
+  "name": "minecraft-game-engine",
+  "private": true,
+  "scripts": {
+    "compile:portable": "node tools/portable-compiler/cli.mjs",
+    "test": "node --test tools/portable-compiler/test/*.test.mjs",
+    "test:portable": "node --test tools/portable-compiler/test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

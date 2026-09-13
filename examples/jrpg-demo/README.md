@@ -20,11 +20,10 @@ The former Fabric-host version used `/function jrpg_demo:start` / `stop`, mutabl
 Use Java 25:
 
 ```bash
-JAVA_HOME=/home/dev/.local/share/mise/installs/java/25.0.2 \
-  ./gradlew --no-daemon --max-workers=1 compilePortable \
-  -PportableSource=examples/jrpg-demo/datapack/data/jrpg_demo/mcgame/main.ts \
-  -PportableNamespace=jrpg_demo \
-  -PportableOutput=build/portable/jrpg_demo
+npm run compile:portable -- \
+  --source examples/jrpg-demo/datapack/data/jrpg_demo/mcgame/main.ts \
+  --namespace jrpg_demo \
+  --output build/portable/jrpg_demo
 ```
 
 Copy `build/portable/jrpg_demo` into the target world's `datapacks/` directory and reload. The game initializes automatically.

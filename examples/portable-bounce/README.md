@@ -8,10 +8,10 @@ The portable portion intentionally contains only deterministic state/rule operat
 Compile it with:
 
 ```bash
-./gradlew compilePortable \
-  -PportableSource=examples/portable-bounce/datapack/data/portable_bounce/mcgame/main.ts \
-  -PportableNamespace=portable_bounce \
-  -PportableOutput=build/portable/portable_bounce
+npm run compile:portable -- \
+  --source examples/portable-bounce/datapack/data/portable_bounce/mcgame/main.ts \
+  --namespace portable_bounce \
+  --output build/portable/portable_bounce
 ```
 
 The generated pack resets its state on datapack load, then runs the portable rule list through the vanilla `minecraft:tick` function tag. The generated scoreboard objective name is namespaced through a stable short hash so multiple portable packs can coexist.

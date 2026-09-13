@@ -16,12 +16,12 @@ Portable v5 owns the full arcade loop:
 Compile it with:
 
 ```bash
-./gradlew compilePortable \
-  -PportableSource=examples/portable-breakout-core/datapack/data/portable_breakout/mcgame/main.ts \
-  -PportableNamespace=portable_breakout \
-  -PportableOutput=build/portable/portable_breakout
+npm run compile:portable -- \
+  --source examples/portable-breakout-core/datapack/data/portable_breakout/mcgame/main.ts \
+  --namespace portable_breakout \
+  --output build/portable/portable_breakout
 ```
 
-`build/portable/portable_breakout` is the deployment artifact. Minecraft 26.1 can run it with no Fabric, Fabric API, GraalJS, TypeScript, or MC Game Runtime mod installed. The build machine still needs this repository and Java 25.
+`build/portable/portable_breakout` is the deployment artifact. Minecraft 26.1 can run it with no Fabric, Fabric API, GraalJS, TypeScript, or MC Game Runtime mod installed. The build machine needs this repository and Node.js 22.
 
 The generated camera currently owns one controller and restores that player to Adventure mode during `portable/cleanup`, rather than remembering the exact previous gamemode. Collision is logic-space arcade collision; it does not query Minecraft entity/block hitboxes. Circle/circle collision was added in v5. Portable v6 now also provides bounded static segment/capsule collision, trigger zones, and two-pose flippers; see `examples/portable-pinball-core` for the corresponding mod-free acceptance game.

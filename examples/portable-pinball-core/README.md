@@ -7,10 +7,10 @@ Controls are **A / D** for the left/right flippers and **Space** to launch a bal
 Compile it with:
 
 ```bash
-./gradlew compilePortable \
-  -PportableSource=examples/portable-pinball-core/datapack/data/portable_pinball/mcgame/main.ts \
-  -PportableNamespace=portable_pinball \
-  -PportableOutput=build/portable/portable_pinball
+npm run compile:portable -- \
+  --source examples/portable-pinball-core/datapack/data/portable_pinball/mcgame/main.ts \
+  --namespace portable_pinball \
+  --output build/portable/portable_pinball
 ```
 
 The collision model is intentionally arcade-oriented. Segment/capsule endpoints and flipper poses are static compile-time geometry; a flipper selects between one rest capsule and one active capsule from portable input/state. Trigger zones test a watched collider's center and do not provide physical response by themselves.

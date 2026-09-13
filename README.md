@@ -99,7 +99,7 @@ This is still a PoC sandbox, not yet a hardened hostile-code security boundary.
 
 ## Build
 
-Requires Java 25.
+Requires Node.js 22 (the repository `.mise.toml` pins the validated version).
 
 ```bash
 ./gradlew build
@@ -108,10 +108,10 @@ Requires Java 25.
 The primary deployment path compiles supported portable DSL programs to standalone vanilla datapacks. The current v10 backend supports normal held player input (W/A/S/D, jump, sneak, sprint), state-authored rising-edge actions, block/text-display projections with optional state-controlled visibility, one fixed player-position camera, bounded particle/sound emitters, one actionbar HUD, one bounded 15-row vanilla sidebar, deterministic 2D AABB and circle/circle collision, static segment/capsule collision, center-point trigger zones, two-pose flippers, bounded mannequin/zombie/skeleton actor projections, state-backed world-text tokens, bounded compile-time world batches/fills, and compile-time static collection expansion in addition to fixed-point game logic:
 
 ```bash
-./gradlew compilePortable \
-  -PportableSource=examples/portable-breakout-core/datapack/data/portable_breakout/mcgame/main.ts \
-  -PportableNamespace=portable_breakout \
-  -PportableOutput=build/portable/portable_breakout
+npm run compile:portable -- \
+  --source examples/portable-breakout-core/datapack/data/portable_breakout/mcgame/main.ts \
+  --namespace portable_breakout \
+  --output build/portable/portable_breakout
 ```
 
 The reference Breakout uses A/D to move, Space to launch, a compile-time-expanded brick field with per-brick alive state/AABB/conditional Display visibility, lives and scoring, a generated fixed camera, world-space title, actionbar HUD, particles, and sound. Its v10 declaration also reserves a bounded ownership rectangle so generated Displays/camera/effect anchors have deterministic delayed reload and cleanup semantics without mutating persistent player gamemode or tags. On a vanilla target the compiler emits player-input predicates, scoreboard/mcfunction logic, owned display/camera/marker entities, `particle`/`playsound`, and actionbar commands; the TypeScript source itself is not shipped or executed.

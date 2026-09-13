@@ -5,10 +5,10 @@ This is the portable v7 presentation acceptance example. It validates the portab
 Controls are **A / D** to move and turn the hero, and **Space** to hide the zombie actor while held. The fixed camera, block backdrop, dynamic hero-yaw label, static mob labels, and actionbar HUD make the actor behavior visible to a normal Minecraft 26.1 client.
 
 ```bash
-./gradlew compilePortable \
-  -PportableSource=examples/portable-presentation-core/datapack/data/portable_presentation/mcgame/main.ts \
-  -PportableNamespace=portable_presentation \
-  -PportableOutput=build/portable/portable_presentation
+npm run compile:portable -- \
+  --source examples/portable-presentation-core/datapack/data/portable_presentation/mcgame/main.ts \
+  --namespace portable_presentation \
+  --output build/portable/portable_presentation
 ```
 
 `entityType` is intentionally bounded to `minecraft:mannequin`, `minecraft:zombie`, and `minecraft:skeleton`. The vanilla backend always owns a mannequin entity; zombie/skeleton intents are rendered with a zombie head or skeleton skull so presentation is deterministic even in Peaceful difficulty. The optional Fabric compatibility backend may continue to use the actual inert mob types.
