@@ -130,6 +130,7 @@ export function compileDatapack(program, namespace, outputRoot) {
     inputCount: Object.keys(program.initialInputs).length,
     playerStateCount: Object.keys(program.initialPlayerState || {}).length,
     playerInputCount: program.playerInputs?.size ?? 0,
+    playerSetCount: program.playerTeams?.size ?? 0,
     gridCount: program.grids?.length ?? 0,
     rngCount: program.rngs?.length ?? 0,
     gridWorldCount: program.gridWorlds?.length ?? 0,

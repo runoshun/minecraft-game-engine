@@ -10,9 +10,9 @@ main.ts -> Node.js compiler -> Portable IR -> generated datapack -> Minecraft 26
 
 ## Status
 
-Early PoC targeting Minecraft Java Edition 26.1. Portable IR v1-v13 is implemented. v12 adds one-shared-game multiplayer with `PlayerSet`, lexical `PlayerContext`, player-local state/input, per-player actionbar HUD, and shared camera audiences. v13 adds bounded runtime grids, deterministic RNG, incremental grid-to-world projection, and exact-cardinality `forSinglePlayer` input for shared single-player procedural games.
+Early PoC targeting Minecraft Java Edition 26.1. Portable IR v1-v14 is implemented. v12 adds multiplayer `PlayerSet` / lexical `PlayerContext` with player-local state and input; v13 adds bounded runtime grids, deterministic RNG, incremental grid-to-world projection, and exact-cardinality `forSinglePlayer`; v14 adds externally managed vanilla-team PlayerSets with partitioned player rules, HUDs, and camera audiences.
 
-Current capabilities include fixed-point state, held input and hotbar input, state-authored rising edges, block/text Display projection, bounded actor projection, world batches/fills, particles, sounds, shared and per-player actionbar HUD, one global vanilla sidebar, AABB/circle/capsule collision primitives, triggers, two-pose flippers, compile-time `repeat`, bounded ownership lifecycle, `position_lock` / opt-in `spectate` camera modes, v12 player-local execution, and v13 bounded grids/RNG/grid-world projection with `forSinglePlayer`. v1-v11 `first_player_*` input remains supported for compatibility.
+Current capabilities include fixed-point state, held input and hotbar input, state-authored rising edges, block/text Display projection, bounded actor projection, world batches/fills, particles, sounds, shared and player-local actionbar HUD, one global vanilla sidebar, AABB/circle/capsule collision primitives, triggers, two-pose flippers, compile-time `repeat`, bounded ownership lifecycle, `position_lock` / opt-in `spectate` camera modes, v12 player-local execution, v13 bounded grids/RNG/grid-world projection, and v14 external-team PlayerSet filtering with disjoint team HUD/camera audiences. v1-v11 `first_player_*` input remains supported for compatibility.
 
 ## Requirements
 
@@ -69,6 +69,7 @@ portableDsl({ fixedPoint: 1000 }, game => {
 - `examples/jrpg-demo` — retained portable game-loop example with dialogue, shop, and turn battle.
 - `examples/portable-multiplayer-core` — v12 player-local state/input/HUD and shared-camera acceptance example.
 - `examples/portable-procedural-roguelike` — v13 runtime grid/RNG/grid-world procedural topology acceptance game.
+- `examples/portable-team-player-sets` — v14 external-team PlayerSet, partitioned HUD, and multi-camera acceptance example.
 
 Legacy host-runtime-only examples were removed when the Java/Fabric runtime was retired. Examples in the repository must compile through the current Node portable compiler.
 

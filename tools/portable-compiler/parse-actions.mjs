@@ -1,6 +1,7 @@
 import { LIMITS, fail, has, isObject, requiredArray, requiredMember, requiredObject, requiredString, boundedInteger, scale } from "./utils.mjs";
 import { parseCondition, parseValue } from "./parse-value.mjs";
 import { parseAabb, parseCapsule, parseCircle, validateCircleCapsule } from "./parse-shapes.mjs";
+import { parsePlayerSetRef } from "./player-set.mjs";
 
 function childContext(ctx, playerScope) { return { ...ctx, playerScope }; }
 
@@ -33,16 +34,14 @@ export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }
     if (op === "for_each_player") {
       if (ctx.version < 12) fail(`${p}.op requires portable version 12`);
       if (ctx.playerScope) fail(`${p} nested PlayerContext is not supported`);
-      const players = requiredString(a, "players", p);
-      if (players !== "all_online") fail(`${p}.players must be all_online`);
+      const players = parsePlayerSetRef(requiredMember(a, "players", p), ctx, `${p}.players`);
       out.push({ op, players, actions: parseActions(requiredArray(a, "actions", p), childContext(ctx, "multi"), `${p}.actions`, depth + 1, counter) });
       continue;
     }
     if (op === "for_single_player") {
       if (ctx.version < 13) fail(`${p}.op requires portable version 13`);
       if (ctx.playerScope) fail(`${p} nested PlayerContext is not supported`);
-      const players = requiredString(a, "players", p);
-      if (players !== "all_online") fail(`${p}.players must be all_online`);
+      const players = parsePlayerSetRef(requiredMember(a, "players", p), ctx, `${p}.players`);
       out.push({ op, players, actions: parseActions(requiredArray(a, "actions", p), childContext(ctx, "single"), `${p}.actions`, depth + 1, counter) });
       continue;
     }

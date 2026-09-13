@@ -2,6 +2,7 @@ export const VALUE_NAME = /^[A-Za-z][A-Za-z0-9_]{0,31}$/;
 export const PORTABLE_ID = /^[a-z][a-z0-9_]{0,23}$/;
 export const RESOURCE_ID = /^[a-z0-9_.-]+:[a-z0-9_./-]+$/;
 export const NAMESPACE = /^[a-z0-9_.-]+$/;
+export const TEAM_NAME = /^[A-Za-z0-9_.-]{1,16}$/;
 
 export const PLAYER_INPUT_NAMES = Object.freeze([
   "hotbarSlot", "forward", "backward", "left", "right", "jump", "sneak", "sprint",
@@ -11,6 +12,7 @@ export const LIMITS = Object.freeze({
   states: 128,
   inputs: 32,
   playerStates: 32,
+  playerSets: 8,
   grids: 4,
   gridDimension: 64,
   gridCells: 2048,
@@ -23,11 +25,11 @@ export const LIMITS = Object.freeze({
   gridPalette: 8,
   gridCellsPerTick: 256,
   worldWrites: 32768,
-  cameras: 1,
+  cameras: 8,
   particles: 64,
   sounds: 64,
   huds: 1,
-  playerHuds: 1,
+  playerHuds: 8,
   hudTokens: 32,
   sidebars: 1,
   sidebarRows: 15,
@@ -36,7 +38,7 @@ export const LIMITS = Object.freeze({
   depth: 16,
 });
 
-export const CURRENT_VERSION = 13;
+export const CURRENT_VERSION = 14;
 
 export function fail(message) { throw new Error(message); }
 export function has(object, member) { return Object.prototype.hasOwnProperty.call(object, member); }

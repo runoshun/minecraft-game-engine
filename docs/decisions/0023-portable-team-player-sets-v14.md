@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for implementation. The v14 milestone remains open until the compiler changes and the two-real-client Minecraft 26.1 acceptance gate in this ADR pass.
+Accepted. Portable v14 team-backed PlayerSets, partitioned HUD/camera audiences, and the two-real-client Minecraft 26.1 acceptance gate are implemented and passed.
 
 ## Context
 
@@ -120,3 +120,11 @@ The v14 milestone is complete only when all of the following pass:
 6. A player outside the referenced team sets is not initialized/sampled as a v14 participant.
 7. Cleanup removes player objectives, generated camera/owner entities, and force-loads while leaving the external vanilla teams/memberships intact.
 8. All retained v1-v13 examples continue to compile deterministically.
+
+## Acceptance result
+
+The full gate passed on the mod-free Minecraft 26.1 `second` environment with `examples/portable-team-player-sets`. External teams `v14_red` and `v14_blue` contained real clients `Camera` and `Camera2`. While both were online, Camera A changed only its player-local meter `0 -> -14000` and red exact-cardinality edge counter `0 -> 1000`; Camera2 remained at meter `0` and the blue counter remained `0`. Camera2 D then changed only its meter `0 -> 13000` and blue counter `0 -> 1000`, leaving red unchanged. Thus each team-backed `forSinglePlayer` executed with one member even while two players were online globally.
+
+The two team audiences were independently position-locked to camera carriers at `[248,140,8]` / yaw `0` and `[280,140,8]` / yaw `180`, both pitch `15`. Real-client captures rendered `RED METER -14 HIT 1` and `BLUE METER 13 HIT 1` on the corresponding clients. Neither client had compiler-owned player tags. With both clients online, unrelated `Test_v14out` joined outside both teams and had no score in the namespace player-init, left-input, or right-input objectives, proving participant-union filtering.
+
+Before cleanup the ownership region held eight force-loaded chunks. `portable/cleanup` returned force-loads to zero, removed all scoreboards and owner/camera entities, and left both external teams with their original members. Test teardown then removed the external teams, deleted the generated pack, and reloaded without datapack problems. The Node suite passed 15/15 and retained v1-v14 examples compiled deterministically.

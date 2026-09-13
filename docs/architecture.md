@@ -28,7 +28,7 @@ The compiler accepts one TypeScript source, namespace, and output directory. Mod
 
 Portable IR is the versioned semantic contract between authoring and vanilla lowering. It contains deterministic fixed-point values, bounded actions, collision primitives, declarative presentation/world resources, input mappings, and lifecycle metadata. Arbitrary JavaScript callbacks are not an IR feature.
 
-IR versions 1 through 13 are implemented. ADR 0020 defines the multiplayer v12 contract; ADR 0022 defines the procedural grid/RNG v13 contract.
+IR versions 1 through 14 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, and ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14.
 
 ### Generated datapack
 
@@ -191,11 +191,15 @@ Minecraft 26.1 function macros are the intended internal lowering for dynamic gr
 
 The accepted v13 reference is a regenerated top-down procedural roguelike with runtime room/corridor generation on a 29 x 37 grid, deterministic seed replay, floor-to-floor regeneration, grid-authoritative movement collision, bounded enemy/loot slots, and incremental terrain projection. Generic arrays/maps/sets, BFS/A*, runtime-created actors, persistent saves, player-local grids/RNG, and multi-layer cell templates remain out of scope for v13.
 
-## Planned portable team PlayerSets v14
+## Portable team PlayerSets v14
 
-ADR 0023 is accepted for implementation but is not yet current runtime behavior. The planned v14 membership slice keeps `game.players()` as all online players and adds `game.teamPlayers(name)` for externally managed vanilla scoreboard teams. Team-backed sets are intended to drive `forEachPlayer`, `forSinglePlayer`, player-local HUD audiences, and multiple disjoint camera audiences without compiler-owned player tags or fixed names/UUIDs.
+ADR 0023 is the implemented and accepted v14 membership/audience contract. `game.players()` keeps its v12 meaning of all online players, while `game.teamPlayers(name)` denotes online members of an externally managed vanilla scoreboard team. Team-backed sets may drive `forEachPlayer`, `forSinglePlayer`, player-local HUDs, and camera audiences without compiler-owned player tags or fixed names/UUIDs. Team names are compile-time literals restricted to `[A-Za-z0-9_.-]{1,16}`, and at most eight distinct team PlayerSets may be declared.
 
-This milestone deliberately stops at membership/audience partitioning. Team/session-local shared state, grids/RNG, private world projection, team-local sidebars, reductions, and compiler-owned matchmaking remain future work. Until v14 implementation and the ADR 0023 two-real-client acceptance gate pass, v13 remains the latest implemented Portable IR version.
+For v14 programs, player initialization and held-input sampling target the union of PlayerSets referenced by player execution, player HUDs, and cameras. If `all_online` is referenced the union collapses to all online players; otherwise unrelated online players outside every referenced team remain untouched. Player-local state is still attached to the real player and therefore follows that player across external team changes within the active portable instance.
+
+V14 permits up to eight player HUD declarations and eight cameras when their audiences are disjoint team PlayerSets. An `all_online` HUD/camera audience may not coexist with another of the same presentation kind, and duplicate team audiences are rejected. Camera mode still does not own player gamemode. The compiler owns generated camera carriers and portable objective state only; team creation, membership, and teardown are external server/session responsibilities.
+
+This milestone deliberately stops at membership/audience partitioning. Team/session-local shared scalar state, grids/RNG, private world projection, team-local sidebars, reductions, and compiler-owned matchmaking remain future work.
 
 ## Current limitations
 
@@ -203,17 +207,23 @@ This milestone deliberately stops at membership/audience partitioning. Team/sess
 - v1-v11 remain single-controller-oriented for compatibility; v12 is the multiplayer model;
 - fixed-point arithmetic relies on Minecraft scoreboard 32-bit behavior; generated commands do not add generic overflow guards;
 - no runtime generic arrays/collections, arbitrary packet-event dispatch, clickable inventory/dialog UI, persistent game storage, or arbitrary Minecraft queries; v13 provides bounded grid/RNG topology primitives but not generic collections or pathfinding;
-- one server-global sidebar and one shared camera declaration;
+- one server-global sidebar; v14 permits up to eight camera declarations only for disjoint external-team audiences;
 - bounded 2D logic collision only, not Minecraft hitbox queries or 3D/swept physics;
 - v8 world projection is compile-time declared and persistent; v13 additionally provides bounded incremental runtime grid projection, also persistent;
-- v12 currently has one shared game instance whose participant set is all online players; filtered teams/lobbies, simultaneous sessions, private world scenes, independent per-player vanilla sidebars, distinct per-player cameras, and cross-player reductions are not implemented.
+- v14 adds external-team PlayerSet filtering and disjoint team HUD/camera audiences, but still has one shared portable game instance; session-local shared state/grids/RNG, simultaneous independent matches, private world scenes, independent per-player vanilla sidebars, and cross-player reductions are not implemented.
 
 ## Validation baseline
 
-Portable v1-v13 compiler behavior is covered by the Node regression suite; generated v1-v11 gameplay has been exercised on mod-free Minecraft 26.1. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
+Portable v1-v14 compiler behavior is covered by the Node regression suite; generated v1-v14 milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
 
 Node migration ADR 0021 additionally established byte-for-byte output parity with the retired Java compiler for representative v1, v9, v10, and v11 programs including Bounce, Pinball, Breakout, Presentation, UI, World, JRPG, and spectate-camera cases. Node compiler regression tests are now the maintained build-time acceptance suite.
 
+
+### v14 team PlayerSet validation
+
+Portable v14 passed its mod-free Minecraft 26.1 acceptance on `second` using two real clients and one unrelated bot. External teams `v14_red` and `v14_blue` contained `Camera` and `Camera2` respectively. With both real clients online globally, real A input on Camera changed only its team-scoped player-local meter (`0 -> -14000`) and the red exact-cardinality edge counter (`0 -> 1000`), while Camera2 stayed `0` and the blue counter stayed `0`. Real D input on Camera2 then changed only its meter (`0 -> 13000`) and blue edge counter (`0 -> 1000`) while the red values remained unchanged. This proves that two one-member team `forSinglePlayer` scopes execute independently even though the global online count is two.
+
+The red and blue position-lock cameras held the clients at distinct carriers `[248,140,8]` / yaw `0` and `[280,140,8]` / yaw `180`, both pitch `15`. Real-client captures rendered only the matching actionbars (`RED METER -14 HIT 1` and `BLUE METER 13 HIT 1`). With both clients still online, unrelated `Test_v14out` joined outside both teams; it received neither the player-init score nor the left/right input scores. Neither real client carried generated entity tags. Cleanup reduced eight ownership force-loaded chunks to zero, removed all objectives and both camera/owner entity sets, and left the external teams and their memberships intact. Test teardown then removed the temporary teams and datapack and reloaded cleanly. The Node regression suite was 15/15 green including deterministic compilation of all retained v1-v14 examples.
 
 ### v13 core validation
 

@@ -2,6 +2,7 @@ import { fail } from "./utils.mjs";
 import { stateHolder } from "./compile-context.mjs";
 import { compileAabbIf, compileCircleIf, compileCircleCapsuleIf, compileTriggerIf } from "./compile-collisions.mjs";
 import { compileGridAction } from "./compile-grid.mjs";
+import { playerSetSelector } from "./compile-player.mjs";
 
 function score(value, ctx) { return ctx.score(value); }
 function operation(targetHolder, targetObjective, operator, value, ctx) {
@@ -55,15 +56,15 @@ export function compileActions(actions, lines, ctx) {
         const fn = ctx.nextPlayerFunctionName(), body = [];
         compileActions(action.actions, body, ctx);
         ctx.functions.set(fn, body);
-        lines.push(`execute as @a run function ${ctx.namespace}:portable/${fn}`);
+        lines.push(`execute as ${playerSetSelector(action.players)} run function ${ctx.namespace}:portable/${fn}`);
         break;
       }
       case "for_single_player": {
         const fn = ctx.nextPlayerFunctionName(), body = [];
         compileActions(action.actions, body, ctx);
         ctx.functions.set(fn, body);
-        lines.push(`execute store result score #pc ${ctx.objective} if entity @a`);
-        lines.push(`execute if score #pc ${ctx.objective} matches 1 as @a[limit=1,sort=arbitrary] run function ${ctx.namespace}:portable/${fn}`);
+        lines.push(`execute store result score #pc ${ctx.objective} if entity ${playerSetSelector(action.players)}`);
+        lines.push(`execute if score #pc ${ctx.objective} matches 1 as ${playerSetSelector(action.players, ["limit=1", "sort=arbitrary"])} run function ${ctx.namespace}:portable/${fn}`);
         break;
       }
       case "if": {

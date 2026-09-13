@@ -51,6 +51,7 @@ export function main(argv = process.argv.slice(2)) {
   console.log(`  inputs: ${result.inputCount}`);
   if (result.playerStateCount) console.log(`  player states: ${result.playerStateCount}`);
   if (result.playerInputCount) console.log(`  player inputs: ${result.playerInputCount}`);
+  if (result.playerSetCount) console.log(`  team player sets: ${result.playerSetCount}`);
   if (result.gridCount) console.log(`  grids: ${result.gridCount}`);
   if (result.rngCount) console.log(`  rngs: ${result.rngCount}`);
   if (result.gridWorldCount) console.log(`  grid worlds: ${result.gridWorldCount}`);

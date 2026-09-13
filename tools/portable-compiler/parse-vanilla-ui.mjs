@@ -1,6 +1,7 @@
 import { LIMITS, fail, has, requiredArray, requiredMember, requiredObject, requiredString, memberString, memberNumber, memberBoolean, memberBoundedInt, boundedInteger, memberResource, portableId, floorDiv } from "./utils.mjs";
 import { parseCondition, parseCoordinate, parseTokens } from "./parse-value.mjs";
 import { parseVec3 } from "./parse-shapes.mjs";
+import { parsePlayerSetRef, validateDisjointAudiences } from "./player-set.mjs";
 
 function uniqueIds(values, path) {
   const seen = new Set();
@@ -16,7 +17,8 @@ export function parseVanillaUi(vanilla, ctx, api) {
   if (has(vanilla, "cameras")) {
     if (ctx.version < 3) fail(`${api}.vanilla.cameras requires portable version 3`);
     const values = requiredArray(vanilla, "cameras", `${api}.vanilla`);
-    if (values.length > LIMITS.cameras) fail(`${api}.vanilla.cameras exceeds max camera count ${LIMITS.cameras}`);
+    const cameraLimit = ctx.version >= 14 ? LIMITS.cameras : 1;
+    if (values.length > cameraLimit) fail(`${api}.vanilla.cameras exceeds max camera count ${cameraLimit}`);
     uniqueIds(values, `${api}.vanilla.cameras`);
     out.cameras = values.map((v, i) => {
       const p = `${api}.vanilla.cameras[${i}]`, pitch = memberNumber(v, "pitch", 0, p), mode = memberString(v, "mode", "position_lock", p);
@@ -26,11 +28,11 @@ export function parseVanillaUi(vanilla, ctx, api) {
       let audience = null;
       if (has(v, "audience")) {
         if (ctx.version < 12) fail(`${p}.audience requires portable version 12`);
-        audience = requiredString(v, "audience", p);
-        if (audience !== "all_online") fail(`${p}.audience must be all_online`);
+        audience = parsePlayerSetRef(requiredMember(v, "audience", p), ctx, `${p}.audience`);
       } else if (ctx.version >= 12) audience = "all_online";
       return { id: v.id, dimension: memberResource(v, "dimension", "minecraft:overworld", p), x: parseCoordinate(requiredMember(v, "x", p), ctx, `${p}.x`), y: parseCoordinate(requiredMember(v, "y", p), ctx, `${p}.y`), z: parseCoordinate(requiredMember(v, "z", p), ctx, `${p}.z`), yaw: memberNumber(v, "yaw", 0, p), pitch, mode, audience };
     });
+    validateDisjointAudiences(out.cameras, `${api}.vanilla.cameras`);
   }
   if (has(vanilla, "particles")) {
     if (ctx.version < 3) fail(`${api}.vanilla.particles requires portable version 3`);
@@ -63,14 +65,17 @@ export function parseVanillaUi(vanilla, ctx, api) {
   if (has(vanilla, "playerHuds")) {
     if (ctx.version < 12) fail(`${api}.vanilla.playerHuds requires portable version 12`);
     const values = requiredArray(vanilla, "playerHuds", `${api}.vanilla`);
-    if (values.length > LIMITS.playerHuds) fail(`${api}.vanilla.playerHuds exceeds max player HUD count ${LIMITS.playerHuds}`);
+    const playerHudLimit = ctx.version >= 14 ? LIMITS.playerHuds : 1;
+    if (values.length > playerHudLimit) fail(`${api}.vanilla.playerHuds exceeds max player HUD count ${playerHudLimit}`);
     uniqueIds(values, `${api}.vanilla.playerHuds`);
     const playerCtx = { ...ctx, playerScope: true };
     out.playerHuds = values.map((v, i) => {
-      const p = `${api}.vanilla.playerHuds[${i}]`, audience = requiredString(v, "audience", p);
-      if (audience !== "all_online") fail(`${p}.audience must be all_online`);
+      const p = `${api}.vanilla.playerHuds[${i}]`, audience = parsePlayerSetRef(requiredMember(v, "audience", p), ctx, `${p}.audience`);
       return { id: v.id, audience, tokens: parseTokens(requiredArray(v, "tokens", p), playerCtx, `${p}.tokens`) };
     });
+    validateDisjointAudiences(out.playerHuds, `${api}.vanilla.playerHuds`);
+    const playerHudValues = out.playerHuds.reduce((total, hud) => total + hud.tokens.filter(token => token.kind === "value").length, 0);
+    if (playerHudValues > LIMITS.hudTokens) fail(`${api}.vanilla.playerHuds exceeds total numeric HUD value count ${LIMITS.hudTokens}`);
   }
   if (has(vanilla, "ownership")) {
     if (ctx.version < 10) fail(`${api}.vanilla.ownership requires portable version 10`);

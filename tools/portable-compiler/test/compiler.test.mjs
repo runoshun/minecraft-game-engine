@@ -352,6 +352,116 @@ test("v13 procedural roguelike reference keeps topology runtime-authoritative", 
   assert.equal(finalRectRow.trim().split("\n").length, 29);
 });
 
+test("v14 team PlayerSets partition player rules HUDs and cameras", () => {
+  const { program, output, result } = compileSource(`
+    portableDsl({ fixedPoint: 1000, ownership: { minX: 240, minZ: 0, maxX: 288, maxZ: 16 } }, game => {
+      const redHits = game.state("redHits", 0);
+      const blueHits = game.state("blueHits", 0);
+      const red = game.teamPlayers("v14_red");
+      const blue = game.teamPlayers("v14_blue");
+
+      game.camera("red", { x: 248, y: 100, z: 8, yaw: 0, pitch: 15, audience: red });
+      game.camera("blue", { x: 280, y: 100, z: 8, yaw: 180, pitch: 15, audience: blue });
+
+      game.tick(() => {
+        game.forEachPlayer(red, player => {
+          const meter = player.state("meter", 0);
+          game.when(player.input.left.eq(1), () => meter.sub(1));
+          player.hud("red_status", { text: ["RED ", meter] });
+        });
+        game.forEachPlayer(blue, player => {
+          const meter = player.state("meter", 0);
+          game.when(player.input.right.eq(1), () => meter.add(1));
+          player.hud("blue_status", { text: ["BLUE ", meter] });
+        });
+        game.forSinglePlayer(red, player => game.when(player.input.left.eq(1), () => redHits.add(1)));
+        game.forSinglePlayer(blue, player => game.when(player.input.right.eq(1), () => blueHits.add(1)));
+      });
+    });
+  `, "portable_v14_teams");
+
+  assert.equal(program.version, 14);
+  assert.deepEqual([...program.playerTeams].sort(), ["v14_blue", "v14_red"]);
+  assert.equal(result.playerSetCount, 2);
+  assert.equal(result.cameraCount, 2);
+  assert.equal(result.playerHudCount, 2);
+
+  const tick = read(output, "data/portable_v14_teams/function/portable/tick.mcfunction");
+  const cleanup = read(output, "data/portable_v14_teams/function/portable/cleanup.mcfunction");
+  assert.match(tick, /execute as @a\[team=v14_red\] unless score @s mpz/);
+  assert.match(tick, /execute as @a\[team=v14_blue\] unless score @s mpz/);
+  assert.match(tick, /scoreboard players set @a\[team=v14_red\] mpi[0-9a-f]{8}03 0/);
+  assert.match(tick, /scoreboard players set @a\[team=v14_blue\] mpi[0-9a-f]{8}04 0/);
+  assert.match(tick, /execute as @a\[team=v14_red\] run function portable_v14_teams:portable\/player_000/);
+  assert.match(tick, /execute as @a\[team=v14_blue\] run function portable_v14_teams:portable\/player_001/);
+  assert.match(tick, /if entity @a\[team=v14_red\]/);
+  assert.match(tick, /matches 1 as @a\[team=v14_red,limit=1,sort=arbitrary\]/);
+  assert.match(tick, /if entity @a\[team=v14_blue\]/);
+  assert.match(tick, /matches 1 as @a\[team=v14_blue,limit=1,sort=arbitrary\]/);
+  assert.match(tick, /execute as @a\[team=v14_red,gamemode=!spectator\].*tag=mcg_c_.*_red/);
+  assert.match(tick, /execute as @a\[team=v14_blue,gamemode=!spectator\].*tag=mcg_c_.*_blue/);
+  assert.match(tick, /execute as @a\[team=v14_red\] run title @s actionbar/);
+  assert.match(tick, /execute as @a\[team=v14_blue\] run title @s actionbar/);
+  assert.doesNotMatch(tick, /execute as @a unless score @s mpz/);
+  assert.match(cleanup, /title @a\[team=v14_red\] actionbar/);
+  assert.match(cleanup, /title @a\[team=v14_blue\] actionbar/);
+});
+
+test("v14 cleanup clears only HUD audiences", () => {
+  const { output } = compileSource(`
+    portableDsl(game => {
+      game.state("x", 0);
+      const red = game.teamPlayers("red");
+      const blue = game.teamPlayers("blue");
+      game.camera("blue", { x: 0, y: 80, z: 0, audience: blue });
+      game.tick(() => {
+        game.forEachPlayer(red, player => {
+          const meter = player.state("meter", 0);
+          player.hud("red_status", { text: ["RED ", meter] });
+        });
+      });
+    });
+  `, "portable_v14_cleanup_hud");
+
+  const cleanup = read(output, "data/portable_v14_cleanup_hud/function/portable/cleanup.mcfunction");
+  assert.match(cleanup, /title @a\[team=red\] actionbar/);
+  assert.doesNotMatch(cleanup, /title @a\[team=blue\] actionbar/);
+});
+
+test("v14 rejects unsafe or overlapping team PlayerSets", () => {
+  assert.throws(() => extract(`
+    portableDsl(game => {
+      game.state("x", 0);
+      game.teamPlayers("bad team");
+      game.tick(() => {});
+    });
+  `), /teamPlayers.*must match/);
+
+  assert.throws(() => parseProgram({
+    version: 14,
+    state: { x: 0 },
+    playerSets: Array.from({ length: 9 }, (_, i) => ({ team: `t${i}` })),
+    tick: [],
+  }), /exceeds max player-set count 8/);
+
+  assert.throws(() => extract(`
+    portableDsl(game => {
+      game.state("x", 0);
+      const red = game.teamPlayers("red");
+      game.camera("a", { x: 0, y: 80, z: 0, audience: red });
+      game.camera("b", { x: 1, y: 80, z: 0, audience: red });
+      game.tick(() => {});
+    });
+  `), /camera duplicate audience team:red/);
+
+  assert.throws(() => parseProgram({
+    version: 13,
+    state: { x: 0 },
+    playerSets: [{ team: "red" }],
+    tick: [],
+  }), /playerSets requires portable version 14/);
+});
+
 test("representative checked-in examples compile deterministically", () => {
   const cases = [
     ["examples/portable-bounce/datapack/data/portable_bounce/mcgame/main.ts", "portable_bounce", 1],
@@ -363,6 +473,7 @@ test("representative checked-in examples compile deterministically", () => {
     ["examples/jrpg-demo/datapack/data/jrpg_demo/mcgame/main.ts", "jrpg_demo", 10],
     ["examples/portable-multiplayer-core/datapack/data/portable_multiplayer/mcgame/main.ts", "portable_multiplayer", 12],
     ["examples/portable-procedural-roguelike/datapack/data/portable_roguelike/mcgame/main.ts", "portable_roguelike", 13],
+    ["examples/portable-team-player-sets/datapack/data/portable_team_players/mcgame/main.ts", "portable_team_players", 14],
   ];
   for (const [relative, namespace, expectedVersion] of cases) {
     const source = fs.readFileSync(path.join(root, relative), "utf8");

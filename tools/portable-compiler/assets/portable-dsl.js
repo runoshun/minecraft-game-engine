@@ -76,6 +76,7 @@
     const inputValues = Object.create(null);
     const playerStateValues = Object.create(null);
     const playerInputs = new Set();
+    const playerTeams = new Set();
     const grids = [];
     const rngs = [];
     const gridWorlds = [];
@@ -100,6 +101,7 @@
     let nextPlayerScope = 0;
     let usesPlayerApi = false;
     let usesV13 = false;
+    let usesV14 = false;
 
     function assertUnique(name) {
       if (Object.prototype.hasOwnProperty.call(stateValues, name) || Object.prototype.hasOwnProperty.call(inputValues, name)) {
@@ -222,9 +224,34 @@
       return Object.freeze({ [PLAYER_SET]: "all_online" });
     }
 
+    function teamPlayers(team) {
+      if (typeof team !== "string" || !/^[A-Za-z0-9_.-]{1,16}$/.test(team)) fail("teamPlayers(...) team must match [A-Za-z0-9_.-]{1,16}");
+      if (!playerTeams.has(team) && playerTeams.size >= 8) fail("portable v14 supports at most 8 team PlayerSets");
+      playerTeams.add(team);
+      usesPlayerApi = true;
+      usesV14 = true;
+      return Object.freeze({ [PLAYER_SET]: Object.freeze({ team }) });
+    }
+
     function requirePlayerSet(value, label) {
-      if (!value || value[PLAYER_SET] !== "all_online") fail(label + " must be returned by players()");
-      return "all_online";
+      if (!value) fail(label + " must be returned by players() or teamPlayers()");
+      const set = value[PLAYER_SET];
+      if (set === "all_online") return "all_online";
+      if (set && typeof set === "object" && typeof set.team === "string" && playerTeams.has(set.team)) return { team: set.team };
+      fail(label + " must be returned by players() or teamPlayers()");
+    }
+
+    function playerSetKey(set) { return set === "all_online" ? "all_online" : "team:" + set.team; }
+
+    function validateDisjointPlayerAudiences(values, label) {
+      if (values.length <= 1) return;
+      const seen = new Set();
+      for (const value of values) {
+        if (value.audience === "all_online") fail(label + " all_online audience cannot coexist with another audience");
+        const key = playerSetKey(value.audience);
+        if (seen.has(key)) fail(label + " duplicate audience " + key);
+        seen.add(key);
+      }
     }
 
     function makePlayerState(name, initial, scope) {
@@ -247,10 +274,10 @@
       return Object.freeze(comparable("player_input", name, scope));
     }
 
-    function playerHud(scope, id, spec) {
+    function playerHud(scope, set, id, spec) {
       if (activePlayerScope !== scope) fail("player.hud(...) is only valid in its PlayerContext");
       if (actionSink !== playerRootSink) fail("player.hud(...) must be declared directly in a player iteration scope, not inside a conditional branch");
-      if (playerHuds.length > 0) fail("only one player.hud(...) is currently supported");
+      if (playerHuds.length >= 8) fail("portable v14 supports at most 8 player.hud(...) declarations");
       if (typeof id !== "string" || id.length === 0) fail("player hud id must be a non-empty string");
       if (spec == null || typeof spec !== "object") fail("player hud " + id + " spec must be an object");
       const source = typeof spec.text === "string" ? [spec.text] : spec.text;
@@ -262,13 +289,13 @@
         }
         return { value: unwrapValue(token) };
       });
-      playerHuds.push({ id, audience: "all_online", tokens });
+      playerHuds.push({ id, audience: set, tokens });
     }
 
     function capturePlayerContext(set, callback, mode, op, label) {
       if (actionSink === null) fail(label + "(...) is only valid inside tick(...)");
       if (activePlayerScope !== null) fail("nested PlayerContext is not supported");
-      requirePlayerSet(set, label + " player set");
+      const serializedSet = requirePlayerSet(set, label + " player set");
       if (typeof callback !== "function") fail(label + " callback is required");
       usesPlayerApi = true;
       if (mode === "single") usesV13 = true;
@@ -283,7 +310,7 @@
           return makePlayerState(name, initial, scope);
         },
         input: Object.freeze(input),
-        hud(id, spec) { return playerHud(scope, id, spec); },
+        hud(id, spec) { return playerHud(scope, serializedSet, id, spec); },
       });
       const previousSink = actionSink, previousScope = activePlayerScope, previousMode = activePlayerMode, previousRoot = playerRootSink;
       const captured = [];
@@ -291,7 +318,7 @@
       try { callback(player); } finally {
         actionSink = previousSink; activePlayerScope = previousScope; activePlayerMode = previousMode; playerRootSink = previousRoot;
       }
-      emit({ op, players: "all_online", actions: captured });
+      emit({ op, players: serializedSet, actions: captured });
     }
 
     function forEachPlayer(set, callback) {
@@ -743,7 +770,7 @@
 
     function cameraProjection(id, spec) {
       assertSharedPresentation("camera(...)");
-      if (cameras.length > 0) fail("only one camera(...) is currently supported");
+      if (cameras.length >= 8) fail("portable v14 supports at most 8 camera(...) declarations");
       if (typeof id !== "string" || id.length === 0) fail("camera id must be a non-empty string");
       if (spec == null || typeof spec !== "object") fail("camera " + id + " spec must be an object");
       const mode = spec.mode === undefined ? "position_lock" : spec.mode;
@@ -860,6 +887,7 @@
       state: makeState,
       input(name, initial = 0, binding) { return makeInput(name, initial, binding); },
       players,
+      teamPlayers,
       forEachPlayer,
       forSinglePlayer,
       grid: gridDeclaration,
@@ -897,16 +925,21 @@
       if (Object.keys(inputValues).length > 0 || Object.keys(vanillaInputs).length > 0) fail("game.input(...) is v1-v11 compatibility only; use player.input.* in multiplayer v12");
       if (huds.length > 0) fail("game.hud(...) is single-controller v1-v11 presentation; use player.hud(...) in multiplayer v12");
       for (const camera of cameras) if (camera.audience === undefined) camera.audience = "all_online";
+      validateDisjointPlayerAudiences(cameras, "camera");
+      validateDisjointPlayerAudiences(playerHuds, "player.hud");
+      const playerHudValues = playerHuds.reduce((total, hud) => total + hud.tokens.filter(token => token.value !== undefined).length, 0);
+      if (playerHudValues > 32) fail("player.hud(...) declarations exceed total numeric HUD value count 32");
     }
 
     const usesSpectateCamera = cameras.some(camera => camera.mode === "spectate");
     const spec = {
-      version: usesV13 ? 13 : (usesPlayerApi ? 12 : (usesSpectateCamera ? 11 : (ownership === null ? 9 : 10))),
+      version: usesV14 ? 14 : (usesV13 ? 13 : (usesPlayerApi ? 12 : (usesSpectateCamera ? 11 : (ownership === null ? 9 : 10)))),
       fixedPoint,
       state: stateValues,
       tick: tickActions,
     };
     if (Object.keys(inputValues).length > 0) spec.inputs = inputValues;
+    if (playerTeams.size > 0) spec.playerSets = Array.from(playerTeams).sort().map(team => ({ team }));
     if (grids.length > 0) spec.grids = grids;
     if (rngs.length > 0) spec.rngs = rngs;
     if (usesPlayerApi) {

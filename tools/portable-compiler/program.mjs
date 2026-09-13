@@ -3,6 +3,7 @@ import { parseActions } from "./parse-actions.mjs";
 import { parseVanillaScene } from "./parse-vanilla-scene.mjs";
 import { parseVanillaUi } from "./parse-vanilla-ui.mjs";
 import { parseGrids, parseRngs } from "./parse-runtime.mjs";
+import { parsePlayerSetDeclarations } from "./player-set.mjs";
 
 export function parseProgram(spec, api = "portable.define") {
   if (!isObject(spec)) fail(`${api} requires an object`);
@@ -15,6 +16,8 @@ export function parseProgram(spec, api = "portable.define") {
     validateValueName(name, `${api}.state`);
     initialState[name] = scale(finiteNumber(rawState[name], `${api}.state.${name}`), fixedPoint, `${api}.state.${name}`);
   }
+
+  const playerTeams = parsePlayerSetDeclarations(spec, version, api);
 
   const initialPlayerState = {};
   if (has(spec, "playerState")) {
@@ -59,7 +62,7 @@ export function parseProgram(spec, api = "portable.define") {
   const ctx = {
     version, fixedPoint,
     states: new Set(Object.keys(initialState)), inputs: new Set(Object.keys(initialInputs)),
-    playerStates: new Set(Object.keys(initialPlayerState)), playerInputs,
+    playerStates: new Set(Object.keys(initialPlayerState)), playerInputs, playerTeams,
     grids: new Map(grids.map(grid => [grid.id, grid])),
     rngs: new Set(rngs.map(rng => rng.id)),
     gridWorlds: new Set(),
@@ -77,7 +80,7 @@ export function parseProgram(spec, api = "portable.define") {
 
   const tickActions = parseActions(requiredArray(spec, "tick", api), ctx, `${api}.tick`);
   return {
-    version, fixedPoint, initialState, initialPlayerState, initialInputs, playerInputs, grids, rngs,
+    version, fixedPoint, initialState, initialPlayerState, initialInputs, playerInputs, playerTeams, grids, rngs,
     vanillaInputs: vanilla.inputs, projections: vanilla.projections, texts: vanilla.texts,
     actors: vanilla.actors, worldBatches: vanilla.worldBatches, gridWorlds: vanilla.gridWorlds, cameras: vanilla.cameras,
     particles: vanilla.particles, sounds: vanilla.sounds, huds: vanilla.huds, playerHuds: vanilla.playerHuds,

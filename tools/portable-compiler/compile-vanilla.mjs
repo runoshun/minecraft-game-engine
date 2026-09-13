@@ -4,7 +4,7 @@ import {
   sidebarObjectiveName, sidebarRowHolder, soundTag, stateHolder, textTag,
 } from "./compile-context.mjs";
 import { floatLiteral, floorDiv, format3, format6, numberLiteral, scale, snbtQuoted, storeScale } from "./utils.mjs";
-import { playerCleanupLines } from "./compile-player.mjs";
+import { playerCleanupLines, playerSetSelector } from "./compile-player.mjs";
 
 const MAX_SIDEBAR_SCORE = 15;
 
@@ -274,9 +274,14 @@ export function compileVanillaCameraUpdates(program, lines, ctx) {
 
 export function compileVanillaCameraLock(program, lines, ctx) {
   if (!program.cameras.length) return;
-  const camera = program.cameras[0], tag = cameraTag(ctx.namespace, camera.id), selector = controllerSelector(program);
-  if (camera.mode === "spectate") lines.push(`execute as ${selector} in ${camera.dimension} if entity @e[type=minecraft:armor_stand,tag=${tag},limit=1] run spectate @e[type=minecraft:armor_stand,tag=${tag},limit=1] @s`);
-  else lines.push(`execute as ${selector} in ${camera.dimension} if entity @e[type=minecraft:armor_stand,tag=${tag},limit=1] run teleport @s @e[type=minecraft:armor_stand,tag=${tag},limit=1]`);
+  for (const camera of program.cameras) {
+    const tag = cameraTag(ctx.namespace, camera.id);
+    const selector = program.version >= 12
+      ? playerSetSelector(camera.audience ?? "all_online", [camera.mode === "spectate" ? "gamemode=spectator" : "gamemode=!spectator"])
+      : controllerSelector(program);
+    if (camera.mode === "spectate") lines.push(`execute as ${selector} in ${camera.dimension} if entity @e[type=minecraft:armor_stand,tag=${tag},limit=1] run spectate @e[type=minecraft:armor_stand,tag=${tag},limit=1] @s`);
+    else lines.push(`execute as ${selector} in ${camera.dimension} if entity @e[type=minecraft:armor_stand,tag=${tag},limit=1] run teleport @s @e[type=minecraft:armor_stand,tag=${tag},limit=1]`);
+  }
 }
 
 export function compileVanillaParticles(program, lines, ctx) {

@@ -96,6 +96,8 @@ type PortableVanillaCamera = {
 };
 type PortableVanillaCameraV11 = PortableVanillaCamera & { mode?: "position_lock" | "spectate" };
 type PortableVanillaCameraV12 = PortableVanillaCameraV11 & { audience?: "all_online" };
+type PortablePlayerSetRefV14 = "all_online" | { team: string };
+type PortableVanillaCameraV14 = PortableVanillaCameraV11 & { audience?: PortablePlayerSetRefV14 };
 type PortableVanillaParticleEmitter = {
   id: string;
   dimension?: string;
@@ -124,6 +126,7 @@ type PortableHudToken = { text: string } | { value: PortableValue };
 type PortableVanillaHud = { id: string; tokens: PortableHudToken[] };
 type PortablePlayerHudToken = { text: string } | { value: PortablePlayerValue };
 type PortableVanillaPlayerHud = { id: string; audience: "all_online"; tokens: PortablePlayerHudToken[] };
+type PortableVanillaPlayerHudV14 = { id: string; audience: PortablePlayerSetRefV14; tokens: PortablePlayerHudToken[] };
 type PortableVanillaSidebarRow = { id: string; tokens: PortableHudToken[] };
 type PortableVanillaSidebar = { id: string; title: string; rows: PortableVanillaSidebarRow[] };
 type PortableVanillaOwnershipRegion = { dimension?: string; minX: number; minZ: number; maxX: number; maxZ: number };
@@ -306,7 +309,25 @@ type PortableProgramSpecV13 = {
   };
   tick: PortableV13Action[];
 };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13;
+type PortableV14Action =
+  | Exclude<PortableV13Action, { op: "for_each_player" | "for_single_player" }>
+  | { op: "for_each_player" | "for_single_player"; players: PortablePlayerSetRefV14; actions: PortableV14Action[] };
+type PortableProgramSpecV14 = {
+  version: 14;
+  fixedPoint?: number;
+  state: Record<string, number>;
+  playerState?: Record<string, number>;
+  playerInputs?: PortablePlayerInputName[];
+  playerSets?: Array<{ team: string }>;
+  grids?: PortableGridSpec[];
+  rngs?: PortableRngSpec[];
+  vanilla?: Omit<NonNullable<PortableProgramSpecV13["vanilla"]>, "cameras" | "playerHuds"> & {
+    cameras?: PortableVanillaCameraV14[];
+    playerHuds?: PortableVanillaPlayerHudV14[];
+  };
+  tick: PortableV14Action[];
+};
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -487,6 +508,7 @@ type PortableDsl = {
   state(name: string, initial: number): PortableDslState;
   input(name: string, initial?: number, binding?: PortableDslInputBinding): PortableDslInput;
   players(): PortableDslPlayerSet;
+  teamPlayers(team: string): PortableDslPlayerSet;
   forEachPlayer(players: PortableDslPlayerSet, callback: (player: PortableDslPlayerContext) => void): void;
   forSinglePlayer(players: PortableDslPlayerSet, callback: (player: PortableDslPlayerContext) => void): void;
   grid(id: string, spec: { width: number; height: number; initial?: number; outside?: number }): PortableDslGrid;
