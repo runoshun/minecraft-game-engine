@@ -9,6 +9,9 @@
   const FLIPPER = Symbol("mcgame.portableDsl.flipper");
   const PLAYER_SET = Symbol("mcgame.portableDsl.playerSet");
   const PLAYER_SCOPE = Symbol("mcgame.portableDsl.playerScope");
+  const GRID = Symbol("mcgame.portableDsl.grid");
+  const RNG = Symbol("mcgame.portableDsl.rng");
+  const GRID_WORLD = Symbol("mcgame.portableDsl.gridWorld");
 
   function fail(message) {
     throw new Error("portableDsl: " + message);
@@ -73,6 +76,10 @@
     const inputValues = Object.create(null);
     const playerStateValues = Object.create(null);
     const playerInputs = new Set();
+    const grids = [];
+    const rngs = [];
+    const gridWorlds = [];
+    const declarationIds = new Set();
     const vanillaInputs = Object.create(null);
     const projections = [];
     const texts = [];
@@ -88,9 +95,11 @@
     let tickActions = null;
     let actionSink = null;
     let activePlayerScope = null;
+    let activePlayerMode = null;
     let playerRootSink = null;
     let nextPlayerScope = 0;
     let usesPlayerApi = false;
+    let usesV13 = false;
 
     function assertUnique(name) {
       if (Object.prototype.hasOwnProperty.call(stateValues, name) || Object.prototype.hasOwnProperty.call(inputValues, name)) {
@@ -114,7 +123,8 @@
         if (activePlayerScope === null || value[PLAYER_SCOPE] !== activePlayerScope) fail("player input reference escaped its PlayerContext");
         return { playerInput: value.name };
       }
-      fail("value must be a number or portable state/input reference");
+      if (value && value[REF] === "grid_world_ready") return { gridWorldReady: value.name };
+      fail("value must be a number or portable scalar reference");
     }
 
     function comparison(op, left, right) {
@@ -152,7 +162,7 @@
       assertUnique(name);
       stateValues[name] = finiteNumber(initial, "state " + name + " initial value");
       const ref = comparable("state", name);
-      const assertSharedWrite = () => { if (activePlayerScope !== null) fail("shared state mutation is not allowed inside PlayerContext"); };
+      const assertSharedWrite = () => { if (activePlayerMode === "multi") fail("shared state mutation is not allowed inside PlayerContext"); };
       ref.set = value => { assertSharedWrite(); emit({ op: "set", target: name, value: unwrapValue(value) }); };
       ref.add = value => { assertSharedWrite(); emit({ op: "add", target: name, value: unwrapValue(value) }); };
       ref.sub = value => { assertSharedWrite(); emit({ op: "sub", target: name, value: unwrapValue(value) }); };
@@ -239,7 +249,7 @@
 
     function playerHud(scope, id, spec) {
       if (activePlayerScope !== scope) fail("player.hud(...) is only valid in its PlayerContext");
-      if (actionSink !== playerRootSink) fail("player.hud(...) must be declared directly in forEachPlayer(...), not inside a conditional branch");
+      if (actionSink !== playerRootSink) fail("player.hud(...) must be declared directly in a player iteration scope, not inside a conditional branch");
       if (playerHuds.length > 0) fail("only one player.hud(...) is currently supported");
       if (typeof id !== "string" || id.length === 0) fail("player hud id must be a non-empty string");
       if (spec == null || typeof spec !== "object") fail("player hud " + id + " spec must be an object");
@@ -255,12 +265,13 @@
       playerHuds.push({ id, audience: "all_online", tokens });
     }
 
-    function forEachPlayer(set, callback) {
-      if (actionSink === null) fail("forEachPlayer(...) is only valid inside tick(...)");
-      if (activePlayerScope !== null) fail("nested PlayerContext is not supported in portable v12");
-      requirePlayerSet(set, "forEachPlayer player set");
-      if (typeof callback !== "function") fail("forEachPlayer callback is required");
+    function capturePlayerContext(set, callback, mode, op, label) {
+      if (actionSink === null) fail(label + "(...) is only valid inside tick(...)");
+      if (activePlayerScope !== null) fail("nested PlayerContext is not supported");
+      requirePlayerSet(set, label + " player set");
+      if (typeof callback !== "function") fail(label + " callback is required");
       usesPlayerApi = true;
+      if (mode === "single") usesV13 = true;
       const scope = ++nextPlayerScope;
       const input = {};
       for (const name of ["hotbarSlot", "forward", "backward", "left", "right", "jump", "sneak", "sprint"]) {
@@ -274,11 +285,21 @@
         input: Object.freeze(input),
         hud(id, spec) { return playerHud(scope, id, spec); },
       });
-      const previousSink = actionSink, previousScope = activePlayerScope, previousRoot = playerRootSink;
+      const previousSink = actionSink, previousScope = activePlayerScope, previousMode = activePlayerMode, previousRoot = playerRootSink;
       const captured = [];
-      actionSink = captured; activePlayerScope = scope; playerRootSink = captured;
-      try { callback(player); } finally { actionSink = previousSink; activePlayerScope = previousScope; playerRootSink = previousRoot; }
-      emit({ op: "for_each_player", players: "all_online", actions: captured });
+      actionSink = captured; activePlayerScope = scope; activePlayerMode = mode; playerRootSink = captured;
+      try { callback(player); } finally {
+        actionSink = previousSink; activePlayerScope = previousScope; activePlayerMode = previousMode; playerRootSink = previousRoot;
+      }
+      emit({ op, players: "all_online", actions: captured });
+    }
+
+    function forEachPlayer(set, callback) {
+      capturePlayerContext(set, callback, "multi", "for_each_player", "forEachPlayer");
+    }
+
+    function forSinglePlayer(set, callback) {
+      capturePlayerContext(set, callback, "single", "for_single_player", "forSinglePlayer");
     }
 
     function repeat(count, callback) {
@@ -492,6 +513,97 @@
 
     function assertSharedPresentation(label) {
       if (activePlayerScope !== null) fail(label + " is shared presentation and cannot be declared inside PlayerContext");
+    }
+
+    function assertV13Id(id, label) {
+      if (typeof id !== "string" || !/^[a-z][a-z0-9_]{0,23}$/.test(id)) fail(label + " id must match [a-z][a-z0-9_]{0,23}");
+      if (declarationIds.has(id)) fail("duplicate v13 declaration id: " + id);
+      declarationIds.add(id);
+    }
+
+    function assertV13SharedMutation(label) {
+      if (activePlayerMode === "multi") fail(label + " is shared mutation and cannot run inside multi-player PlayerContext");
+      usesV13 = true;
+    }
+
+    function gridDeclaration(id, spec) {
+      assertV13Id(id, "grid");
+      if (grids.length >= 4) fail("portable v13 supports at most 4 grids");
+      if (spec == null || typeof spec !== "object") fail("grid " + id + " spec must be an object");
+      const width = finiteInteger(spec.width, "grid " + id + " width", 1, 64);
+      const height = finiteInteger(spec.height, "grid " + id + " height", 1, 64);
+      if (width * height > 2048) fail("grid " + id + " exceeds 2048 cells");
+      const initial = finiteNumber(spec.initial === undefined ? 0 : spec.initial, "grid " + id + " initial");
+      const outside = finiteNumber(spec.outside === undefined ? initial : spec.outside, "grid " + id + " outside");
+      usesV13 = true;
+      grids.push({ id, width, height, initial, outside });
+      const ref = {
+        [GRID]: true, id, width, height,
+        fill(value) { assertV13SharedMutation("grid.fill(...)"); emit({ op: "grid_fill", grid: id, value: unwrapValue(value) }); },
+        get(x, z, target) {
+          assertV13SharedMutation("grid.get(...)");
+          if (!target || target[REF] !== "state") fail("grid.get(...) target must be a shared state reference");
+          emit({ op: "grid_get", grid: id, x: unwrapValue(x), z: unwrapValue(z), target: target.name });
+        },
+        set(x, z, value) { assertV13SharedMutation("grid.set(...)"); emit({ op: "grid_set", grid: id, x: unwrapValue(x), z: unwrapValue(z), value: unwrapValue(value) }); },
+        fillRect(rect) {
+          assertV13SharedMutation("grid.fillRect(...)");
+          if (rect == null || typeof rect !== "object") fail("grid.fillRect(...) requires an object");
+          emit({ op: "grid_fill_rect", grid: id, x: unwrapValue(rect.x), z: unwrapValue(rect.z), width: unwrapValue(rect.width), height: unwrapValue(rect.height), value: unwrapValue(rect.value) });
+        },
+      };
+      return Object.freeze(ref);
+    }
+
+    function rngDeclaration(id, spec) {
+      assertV13Id(id, "rng");
+      if (rngs.length >= 4) fail("portable v13 supports at most 4 random streams");
+      if (spec == null || typeof spec !== "object") fail("rng " + id + " spec must be an object");
+      const seed = finiteInteger(spec.seed, "rng " + id + " seed", -2147483648, 2147483647);
+      usesV13 = true;
+      rngs.push({ id, seed });
+      return Object.freeze({
+        [RNG]: true, id,
+        reset() { assertV13SharedMutation("rng.reset(...)"); emit({ op: "rng_reset", rng: id }); },
+        int(target, min, max) {
+          assertV13SharedMutation("rng.int(...)");
+          if (!target || target[REF] !== "state") fail("rng.int(...) target must be a shared state reference");
+          finiteInteger(min, "rng.int min", -2147483648, 2147483647);
+          finiteInteger(max, "rng.int max", -2147483648, 2147483647);
+          if (min > max) fail("rng.int(...) requires min <= max");
+          emit({ op: "rng_int", rng: id, target: target.name, min, max });
+        },
+      });
+    }
+
+    function gridWorldDeclaration(id, spec) {
+      assertV13Id(id, "gridWorld");
+      if (gridWorlds.length >= 4) fail("portable v13 supports at most 4 grid-world projections");
+      if (spec == null || typeof spec !== "object") fail("gridWorld " + id + " spec must be an object");
+      if (!spec.grid || spec.grid[GRID] !== true) fail("gridWorld " + id + " grid must be returned by game.grid(...)");
+      if (!Array.isArray(spec.palette) || spec.palette.length < 1 || spec.palette.length > 8) fail("gridWorld " + id + " palette must contain 1..8 entries");
+      const palette = spec.palette.map((entry, index) => {
+        if (entry == null || typeof entry !== "object") fail("gridWorld " + id + " palette " + index + " must be an object");
+        if (typeof entry.block !== "string" || entry.block.length === 0) fail("gridWorld " + id + " palette " + index + " block must be a resource id string");
+        return { value: finiteNumber(entry.value, "gridWorld " + id + " palette " + index + " value"), block: entry.block };
+      });
+      const declaration = {
+        id, grid: spec.grid.id,
+        dimension: spec.dimension === undefined ? "minecraft:overworld" : spec.dimension,
+        originX: finiteInteger(spec.originX, "gridWorld " + id + " originX", -30000000, 30000000),
+        y: finiteInteger(spec.y, "gridWorld " + id + " y", -2048, 2048),
+        originZ: finiteInteger(spec.originZ, "gridWorld " + id + " originZ", -30000000, 30000000),
+        palette,
+        cellsPerTick: finiteInteger(spec.cellsPerTick === undefined ? 128 : spec.cellsPerTick, "gridWorld " + id + " cellsPerTick", 1, 256),
+      };
+      if (typeof declaration.dimension !== "string" || declaration.dimension.length === 0) fail("gridWorld " + id + " dimension must be a resource id string");
+      usesV13 = true;
+      gridWorlds.push(declaration);
+      const ready = Object.freeze(comparable("grid_world_ready", id));
+      return Object.freeze({
+        [GRID_WORLD]: true, id, ready,
+        rebuild() { assertV13SharedMutation("gridWorld.rebuild(...)"); emit({ op: "grid_world_rebuild", target: id }); },
+      });
     }
 
     function block(id, spec) {
@@ -749,6 +861,10 @@
       input(name, initial = 0, binding) { return makeInput(name, initial, binding); },
       players,
       forEachPlayer,
+      forSinglePlayer,
+      grid: gridDeclaration,
+      rng: rngDeclaration,
+      gridWorld: gridWorldDeclaration,
       tick,
       repeat,
       when,
@@ -775,7 +891,7 @@
 
     build(dsl);
     if (tickActions === null) fail("tick(...) must be declared exactly once");
-    if (Object.keys(stateValues).length === 0 && Object.keys(playerStateValues).length === 0) fail("at least one shared or player-local state is required");
+    if (Object.keys(stateValues).length === 0 && Object.keys(playerStateValues).length === 0 && grids.length === 0) fail("at least one shared state, player-local state, or grid is required");
 
     if (usesPlayerApi) {
       if (Object.keys(inputValues).length > 0 || Object.keys(vanillaInputs).length > 0) fail("game.input(...) is v1-v11 compatibility only; use player.input.* in multiplayer v12");
@@ -785,17 +901,19 @@
 
     const usesSpectateCamera = cameras.some(camera => camera.mode === "spectate");
     const spec = {
-      version: usesPlayerApi ? 12 : (usesSpectateCamera ? 11 : (ownership === null ? 9 : 10)),
+      version: usesV13 ? 13 : (usesPlayerApi ? 12 : (usesSpectateCamera ? 11 : (ownership === null ? 9 : 10))),
       fixedPoint,
       state: stateValues,
       tick: tickActions,
     };
     if (Object.keys(inputValues).length > 0) spec.inputs = inputValues;
+    if (grids.length > 0) spec.grids = grids;
+    if (rngs.length > 0) spec.rngs = rngs;
     if (usesPlayerApi) {
       spec.playerState = playerStateValues;
       spec.playerInputs = Array.from(playerInputs);
     }
-    if (ownership !== null || Object.keys(vanillaInputs).length > 0 || projections.length > 0 || texts.length > 0 || actorProjections.length > 0 || worldBatches.length > 0 || cameras.length > 0 || particles.length > 0 || sounds.length > 0 || huds.length > 0 || playerHuds.length > 0 || sidebars.length > 0) {
+    if (ownership !== null || Object.keys(vanillaInputs).length > 0 || projections.length > 0 || texts.length > 0 || actorProjections.length > 0 || worldBatches.length > 0 || gridWorlds.length > 0 || cameras.length > 0 || particles.length > 0 || sounds.length > 0 || huds.length > 0 || playerHuds.length > 0 || sidebars.length > 0) {
       spec.vanilla = {};
       if (ownership !== null) spec.vanilla.ownership = ownership;
       if (Object.keys(vanillaInputs).length > 0) spec.vanilla.inputs = vanillaInputs;
@@ -803,6 +921,7 @@
       if (texts.length > 0) spec.vanilla.texts = texts;
       if (actorProjections.length > 0) spec.vanilla.actors = actorProjections;
       if (worldBatches.length > 0) spec.vanilla.worldBatches = worldBatches;
+      if (gridWorlds.length > 0) spec.vanilla.gridWorlds = gridWorlds;
       if (cameras.length > 0) spec.vanilla.cameras = cameras;
       if (particles.length > 0) spec.vanilla.particles = particles;
       if (sounds.length > 0) spec.vanilla.sounds = sounds;

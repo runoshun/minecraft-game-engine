@@ -162,7 +162,7 @@ ADR 0020 is the implemented design contract. v12 provides one shared game instan
 - `game.players()` returns an opaque `PlayerSet` representing all online participants in the shared game;
 - `game.forEachPlayer(players, player => ...)` is a `game.tick(...)`-scoped compiler primitive lowered through `execute as`;
 - `PlayerContext` is lexical, player-local references may not escape it, and nested player contexts are initially rejected;
-- `game.state(...)` remains shared and read-only from player context; shared mutations from player context are rejected;
+- in v12 `forEachPlayer`, `game.state(...)` remains shared and read-only and shared mutations are rejected; v13 adds the exact-cardinality `forSinglePlayer` exception described below;
 - `player.state(...)` is independently mutable per participant. The compiler exposes 32 player-state slots backed by namespace-stable scoreboard objectives and rejects larger programs;
 - `player.input.*` samples `hotbarSlot`, `forward`, `backward`, `left`, `right`, `jump`, `sneak`, and `sprint` independently for each online participant into eight fixed namespace-stable objectives before authored rules run;
 - missing player-local state is initialized before input/rules; disconnect preserves state for the active game instance; reload/replacement resets the instance; cleanup removes the full player-local objective bank, including offline entries;
@@ -172,10 +172,11 @@ ADR 0020 is the implemented design contract. v12 provides one shared game instan
 
 v12 exists only in the Node compiler/generated-datapack backend; there is no compatibility backend to update. Objective names use namespace-derived short hashes and fixed slot suffixes so the complete possible bank can be removed on reload/cleanup even after declarations are renamed or deleted.
 
-## Planned procedural grid v13
+## Portable procedural grid v13 core
 
-ADR 0022 is the accepted design contract for the next portable milestone. v13 is not implemented yet. It adds bounded shared runtime topology without restoring arbitrary JavaScript runtime collections:
+ADR 0022 is the implemented contract for the v13 compiler core. The core adds bounded shared runtime topology without restoring arbitrary JavaScript runtime collections; the 29 x 37 procedural roguelike remains the reference acceptance task for closing the full v13 milestone:
 
+- `game.forSinglePlayer(game.players(), player => ...)` executes only when exactly one online participant exists and, unlike multi-player `forEachPlayer`, may deterministically mutate shared state/grid/RNG/projection state from that sole player's input;
 - `game.grid(id, { width, height, initial, outside })` declares a fixed-size shared 2D grid, initially limited to 4 grids and 2,048 cells per grid;
 - runtime `fill`, `get`, `set`, and clipped `fillRect` actions provide dynamic indexed access while remaining compiler-bounded;
 - grid values use the normal portable fixed-point representation, while runtime coordinates are interpreted as integer cell units;
@@ -183,7 +184,7 @@ ADR 0022 is the accepted design contract for the next portable milestone. v13 is
 - the v13 RNG algorithm is versioned and deterministic, using a fixed 32-bit LCG step lowered to scoreboard arithmetic;
 - `game.gridWorld(...)` declares an incremental fixed-footprint projection from grid cell values to one block per Minecraft cell, with `rebuild()` and read-only `ready`;
 - projection runs after authored rules in bounded `cellsPerTick` slices and projected terrain remains persistent after cleanup;
-- grid/RNG/world-grid mutations are shared and are rejected inside v12 `PlayerContext`;
+- grid/RNG/world-grid mutations are shared, rejected in multi-player `forEachPlayer`, and allowed in exact-cardinality `forSinglePlayer`;
 - rooms, enemies, and loot remain fixed compile-time slot pools built from existing `game.repeat`, scalar state, and presentation primitives rather than generic runtime arrays.
 
 Minecraft 26.1 function macros are the intended internal lowering for dynamic grid indexes. A mod-free probe on `second` verified dynamic scoreboard holders of the form `g$(i)` can be written and read using namespace-owned command storage. Raw macros/storage are not exposed through the portable API.
@@ -195,17 +196,24 @@ The v13 reference acceptance target is a regenerated top-down procedural rogueli
 - single-file TypeScript; no import/module resolution;
 - v1-v11 remain single-controller-oriented for compatibility; v12 is the multiplayer model;
 - fixed-point arithmetic relies on Minecraft scoreboard 32-bit behavior; generated commands do not add generic overflow guards;
-- no runtime generic arrays/collections, arbitrary packet-event dispatch, clickable inventory/dialog UI, persistent game storage, or arbitrary Minecraft queries; bounded runtime grid/RNG/procedural topology is planned for v13 but is not implemented yet;
+- no runtime generic arrays/collections, arbitrary packet-event dispatch, clickable inventory/dialog UI, persistent game storage, or arbitrary Minecraft queries; v13 provides bounded grid/RNG topology primitives but not generic collections or pathfinding;
 - one server-global sidebar and one shared camera declaration;
 - bounded 2D logic collision only, not Minecraft hitbox queries or 3D/swept physics;
-- v8 world projection is compile-time declared and persistent; v13 plans a bounded incremental runtime grid projection, also persistent;
+- v8 world projection is compile-time declared and persistent; v13 additionally provides bounded incremental runtime grid projection, also persistent;
 - v12 currently has one shared game instance whose participant set is all online players; filtered teams/lobbies, simultaneous sessions, private world scenes, independent per-player vanilla sidebars, distinct per-player cameras, and cross-player reductions are not implemented.
 
 ## Validation baseline
 
-Portable v1-v12 compiler behavior is covered by the Node regression suite; generated v1-v11 gameplay has been exercised on mod-free Minecraft 26.1. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
+Portable v1-v13 compiler behavior is covered by the Node regression suite; generated v1-v11 gameplay has been exercised on mod-free Minecraft 26.1. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
 
 Node migration ADR 0021 additionally established byte-for-byte output parity with the retired Java compiler for representative v1, v9, v10, and v11 programs including Bounce, Pinball, Breakout, Presentation, UI, World, JRPG, and spectate-camera cases. Node compiler regression tests are now the maintained build-time acceptance suite.
+
+
+### v13 core validation
+
+The v13 compiler core has focused mod-free Minecraft 26.1 validation on `second`. Runtime grid `fill`, clipped `fillRect`, dynamic macro-backed `get`/`set`, out-of-bounds fallback, deterministic RNG reset/reload behavior, and incremental `gridWorld` projection were exercised against a generated 4 x 3 smoke grid. The projection completed in three 5-cell slices, exposed `ready == 1` in portable fixed-point form, produced the expected 5 white / 7 black block footprint, and left no force-loaded chunks. `/reload` reproduced the same first RNG sample and grid result.
+
+`forSinglePlayer` was validated at zero, one, and two participants. With only real client `Camera2` online, a real A input changed shared `inputHits` from `0` to `1000` through `player.input.left`; with a second participant simultaneously online, the same real A input left both `inputHits` and a shared singleton tick counter at `0`, proving exact-cardinality suppression rather than arbitrary first-player selection. Cleanup removed the complete grid bank, player-input objective, main objective, and force-loads; the 12-cell temporary terrain footprint was explicitly restored to air and the smoke pack removed. The current v13 compiler was also compared against `6dc6da7` for all eight retained v1-v12 examples (Bounce, Pinball, Breakout, Presentation, UI, World, JRPG, and Multiplayer), with byte-for-byte identical generated output.
 
 ### v12 multiplayer validation
 

@@ -198,6 +198,124 @@ test("v12 parser rejects escaped player writes and legacy shared input", () => {
   `), /inputs is v1-v11 compatibility only/);
 });
 
+test("v13 grid RNG projection and singleton player scope lower to bounded vanilla functions", () => {
+  const { program, output, result } = compileSource(`
+    portableDsl({ fixedPoint: 1000 }, game => {
+      const x = game.state("x", 1);
+      const z = game.state("z", 1);
+      const cell = game.state("cell", 0);
+      const roll = game.state("roll", 0);
+      const dungeon = game.grid("dungeon", { width: 4, height: 3, initial: 0, outside: -1 });
+      const rng = game.rng("dungeon_rng", { seed: 12345 });
+      const terrain = game.gridWorld("terrain", {
+        grid: dungeon,
+        originX: 20, y: 80, originZ: 30,
+        palette: [
+          { value: 0, block: "minecraft:black_concrete" },
+          { value: 1, block: "minecraft:white_concrete" },
+          { value: 2, block: "minecraft:lime_concrete" },
+        ],
+        cellsPerTick: 5,
+      });
+      const players = game.players();
+      game.tick(() => {
+        game.forSinglePlayer(players, player => {
+          game.when(player.input.left.eq(1), () => x.sub(1));
+          dungeon.get(x, z, cell);
+          game.when(player.input.jump.eq(1), () => {
+            rng.int(roll, 1, 2);
+            dungeon.set(x, z, roll);
+            dungeon.fillRect({ x: 0, z: 0, width: 2, height: 2, value: 1 });
+            terrain.rebuild();
+          });
+        });
+        game.when(terrain.ready.eq(1), () => cell.add(0));
+      });
+    });
+  `, "portable_v13_grid");
+
+  assert.equal(program.version, 13);
+  assert.equal(result.gridCount, 1);
+  assert.equal(result.rngCount, 1);
+  assert.equal(result.gridWorldCount, 1);
+  assert.equal(program.grids[0].width, 4);
+  assert.equal(program.grids[0].height, 3);
+  assert.equal(program.grids[0].outsideRaw, -1000);
+
+  const load = read(output, "data/portable_v13_grid/function/portable/load.mcfunction");
+  const tick = read(output, "data/portable_v13_grid/function/portable/tick.mcfunction");
+  const player = read(output, "data/portable_v13_grid/function/portable/player_000.mcfunction");
+  const getMacro = read(output, "data/portable_v13_grid/function/portable/grid_dungeon_get_macro.mcfunction");
+  const setMacro = read(output, "data/portable_v13_grid/function/portable/grid_dungeon_set_macro.mcfunction");
+  const rect = read(output, "data/portable_v13_grid/function/portable/grid_dungeon_rect_prepare.mcfunction");
+  const jumpBranch = read(output, "data/portable_v13_grid/function/portable/branch_001.mcfunction");
+  const cleanup = read(output, "data/portable_v13_grid/function/portable/cleanup.mcfunction");
+  const marker = read(output, ".mcgame-portable-generated");
+
+  assert.match(load, /scoreboard objectives remove mgg[0-9a-f]{8}00/);
+  assert.match(load, /scoreboard objectives remove mgg[0-9a-f]{8}03/);
+  assert.match(load, /scoreboard objectives add mgg[0-9a-f]{8}00 dummy/);
+  assert.match(load, /scoreboard players set #r00 .* 12345/);
+  assert.match(getMacro, /^\$scoreboard players operation #gv .* = g\$\(i\) mgg/m);
+  assert.match(setMacro, /^\$scoreboard players operation g\$\(i\) mgg.* = #gv /m);
+  assert.match(player, /function portable_v13_grid:portable\/grid_dungeon_get_at/);
+  assert.match(jumpBranch, /scoreboard players operation #r00 .* \*= #c\d+ /);
+  assert.doesNotMatch(jumpBranch, /matches \.\.-1/);
+  assert.match(load, /scoreboard players set #c\d+ .* 1664525/);
+  assert.match(load, /scoreboard players set #c\d+ .* 1013904223/);
+  assert.match(jumpBranch, /scoreboard players set #w00a .* 1/);
+  assert.match(rect, /run scoreboard players operation g0 mgg/);
+  assert.doesNotMatch(rect, /return run function/);
+  assert.match(tick, /execute store result score #pc .* if entity @a/);
+  assert.match(tick, /matches 1 as @a\[limit=1,sort=arbitrary\] run function portable_v13_grid:portable\/player_000/);
+  assert.match(tick, /scoreboard players set #ws .* 0/);
+  assert.match(tick, /grid_world_terrain_slice_000/);
+  assert.match(tick, /grid_world_terrain_slice_002/);
+  assert.match(cleanup, /scoreboard objectives remove mgg[0-9a-f]{8}03/);
+  assert.match(cleanup, /data remove storage portable_v13_grid:portable_runtime macro/);
+  const finalSlice = read(output, "data/portable_v13_grid/function/portable/grid_world_terrain_slice_002.mcfunction");
+  assert.match(finalSlice, /scoreboard players set #w00r .* 1000/);
+  assert.match(marker, /portable_version=13/);
+  assert.match(marker, /grid\.dungeon=mgg[0-9a-f]{8}00/);
+  assert.match(marker, /rng\.dungeon_rng=#r00/);
+  assert.match(marker, /gridWorld\.terrain\.ready=#w00r/);
+});
+
+test("v13 singleton scope permits shared writes but multiplayer scope still rejects them", () => {
+  const single = extract(`
+    portableDsl(game => {
+      const shared = game.state("shared", 0);
+      const grid = game.grid("map", { width: 2, height: 2, initial: 0, outside: 0 });
+      const rng = game.rng("r", { seed: 7 });
+      const players = game.players();
+      game.tick(() => game.forSinglePlayer(players, player => {
+        shared.add(1);
+        grid.set(0, 0, 1);
+        rng.int(shared, 0, 3);
+      }));
+    });
+  `);
+  assert.equal(single.version, 13);
+  assert.equal(single.tickActions[0].op, "for_single_player");
+
+  assert.throws(() => extract(`
+    portableDsl(game => {
+      game.state("shared", 0);
+      const grid = game.grid("map", { width: 2, height: 2, initial: 0, outside: 0 });
+      const players = game.players();
+      game.tick(() => game.forEachPlayer(players, player => grid.set(0, 0, 1)));
+    });
+  `), /shared mutation.*multi-player PlayerContext/);
+
+  assert.throws(() => parseProgram({
+    version: 13,
+    fixedPoint: 1000,
+    state: { x: 0 },
+    grids: Array.from({ length: 5 }, (_, index) => ({ id: `g${index}`, width: 1, height: 1, initial: 0, outside: 0 })),
+    tick: [],
+  }), /exceeds max grid count 4/);
+});
+
 test("representative checked-in examples compile deterministically", () => {
   const cases = [
     ["examples/portable-bounce/datapack/data/portable_bounce/mcgame/main.ts", "portable_bounce", 1],

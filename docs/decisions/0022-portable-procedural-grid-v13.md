@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted design direction; implementation is planned and not yet present in portable v12.
+Accepted. The bounded grid/RNG/grid-world compiler core and singleton player scope are implemented in portable v13. The full v13 milestone remains open until the procedural roguelike reference acceptance gate below is completed.
 
 ## Context
 
@@ -71,6 +71,16 @@ game.tick(() => {
 
 The final implementation may use TypeScript interfaces/classes internally, but the public semantics and method names above are fixed for the first v13 implementation unless an implementation conflict is discovered before release.
 
+### Singleton player input scope
+
+v13 also adds `game.forSinglePlayer(players, player => ...)` for shared single-player games that use the v12 player-input vocabulary. It is a lexical `PlayerContext` like `forEachPlayer`, but it executes the callback **only when the supplied `PlayerSet` contains exactly one participant**. The first implementation accepts `game.players()` / `all_online`.
+
+Unlike `forEachPlayer`, the singleton callback may mutate shared `game.state`, Grid, RandomStream, and GridWorldProjection state. This is deterministic because there is exactly one executor. With zero participants or more than one participant, the callback does not execute at all. It must not silently select an arbitrary first player.
+
+The vanilla lowering explicitly counts the `PlayerSet`, stores that count in compiler scratch state, and only when the count equals one executes the callback as the sole participant. Player-local references retain the same lexical non-escape rules as v12, and nested player scopes remain rejected.
+
+This scope is needed by games such as the procedural roguelike, whose dungeon/player position is shared game state but whose controls must come from vanilla per-player input. Multiplayer games continue to use `forEachPlayer` and its prohibition on shared mutation.
+
 ### Grid declaration and bounds
 
 `game.grid(id, spec)` declares shared game-instance topology state.
@@ -85,9 +95,9 @@ The first v13 compiler supports:
 
 Grid cell values use the same fixed-point representation as ordinary portable shared state. This lets a value returned by `grid.get(...)` participate in existing comparisons without a second numeric model.
 
-Dynamic x/z/width/height operands are ordinary shared portable values and are interpreted as logical integer cell units. Lowering divides the fixed-point score by `fixedPoint`, using Minecraft scoreboard integer division; fractional logical coordinates therefore truncate toward zero. Grid-oriented game code should keep these operands integer-valued.
+Dynamic x/z/width/height operands are ordinary shared portable values and are interpreted as logical integer cell units. Lowering divides the fixed-point score by `fixedPoint` using Minecraft scoreboard integer division. Minecraft 26.1 rounds negative division toward negative infinity (`-1500 / 1000 -> -2`), so fractional negative coordinates follow that behavior. Grid-oriented game code should keep coordinate and extent operands integer-valued.
 
-Grid operations are shared mutations and are rejected from `PlayerContext` in v13.
+Grid operations are shared mutations. They are rejected from multi-player `forEachPlayer` contexts and permitted in the exact-cardinality `forSinglePlayer` context.
 
 ### Grid actions
 
@@ -124,18 +134,17 @@ The initial methods are:
 - `rng.int(targetState, min, max)` — advance the stream once and write an integer in the inclusive compile-time range `min..max` to a shared mutable state;
 - `rng.reset()` — restore the stream to its declared seed.
 
-`min` and `max` must be compile-time integers, `min <= max`, and every possible scaled result must fit the signed 32-bit scoreboard range. RNG actions are shared mutations and are rejected from `PlayerContext` in v13.
+`min` and `max` must be compile-time integers, `min <= max`, and every possible scaled result must fit the signed 32-bit scoreboard range. RNG actions are shared mutations. They are rejected from multi-player `forEachPlayer` contexts and permitted in `forSinglePlayer`.
 
 The v13 random algorithm is part of the IR semantics so a seed is reproducible across generated packs. It uses a 32-bit linear congruential step with scoreboard wraparound:
 
 ```text
 state = state * 1664525 + 1013904223   // signed 32-bit wrap
-sample = state % range
-if sample < 0: sample = -sample
+sample = floorMod(state, range)           // range is positive
 result = min + sample
 ```
 
-The result is then scaled by the program's `fixedPoint` before being written to ordinary portable state. Modulo is applied before negation, avoiding the signed-minimum absolute-value edge case.
+The result is then scaled by the program's `fixedPoint` before being written to ordinary portable state. `floorMod` is part of the versioned v13 semantics: Minecraft 26.1 scoreboard `%=` with a positive divisor already produces the required non-negative remainder (for example `-3 % 2 -> 1`), so the generated lowering uses that operation directly.
 
 The first v13 API deliberately does not accept a runtime reseed value. A run that needs to restart from the canonical seed calls `reset()`; subsequent floors consume the same deterministic stream. Runtime-derived/forked seeds can be added later if a concrete game requires them.
 
@@ -148,7 +157,7 @@ The first v13 API deliberately does not accept a runtime reseed value. A run tha
 - a palette of 1..8 compile-time `{ value, block }` entries;
 - `cellsPerTick` in `1..256`.
 
-The initial v13 projection maps exactly one Minecraft block per grid cell. Multi-layer wall templates, dynamic block-state strings, and arbitrary per-cell block-write lists are deferred.
+The initial v13 projection maps exactly one Minecraft block per grid cell. A cell whose current value has no palette entry is left unchanged in Minecraft; portable games that require full footprint reconciliation must provide palette entries for every value they can project. Multi-layer wall templates, dynamic block-state strings, and arbitrary per-cell block-write lists are deferred.
 
 `projection.rebuild()` is an authored action. It sets the generated projection cursor to zero, marks `projection.ready` false, and starts/restarts the job. After authored tick rules, the generated projection service processes at most `cellsPerTick` cells in row-major order. For each cell it reads the current grid score and writes the palette block at the corresponding fixed world coordinate. When the final cell is processed, the service marks `projection.ready` true.
 
@@ -199,7 +208,9 @@ Those capabilities require separate evidence and design rather than being smuggl
 
 ## Acceptance gate
 
-v13 is complete only when the Node compiler tests and a mod-free Minecraft 26.1 E2E prove all of the following:
+The v13 compiler core is independently acceptable once its bounded lowering, cleanup, deterministic seed behavior, and singleton cardinality/input path are covered by Node tests plus a focused Minecraft 26.1 smoke test. The initial core acceptance on `second` covered a generated 4 x 3 grid, macro-backed dynamic access, clipped rectangle fill, deterministic `/reload`, incremental projection, real-client singleton input, two-participant suppression, complete objective/force-load cleanup, and explicit terrain teardown.
+
+The **full v13 milestone** is complete only when the procedural reference game and a mod-free Minecraft 26.1 E2E additionally prove all of the following:
 
 1. a generated pack creates a dungeon topology at runtime after load, rather than embedding the final tile map at compile time;
 2. the same declared RNG seed and same action sequence reproduce the same first-floor topology across `/reload`;

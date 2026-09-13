@@ -140,12 +140,20 @@ For shared `spectate` camera acceptance, use two simultaneous real render client
 
 This two-real-client spectate acceptance passed on `second`: `Camera` and `Camera2` both observed the same carrier at `[240,100,0]`, A on client 1 changed only `Camera`'s meter to `-9000`, D on client 2 changed only `Camera2`'s meter to `8000`, and opposite mouse-look attempts on the two clients both returned to the carrier rotation `[180,15]`. Cleanup left both players in Spectator, with no generated player tags, no player-state objectives, and no force-loaded chunks. The v12 shared-spectate-camera multiplayer E2E gate is therefore closed.
 
-## Planned procedural grid v13 acceptance
+## Procedural grid v13 acceptance
 
-ADR 0022 defines the next acceptance target; these checks apply once v13 implementation begins. Use a mod-free Minecraft 26.1 `second` environment and a generated procedural-grid reference game.
+ADR 0022 defines both the implemented v13 compiler-core acceptance and the remaining procedural-roguelike milestone gate. Use a mod-free Minecraft 26.1 `second` environment.
 
-Acceptance must prove that the final dungeon topology is generated at runtime rather than embedded at compile time, that the same declared seed and action sequence reproduce the same first floor across `/reload`, and that advancing the RNG stream produces a different subsequent floor. Runtime `grid.get` must be the gameplay collision source of truth.
+For compiler-core changes, first use a small generated grid smoke pack to verify dynamic macro-backed `get`/`set`, clipped `fillRect`, deterministic RNG reset/reload behavior, incremental grid-world projection, `ready`, complete grid-objective cleanup, and no force-load debt.
+
+The remaining full-milestone reference acceptance must prove that the final dungeon topology is generated at runtime rather than embedded at compile time, that the same declared seed and action sequence reproduce the same first floor across `/reload`, and that advancing the RNG stream produces a different subsequent floor. Runtime `grid.get` must be the gameplay collision source of truth.
+
+For `game.forSinglePlayer`, validate cardinality explicitly: zero participants must not execute the callback, exactly one participant must execute it and may update shared state from that player's real input, and two simultaneous participants must suppress the callback rather than choosing either participant.
 
 Grid-world projection must rebuild the fixed footprint in bounded `cellsPerTick` slices and keep gameplay gated until `projection.ready` becomes true. Cleanup must remove the complete grid-objective bank, RNG/projection scratch state, generated entities, and force-loads. As with v8 world projection, projected terrain is persistent and acceptance teardown must explicitly clear or restore the temporary test footprint after `portable/cleanup`.
 
-The intended dynamic-index lowering uses Minecraft 26.1 function macros internally. Before implementation, a `second` probe verified that a value stored as `i=42` can drive a macro scoreboard holder `g$(i)`, with both set and get resolving to `g42`. The probe objective, command storage, and datapack were removed immediately after validation.
+Dynamic grid indexes use Minecraft 26.1 function macros internally. A `second` probe verified that a value stored as `i=42` can drive a macro scoreboard holder `g$(i)`, with both set and get resolving to `g42`. The v13 core smoke subsequently exercised the same lowering through generated `grid.get`/`grid.set`. Temporary probe resources must be removed after validation.
+
+Do not assume JavaScript-style integer arithmetic when diagnosing grid/RNG lowering. Minecraft 26.1 scoreboard division rounds negative values toward negative infinity (`-1500 / 1000 -> -2`) and positive-divisor modulo is floor-mod (`-3 % 2 -> 1`). ADR 0022 makes those behaviors part of v13 coordinate conversion and RNG semantics.
+
+The initial v13 core acceptance passed on `second` with a generated 4 x 3 grid. Dynamic grid access, clipped rectangle fill, out-of-bounds fallback, deterministic reload replay, three-slice terrain projection, fixed-point `ready`, and zero force-load debt all passed. With only real client `Camera2` online, real A input advanced a shared edge counter `0 -> 1000` through `forSinglePlayer`; after a second participant joined, the same real A input left the counter and singleton tick state at `0`. Final cleanup removed grid/player/main objectives, restored the 12 temporary projected blocks to air, and removed the smoke datapack.

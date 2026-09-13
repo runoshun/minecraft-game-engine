@@ -13,6 +13,7 @@ import {
 } from "./compile-vanilla.mjs";
 import { NAMESPACE } from "./utils.mjs";
 import { compilePlayerHuds, compilePlayerLoad, compilePlayerTickPrelude, playerInputField } from "./compile-player.mjs";
+import { compileGridLoad, compileGridWorldServices, gridCleanupLines } from "./compile-grid.mjs";
 
 function write(file, content) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -50,6 +51,7 @@ export function compileDatapack(program, namespace, outputRoot) {
   compileVanillaInputs(program, tick, ctx);
   compilePlayerTickPrelude(program, tick, ctx);
   compileActions(program.tickActions, tick, ctx);
+  compileGridWorldServices(program, tick, ctx);
   compileVanillaProjections(program, tick, ctx);
   compileVanillaTextUpdates(program, tick, ctx);
   compileVanillaActorUpdates(program, tick, ctx);
@@ -68,6 +70,7 @@ export function compileDatapack(program, namespace, outputRoot) {
   for (const [name, raw] of Object.entries(program.initialState)) load.push(`scoreboard players set #${name} ${ctx.objective} ${raw}`);
   for (const [name, raw] of Object.entries(program.initialInputs)) load.push(`scoreboard players set ${inputHolder(name)} ${ctx.objective} ${raw}`);
   compilePlayerLoad(program, load, ctx);
+  compileGridLoad(program, load, ctx);
   if (ctx.usesNegate) load.push(`scoreboard players set #neg1 ${ctx.objective} -1`);
   for (const [raw, holder] of ctx.constants.entries()) load.push(`scoreboard players set ${holder} ${ctx.objective} ${raw}`);
   compileVanillaWorldBatchLoadCalls(program, load, ctx);
@@ -104,7 +107,7 @@ export function compileDatapack(program, namespace, outputRoot) {
   const functionRoot = path.join(outputRoot, "data", namespace, "function", "portable");
   write(path.join(functionRoot, "load.mcfunction"), `${load.join("\n")}\n`);
   write(path.join(functionRoot, "tick.mcfunction"), `${tick.join("\n")}\n`);
-  write(path.join(functionRoot, "cleanup.mcfunction"), `${cleanupLines(program, ctx).join("\n")}\n`);
+  write(path.join(functionRoot, "cleanup.mcfunction"), `${[...gridCleanupLines(program, ctx), ...cleanupLines(program, ctx)].join("\n")}\n`);
   for (const [name, body] of ctx.functions.entries()) write(path.join(functionRoot, `${name}.mcfunction`), `${body.join("\n")}\n`);
 
   let marker = `namespace=${namespace}\nobjective=${ctx.objective}\nportable_version=${program.version}\nfixed_point=${program.fixedPoint}\n`;
@@ -114,6 +117,11 @@ export function compileDatapack(program, namespace, outputRoot) {
     for (const name of Object.keys(program.initialPlayerState).sort()) marker += `player.state.${name}=${ctx.playerStateObjective(name)}\n`;
     for (const name of [...program.playerInputs].sort()) marker += `player.input.${name}=${ctx.playerInputObjective(name)}\n`;
   }
+  if (program.version >= 13) {
+    for (const value of [...program.grids].sort((a, b) => a.id.localeCompare(b.id))) marker += `grid.${value.id}=${ctx.gridObjective(value.id)}\n`;
+    for (const value of [...program.rngs].sort((a, b) => a.id.localeCompare(b.id))) marker += `rng.${value.id}=${ctx.rngHolder(value.id)}\n`;
+    for (const value of [...program.gridWorlds].sort((a, b) => a.id.localeCompare(b.id))) marker += `gridWorld.${value.id}.ready=${ctx.gridWorldReadyHolder(value.id)}\n`;
+  }
   write(path.join(outputRoot, ".mcgame-portable-generated"), marker);
 
   return {
@@ -122,6 +130,9 @@ export function compileDatapack(program, namespace, outputRoot) {
     inputCount: Object.keys(program.initialInputs).length,
     playerStateCount: Object.keys(program.initialPlayerState || {}).length,
     playerInputCount: program.playerInputs?.size ?? 0,
+    gridCount: program.grids?.length ?? 0,
+    rngCount: program.rngs?.length ?? 0,
+    gridWorldCount: program.gridWorlds?.length ?? 0,
     projectionCount: program.projections.length,
     textCount: program.texts.length,
     actorCount: program.actors.length,

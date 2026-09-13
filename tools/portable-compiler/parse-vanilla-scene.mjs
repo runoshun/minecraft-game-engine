@@ -1,6 +1,7 @@
 import { LIMITS, fail, has, isObject, requiredArray, requiredMember, requiredObject, requiredString, memberString, boundedInteger, memberResource, portableId, sortedKeys } from "./utils.mjs";
 import { parseCondition, parseCoordinate, parseTokens } from "./parse-value.mjs";
 import { parseVec3 } from "./parse-shapes.mjs";
+import { parseGridWorlds } from "./parse-runtime.mjs";
 
 function uniqueIds(values, path) {
   const seen = new Set();
@@ -13,7 +14,7 @@ function uniqueIds(values, path) {
 }
 
 export function parseVanillaScene(vanilla, ctx, api) {
-  const out = { inputs: {}, projections: [], texts: [], actors: [], worldBatches: [] };
+  const out = { inputs: {}, projections: [], texts: [], actors: [], worldBatches: [], gridWorlds: [] };
   if (has(vanilla, "inputs")) {
     const bindings = requiredObject(vanilla, "inputs", `${api}.vanilla`);
     const allowed = ["first_player_hotbar_slot", "first_player_forward", "first_player_backward", "first_player_left", "first_player_right", "first_player_jump", "first_player_sneak", "first_player_sprint"];
@@ -78,5 +79,6 @@ export function parseVanillaScene(vanilla, ctx, api) {
       return { id: v.id, dimension: memberResource(v, "dimension", "minecraft:overworld", p), blocks: blocks.map((w, j) => { const q = `${p}.blocks[${j}]`; if (!isObject(w)) fail(`${q} must be an object`); return { x: boundedInteger(requiredMember(w, "x", q), -30000000, 30000000, `${q}.x`), y: boundedInteger(requiredMember(w, "y", q), -2048, 2048, `${q}.y`), z: boundedInteger(requiredMember(w, "z", q), -30000000, 30000000, `${q}.z`), block: memberResource(w, "block", null, q) }; }), condition: has(v, "when") ? parseCondition(requiredObject(v, "when", p), ctx, `${p}.when`) : null };
     });
   }
+  out.gridWorlds = parseGridWorlds(vanilla, ctx, api);
   return out;
 }

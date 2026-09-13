@@ -11,10 +11,17 @@ export const LIMITS = Object.freeze({
   states: 128,
   inputs: 32,
   playerStates: 32,
+  grids: 4,
+  gridDimension: 64,
+  gridCells: 2048,
+  rngs: 4,
   projections: 64,
   texts: 64,
   actors: 64,
   worldBatches: 32,
+  gridWorlds: 4,
+  gridPalette: 8,
+  gridCellsPerTick: 256,
   worldWrites: 32768,
   cameras: 1,
   particles: 64,
@@ -29,7 +36,7 @@ export const LIMITS = Object.freeze({
   depth: 16,
 });
 
-export const CURRENT_VERSION = 12;
+export const CURRENT_VERSION = 13;
 
 export function fail(message) { throw new Error(message); }
 export function has(object, member) { return Object.prototype.hasOwnProperty.call(object, member); }

@@ -24,6 +24,13 @@ export function playerInputObjective(namespace, name) {
 }
 export function playerHudTempObjective(namespace, index) { return `mph${hashHex8(namespace)}${slot(index)}`; }
 export function playerInitObjective(namespace) { return `mpz${hashHex8(namespace)}`; }
+export function gridObjective(namespace, index) { return `mgg${hashHex8(namespace)}${slot(index)}`; }
+export function fullGridObjectiveBank(namespace) {
+  const out = [];
+  for (let i = 0; i < LIMITS.grids; i++) out.push(gridObjective(namespace, i));
+  return out;
+}
+export function runtimeStorage(namespace) { return `${namespace}:portable_runtime`; }
 export function fullPlayerObjectiveBank(namespace) {
   const out = [playerInitObjective(namespace)];
   for (let i = 0; i < PLAYER_STATE_SLOT_COUNT; i++) out.push(playerStateObjective(namespace, i));
@@ -43,6 +50,12 @@ export class CompileContext {
     this.sidebarValues = new Map();
     this.playerStateObjectives = new Map();
     Object.keys(program.initialPlayerState || {}).sort().forEach((name, index) => this.playerStateObjectives.set(name, playerStateObjective(namespace, index)));
+    this.gridObjectives = new Map();
+    [...(program.grids || [])].map(grid => grid.id).sort().forEach((id, index) => this.gridObjectives.set(id, gridObjective(namespace, index)));
+    this.rngHolders = new Map();
+    [...(program.rngs || [])].map(rng => rng.id).sort().forEach((id, index) => this.rngHolders.set(id, `#r${slot(index)}`));
+    this.gridWorldSlots = new Map();
+    [...(program.gridWorlds || [])].map(value => value.id).sort().forEach((id, index) => this.gridWorldSlots.set(id, index));
     this.nextConstant = 0;
     this.nextBranch = 0;
     this.nextPlayer = 0;
@@ -72,6 +85,24 @@ export class CompileContext {
     if (index < 0 || index >= PLAYER_HUD_TEMP_COUNT) fail(`player HUD temp index exceeds ${PLAYER_HUD_TEMP_COUNT}`);
     return playerHudTempObjective(this.namespace, index);
   }
+  gridObjective(id) {
+    const objective = this.gridObjectives.get(id);
+    if (!objective) fail(`unknown grid objective: ${id}`);
+    return objective;
+  }
+  rngHolder(id) {
+    const holder = this.rngHolders.get(id);
+    if (!holder) fail(`unknown RNG holder: ${id}`);
+    return holder;
+  }
+  gridWorldSlot(id) {
+    const index = this.gridWorldSlots.get(id);
+    if (index === undefined) fail(`unknown grid-world projection: ${id}`);
+    return slot(index);
+  }
+  gridWorldReadyHolder(id) { return `#w${this.gridWorldSlot(id)}r`; }
+  gridWorldActiveHolder(id) { return `#w${this.gridWorldSlot(id)}a`; }
+  gridWorldCursorHolder(id) { return `#w${this.gridWorldSlot(id)}c`; }
   textValueHolder(id, index) {
     const key = `${id}:${index}`;
     if (!this.textValues.has(key)) this.textValues.set(key, `#t${this.nextText++}`);
@@ -88,6 +119,7 @@ export class CompileContext {
       case "input": return { holder: inputHolder(value.name), objective: this.objective };
       case "player_state": return { holder: "@s", objective: this.playerStateObjective(value.name) };
       case "player_input": return { holder: "@s", objective: this.playerInputObjective(value.name) };
+      case "grid_world_ready": return { holder: this.gridWorldReadyHolder(value.name), objective: this.objective };
       case "constant": return { holder: this.constantHolder(value.raw), objective: this.objective };
       default: fail(`unknown portable value kind: ${value.kind}`);
     }

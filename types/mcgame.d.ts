@@ -7,6 +7,7 @@ type PortableStateRef = { state: string };
 type PortableInputRef = { input: string };
 type PortablePlayerStateRef = { playerState: string };
 type PortablePlayerInputRef = { playerInput: PortablePlayerInputName };
+type PortableGridWorldReadyRef = { gridWorldReady: string };
 type PortablePlayerInputName = "hotbarSlot" | "forward" | "backward" | "left" | "right" | "jump" | "sneak" | "sprint";
 type PortableValue = number | PortableStateRef | PortableInputRef;
 type PortablePlayerValue = PortableValue | PortablePlayerStateRef | PortablePlayerInputRef;
@@ -259,7 +260,53 @@ type PortableProgramSpecV12 = {
   };
   tick: Array<PortableAction | PortableForEachPlayerAction>;
 };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12;
+
+type PortableGridSpec = { id: string; width: number; height: number; initial: number; outside: number };
+type PortableRngSpec = { id: string; seed: number };
+type PortableGridWorldSpec = {
+  id: string;
+  grid: string;
+  dimension?: string;
+  originX: number;
+  y: number;
+  originZ: number;
+  palette: Array<{ value: number; block: string }>;
+  cellsPerTick: number;
+};
+type PortableV13Value = PortablePlayerValue | PortableGridWorldReadyRef;
+type PortableV13Comparison = {
+  op: "eq" | "ne" | "lt" | "lte" | "gt" | "gte";
+  left: PortableV13Value;
+  right: PortableV13Value;
+};
+type PortableV13Action =
+  | PortableAction
+  | { op: "player_set" | "player_add" | "player_sub"; target: string; value: PortableV13Value }
+  | { op: "player_negate"; target: string }
+  | { op: "grid_fill"; grid: string; value: PortableV13Value }
+  | { op: "grid_get"; grid: string; x: PortableV13Value; z: PortableV13Value; target: string }
+  | { op: "grid_set"; grid: string; x: PortableV13Value; z: PortableV13Value; value: PortableV13Value }
+  | { op: "grid_fill_rect"; grid: string; x: PortableV13Value; z: PortableV13Value; width: PortableV13Value; height: PortableV13Value; value: PortableV13Value }
+  | { op: "rng_reset"; rng: string }
+  | { op: "rng_int"; rng: string; target: string; min: number; max: number }
+  | { op: "grid_world_rebuild"; target: string }
+  | { op: "if"; condition: PortableV13Comparison; then: PortableV13Action[]; else?: PortableV13Action[] }
+  | { op: "for_each_player" | "for_single_player"; players: "all_online"; actions: PortableV13Action[] };
+type PortableProgramSpecV13 = {
+  version: 13;
+  fixedPoint?: number;
+  state: Record<string, number>;
+  playerState?: Record<string, number>;
+  playerInputs?: PortablePlayerInputName[];
+  grids?: PortableGridSpec[];
+  rngs?: PortableRngSpec[];
+  vanilla?: Omit<NonNullable<PortableProgramSpecV12["vanilla"]>, "cameras"> & {
+    cameras?: PortableVanillaCameraV12[];
+    gridWorlds?: PortableGridWorldSpec[];
+  };
+  tick: PortableV13Action[];
+};
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -289,7 +336,8 @@ type PortableDslPlayerState = PortableDslComparable & {
   negate(): void;
 };
 type PortableDslPlayerInput = PortableDslComparable & { readonly name: PortablePlayerInputName };
-type PortableDslSharedValue = number | PortableDslState | PortableDslInput;
+type PortableDslGridWorldReady = PortableDslComparable & { readonly name: string };
+type PortableDslSharedValue = number | PortableDslState | PortableDslInput | PortableDslGridWorldReady;
 type PortableDslValue = PortableDslSharedValue | PortableDslPlayerState | PortableDslPlayerInput;
 type PortableDslCondition = { readonly __portableDslCondition?: never };
 type PortableDslCoordinate = number | PortableDslState | { readonly __portableDslCoordinate?: never };
@@ -313,6 +361,34 @@ type PortableDslTextSpec = {
   scale?: number | { x: number; y: number; z: number };
   billboard?: "fixed" | "vertical" | "horizontal" | "center";
   when?: PortableDslCondition;
+};
+type PortableDslGrid = {
+  readonly id: string;
+  readonly width: number;
+  readonly height: number;
+  fill(value: PortableDslValue): void;
+  get(x: PortableDslValue, z: PortableDslValue, target: PortableDslState): void;
+  set(x: PortableDslValue, z: PortableDslValue, value: PortableDslValue): void;
+  fillRect(spec: { x: PortableDslValue; z: PortableDslValue; width: PortableDslValue; height: PortableDslValue; value: PortableDslValue }): void;
+};
+type PortableDslRng = {
+  readonly id: string;
+  reset(): void;
+  int(target: PortableDslState, min: number, max: number): void;
+};
+type PortableDslGridWorld = {
+  readonly id: string;
+  readonly ready: PortableDslGridWorldReady;
+  rebuild(): void;
+};
+type PortableDslGridWorldSpec = {
+  grid: PortableDslGrid;
+  dimension?: string;
+  originX: number;
+  y: number;
+  originZ: number;
+  palette: Array<{ value: number; block: string }>;
+  cellsPerTick?: number;
 };
 type PortableDslPlayerSet = { readonly __portableDslPlayerSet?: never };
 type PortableDslCameraSpec = {
@@ -412,6 +488,10 @@ type PortableDsl = {
   input(name: string, initial?: number, binding?: PortableDslInputBinding): PortableDslInput;
   players(): PortableDslPlayerSet;
   forEachPlayer(players: PortableDslPlayerSet, callback: (player: PortableDslPlayerContext) => void): void;
+  forSinglePlayer(players: PortableDslPlayerSet, callback: (player: PortableDslPlayerContext) => void): void;
+  grid(id: string, spec: { width: number; height: number; initial?: number; outside?: number }): PortableDslGrid;
+  rng(id: string, spec: { seed: number }): PortableDslRng;
+  gridWorld(id: string, spec: PortableDslGridWorldSpec): PortableDslGridWorld;
   tick(callback: () => void): void;
   repeat<T>(count: number, callback: (index: number) => T): readonly T[];
   when(condition: PortableDslCondition, thenCallback: () => void, elseCallback?: () => void): void;

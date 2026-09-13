@@ -25,7 +25,13 @@ export function parseValue(value, ctx, path) {
     if (!ctx.playerInputs.has(value.playerInput)) fail(`${path} references undeclared player input ${value.playerInput}`);
     return { kind: "player_input", name: value.playerInput };
   }
-  fail(`${path} must be a number or portable state/input reference`);
+  if (has(value, "gridWorldReady")) {
+    if (ctx.version < 13) fail(`${path}.gridWorldReady requires portable version 13`);
+    if (typeof value.gridWorldReady !== "string") fail(`${path}.gridWorldReady must be a string`);
+    if (!ctx.gridWorlds.has(value.gridWorldReady)) fail(`${path} references unknown grid-world projection ${value.gridWorldReady}`);
+    return { kind: "grid_world_ready", name: value.gridWorldReady };
+  }
+  fail(`${path} must be a number or portable scalar reference`);
 }
 
 export function parseCondition(value, ctx, path) {
