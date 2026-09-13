@@ -169,3 +169,12 @@ For regression acceptance, keep both team clients online simultaneously. Drive a
 The accepted reference run used `Camera` in `v14_red` and `Camera2` in `v14_blue`. Camera A produced meter `0 -> -14000` and `redHits 0 -> 1000` while blue stayed zero; Camera2 D then produced meter `0 -> 13000` and `blueHits 0 -> 1000` while red stayed unchanged. The two camera carriers resolved to `[248,140,8]` and `[280,140,8]`, and captures showed `RED METER -14 HIT 1` / `BLUE METER 13 HIT 1`. With both real clients online, `Test_v14out` had no init, left-input, or right-input score.
 
 Cleanup must be tested before external-team teardown: the accepted run changed ownership force-loads from eight chunks to zero, removed every portable objective and owner/camera entity, while `team list v14_red` / `v14_blue` still reported their original members. Only after that assertion should test teardown remove the temporary teams, delete the datapack, and reload.
+
+
+## Planned session-local v15 acceptance
+
+ADR 0024 defines the planned v15 logical-session gate. Use the mod-free Minecraft 26.1 `second` environment with two real clients assigned externally to two different vanilla teams. The generated acceptance pack must declare two compile-time sessions that intentionally reuse the same local scalar/Grid/RNG names so objective/holder qualification is exercised rather than hidden by source-level renaming.
+
+Keep both real clients online for the isolation proof. A real input in session A must change only A's session scalar state, same-named Grid cell, and exact-cardinality session rule; session B must remain unchanged. Then drive B and prove the inverse. Initialize both session RNGs with the same seed, prove their first sample matches, consume an extra sample only in A, and verify B remains on its own deterministic stream. A per-session player HUD should render a session-local scalar so the read path is exercised by a real client.
+
+For lifecycle, temporarily remove one real client from its external team (or disconnect it) and verify that session's logical state/Grid/RNG remain present and unchanged; restore membership and continue. `/reload` must reset both sessions to declared scalar/Grid/RNG initial values. Run `portable/cleanup` before external-team teardown and verify all portable/session Grid objectives and force-load/entity resources are gone while the external teams/memberships remain. Only then remove temporary teams and delete the test datapack.

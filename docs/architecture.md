@@ -201,6 +201,14 @@ V14 permits up to eight player HUD declarations and eight cameras when their aud
 
 This milestone deliberately stops at membership/audience partitioning. Team/session-local shared scalar state, grids/RNG, private world projection, team-local sidebars, reductions, and compiler-owned matchmaking remain future work.
 
+## Planned session-local logical matches v15
+
+ADR 0024 is accepted for implementation and defines the next bounded runtime slice. V15 binds compile-time session slots one-to-one to team-backed PlayerSets and gives each session independent shared scalar state, Grid objectives, and deterministic RNG holders. The authoring shape is `game.session(id, teamPlayers, session => ...)`, with `session.state`, `session.grid`, `session.rng`, `session.forEachPlayer`, and `session.forSinglePlayer`. Session callbacks execute once per portable tick even when their team is empty; player iteration remains cardinality-driven by online team members.
+
+Session-local references are lexical: they may not escape to global rules or another session. Global shared values may be read inside a session, but global mutation from SessionContext is rejected. Multi-player session callbacks may not mutate session-shared state/Grid/RNG, while exact-cardinality `session.forSinglePlayer` may. Player-local state remains player-owned and follows the player across externally managed team changes.
+
+V15 is logic isolation, not private world isolation. Existing `gridWorld`, block/entity projection, ownership regions, and vanilla sidebar remain global. Session-local grid-to-world projection, arena allocation/private scenes, dynamic matchmaking, session-local player state, and persistent saves are deliberately deferred. Until the ADR 0024 compiler and two-real-client acceptance gate pass, v14 remains the latest implemented Portable IR version.
+
 ## Current limitations
 
 - single-file TypeScript; no import/module resolution;
