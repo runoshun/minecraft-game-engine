@@ -199,15 +199,17 @@ For v14 programs, player initialization and held-input sampling target the union
 
 V14 permits up to eight player HUD declarations and eight cameras when their audiences are disjoint team PlayerSets. An `all_online` HUD/camera audience may not coexist with another of the same presentation kind, and duplicate team audiences are rejected. Camera mode still does not own player gamemode. The compiler owns generated camera carriers and portable objective state only; team creation, membership, and teardown are external server/session responsibilities.
 
-This milestone deliberately stops at membership/audience partitioning. Team/session-local shared scalar state, grids/RNG, private world projection, team-local sidebars, reductions, and compiler-owned matchmaking remain future work.
+V14 itself stops at membership/audience partitioning. V15 builds on that membership boundary with independent logical session state; private world projection, team-local sidebars, reductions, and compiler-owned matchmaking remain future work.
 
-## Planned session-local logical matches v15
+## Session-local logical matches v15
 
-ADR 0024 is accepted for implementation and defines the next bounded runtime slice. V15 binds compile-time session slots one-to-one to team-backed PlayerSets and gives each session independent shared scalar state, Grid objectives, and deterministic RNG holders. The authoring shape is `game.session(id, teamPlayers, session => ...)`, with `session.state`, `session.grid`, `session.rng`, `session.forEachPlayer`, and `session.forSinglePlayer`. Session callbacks execute once per portable tick even when their team is empty; player iteration remains cardinality-driven by online team members.
+ADR 0024 is the implemented and accepted v15 logical-session contract. V15 binds compile-time session slots one-to-one to team-backed PlayerSets and gives each session independent shared scalar state, Grid objectives, and deterministic RNG holders. The authoring shape is `game.session(id, teamPlayers, session => ...)`, with `session.state`, `session.grid`, `session.rng`, `session.forEachPlayer`, and `session.forSinglePlayer`. Session callbacks execute once per portable tick even when their team is empty; player iteration remains cardinality-driven by online team members.
 
-Session-local references are lexical: they may not escape to global rules or another session. Global shared values may be read inside a session, but global mutation from SessionContext is rejected. Multi-player session callbacks may not mutate session-shared state/Grid/RNG, while exact-cardinality `session.forSinglePlayer` may. Player-local state remains player-owned and follows the player across externally managed team changes.
+Session-local references are lexical: they may not escape to global rules or another session. Global shared values may be read inside a session, but global mutation from SessionContext is rejected. Multi-player session callbacks may not mutate session-shared state/Grid/RNG, while exact-cardinality `session.forSinglePlayer` may. Player-local state remains player-owned and follows the player across externally managed team changes. Session ids and team bindings are compile-time declarations; there is no runtime selector/string lookup or compiler-owned matchmaking.
 
-V15 is logic isolation, not private world isolation. Existing `gridWorld`, block/entity projection, ownership regions, and vanilla sidebar remain global. Session-local grid-to-world projection, arena allocation/private scenes, dynamic matchmaking, session-local player state, and persistent saves are deliberately deferred. Until the ADR 0024 compiler and two-real-client acceptance gate pass, v14 remains the latest implemented Portable IR version.
+Each session may reuse the same local scalar, Grid, and RNG names as another session because lowering qualifies holders/objectives by session slot. Session Grids keep the v13 per-grid bounds and are additionally subject to a bounded aggregate session-grid budget. `/reload` or generated-pack replacement resets every session to its declarations. An empty team does not delete/reset its logical session, and `portable/cleanup` removes compiler-owned session state while leaving external vanilla teams and membership untouched.
+
+V15 is logic isolation, not private world isolation. Existing `gridWorld`, block/entity projection, ownership regions, and vanilla sidebar remain global. Session-local grid-to-world projection, arena allocation/private scenes, dynamic matchmaking, session-local player state, cross-session reductions, and persistent saves are deliberately deferred.
 
 ## Current limitations
 
@@ -218,14 +220,22 @@ V15 is logic isolation, not private world isolation. Existing `gridWorld`, block
 - one server-global sidebar; v14 permits up to eight camera declarations only for disjoint external-team audiences;
 - bounded 2D logic collision only, not Minecraft hitbox queries or 3D/swept physics;
 - v8 world projection is compile-time declared and persistent; v13 additionally provides bounded incremental runtime grid projection, also persistent;
-- v14 adds external-team PlayerSet filtering and disjoint team HUD/camera audiences, but still has one shared portable game instance; session-local shared state/grids/RNG, simultaneous independent matches, private world scenes, independent per-player vanilla sidebars, and cross-player reductions are not implemented.
+- v15 adds independent team-bound logical sessions for shared scalar state, Grids, and RNG, but private/session-local world scenes, automatic arena allocation, dynamic matchmaking, independent per-player vanilla sidebars, persistent saves, and cross-player/session reductions are not implemented.
 
 ## Validation baseline
 
-Portable v1-v14 compiler behavior is covered by the Node regression suite; generated v1-v14 milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
+Portable v1-v15 compiler behavior is covered by the Node regression suite; generated v1-v15 milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
 
 Node migration ADR 0021 additionally established byte-for-byte output parity with the retired Java compiler for representative v1, v9, v10, and v11 programs including Bounce, Pinball, Breakout, Presentation, UI, World, JRPG, and spectate-camera cases. Node compiler regression tests are now the maintained build-time acceptance suite.
 
+
+### v15 session-local logical-match validation
+
+Portable v15 passed its mod-free Minecraft 26.1 acceptance on `second` using real clients `Camera` and `Camera2` in external teams `v15_red` and `v15_blue`. The checked-in acceptance pack deliberately reused local names `score`, `cell`, `sample`, Grid `map`, and RNG `run` in both sessions. Before player input, both identically seeded RNGs had state `1879724910` and first sample `31000`. With both clients online globally, real A input from Camera changed only red `score` / `cell` / `map[0,0]` from `0 -> 1000`, advanced red RNG state to `804324341` with sample `30000`, and left every blue value unchanged. Real D input from Camera2 then produced the same first transition in blue while red remained unchanged. This validates same-name scalar/Grid/RNG isolation and independent per-session exact-cardinality execution.
+
+Real-client captures rendered session-local HUD values independently (`RED S 1 C 1 R 30` and `BLUE S 1 C 1 R 30`). Removing Camera from `v15_red` left red `score=1000`, Grid cell `1000`, sample `30000`, and RNG state `804324341` intact while the team was empty. Rejoining and pressing A resumed the existing instance (`score` / Grid `1000 -> 2000`, RNG `804324341 -> 372032720`) without changing blue. `/reload` then reset both sessions deterministically to `score/cell/Grid=0`, reproduced sample `31000` and RNG state `1879724910`, and preserved the externally managed team memberships.
+
+Final `portable/cleanup` removed all portable/session objectives, eight ownership force-loaded chunks, and owner/camera entities while both external teams still retained their members. Test teardown then removed the temporary teams and acceptance datapack; the server datapack directory returned to its pre-test packs. The Node regression suite was 17/17 green, including deterministic compilation of all retained v1-v14 examples plus v15 lowering tests.
 
 ### v14 team PlayerSet validation
 

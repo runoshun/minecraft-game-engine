@@ -13,6 +13,16 @@ export function parseValue(value, ctx, path) {
     if (!ctx.inputs.has(value.input)) fail(`${path} references unknown input ${value.input}`);
     return { kind: "input", name: value.input };
   }
+  if (has(value, "sessionState")) {
+    if (ctx.version < 15) fail(`${path}.sessionState requires portable version 15`);
+    if (!isObject(value.sessionState)) fail(`${path}.sessionState must be an object`);
+    const session = requiredString(value.sessionState, "session", `${path}.sessionState`);
+    const name = requiredString(value.sessionState, "state", `${path}.sessionState`);
+    if (!ctx.sessionScope || ctx.sessionScope !== session) fail(`${path} uses session-local state outside its SessionContext`);
+    const declaration = ctx.sessions?.get(session);
+    if (!declaration || !declaration.states.has(name)) fail(`${path} references unknown session state ${session}.${name}`);
+    return { kind: "session_state", session, name };
+  }
   if (has(value, "playerState")) {
     if (!ctx.playerScope) fail(`${path} uses player-local state outside PlayerContext`);
     if (typeof value.playerState !== "string") fail(`${path}.playerState must be a string`);

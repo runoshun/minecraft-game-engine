@@ -462,6 +462,167 @@ test("v14 rejects unsafe or overlapping team PlayerSets", () => {
   }), /playerSets requires portable version 14/);
 });
 
+test("v15 sessions isolate same-named scalar Grid RNG and HUD lowering", () => {
+  const { program, output, result } = compileSource(`
+    portableDsl(game => {
+      const red = game.teamPlayers("v15_red");
+      const blue = game.teamPlayers("v15_blue");
+      game.tick(() => {
+        game.session("red", red, session => {
+          const score = session.state("score", 0);
+          const cell = session.state("cell", 0);
+          const sample = session.state("sample", 0);
+          const map = session.grid("map", { width: 2, height: 2, initial: 0, outside: 9 });
+          const rng = session.rng("run", { seed: 7 });
+          session.forSinglePlayer(player => {
+            game.when(player.input.left.eq(1), () => {
+              score.add(1);
+              map.set(0, 0, score);
+              map.get(0, 0, cell);
+              rng.int(sample, 1, 9);
+            });
+            player.hud("red_status", { text: ["R ", score, " C ", cell, " N ", sample] });
+          });
+        });
+        game.session("blue", blue, session => {
+          const score = session.state("score", 0);
+          const cell = session.state("cell", 0);
+          const sample = session.state("sample", 0);
+          const map = session.grid("map", { width: 2, height: 2, initial: 0, outside: 9 });
+          const rng = session.rng("run", { seed: 7 });
+          session.forSinglePlayer(player => {
+            game.when(player.input.right.eq(1), () => {
+              score.add(1);
+              map.set(0, 0, score);
+              map.get(0, 0, cell);
+              rng.int(sample, 1, 9);
+            });
+            player.hud("blue_status", { text: ["B ", score, " C ", cell, " N ", sample] });
+          });
+        });
+      });
+    });
+  `, "portable_v15_sessions");
+
+  assert.equal(program.version, 15);
+  assert.deepEqual(program.sessions.map(session => session.id), ["red", "blue"]);
+  assert.deepEqual(program.sessions.map(session => Object.keys(session.initialState).sort()), [
+    ["cell", "sample", "score"], ["cell", "sample", "score"],
+  ]);
+  assert.equal(result.sessionCount, 2);
+  assert.equal(result.sessionStateCount, 6);
+  assert.equal(result.sessionGridCount, 2);
+  assert.equal(result.sessionRngCount, 2);
+
+  const markerText = read(output, ".mcgame-portable-generated");
+  const marker = Object.fromEntries(markerText.trim().split("\n").map(line => {
+    const index = line.indexOf("=");
+    return [line.slice(0, index), line.slice(index + 1)];
+  }));
+  assert.notEqual(marker["session.red.state.score"], marker["session.blue.state.score"]);
+  assert.notEqual(marker["session.red.grid.map"], marker["session.blue.grid.map"]);
+  assert.notEqual(marker["session.red.rng.run"], marker["session.blue.rng.run"]);
+
+  const redSet = read(output, "data/portable_v15_sessions/function/portable/session_red_grid_map_set_macro.mcfunction");
+  const blueSet = read(output, "data/portable_v15_sessions/function/portable/session_blue_grid_map_set_macro.mcfunction");
+  assert.ok(redSet.includes(marker["session.red.grid.map"]));
+  assert.ok(blueSet.includes(marker["session.blue.grid.map"]));
+  assert.doesNotMatch(redSet, new RegExp(marker["session.blue.grid.map"]));
+  assert.doesNotMatch(blueSet, new RegExp(marker["session.red.grid.map"]));
+
+  const tick = read(output, "data/portable_v15_sessions/function/portable/tick.mcfunction");
+  assert.match(tick, /if entity @a\[team=v15_red\]/);
+  assert.match(tick, /if entity @a\[team=v15_blue\]/);
+  assert.ok(tick.includes(`= ${marker["session.red.state.score"]} ${result.objective}`));
+  assert.ok(tick.includes(`= ${marker["session.blue.state.score"]} ${result.objective}`));
+});
+
+test("v15 rejects session scope escapes unsafe mutation and invalid membership", () => {
+  assert.throws(() => extract(`
+    portableDsl(game => {
+      const red = game.teamPlayers("red");
+      let escaped;
+      game.tick(() => {
+        game.session("red", red, session => { escaped = session.state("score", 0); });
+        game.when(escaped.eq(0), () => {});
+      });
+    });
+  `), /session state reference escaped its SessionContext/);
+
+  assert.throws(() => extract(`
+    portableDsl(game => {
+      const global = game.state("global", 0);
+      const red = game.teamPlayers("red");
+      game.tick(() => game.session("red", red, () => global.add(1)));
+    });
+  `), /global shared state mutation is not allowed inside SessionContext/);
+
+  assert.throws(() => extract(`
+    portableDsl(game => {
+      const red = game.teamPlayers("red");
+      game.tick(() => game.session("red", red, session => {
+        const score = session.state("score", 0);
+        session.forEachPlayer(() => score.add(1));
+      }));
+    });
+  `), /session-shared mutation.*multi-player PlayerContext/);
+
+  assert.throws(() => extract(`
+    portableDsl(game => {
+      const players = game.players();
+      game.tick(() => game.session("all", players, () => {}));
+    });
+  `), /session.*requires a team PlayerSet/);
+
+  assert.throws(() => extract(`
+    portableDsl(game => {
+      const red = game.teamPlayers("red");
+      game.tick(() => {
+        game.session("a", red, session => { session.state("score", 0); });
+        game.session("b", red, session => { session.state("score", 0); });
+      });
+    });
+  `), /already bound to another session/);
+
+  assert.throws(() => parseProgram({
+    version: 14,
+    state: {},
+    playerSets: [{ team: "red" }],
+    sessions: [{ id: "red", players: { team: "red" }, state: { score: 0 } }],
+    tick: [],
+  }), /sessions requires portable version 15/);
+
+  assert.throws(() => parseProgram({
+    version: 15,
+    state: {},
+    playerSets: [{ team: "red" }, { team: "blue" }],
+    sessions: [
+      { id: "red", players: { team: "red" }, state: { score: 0 } },
+      { id: "blue", players: { team: "blue" }, state: { score: 0 } },
+    ],
+    tick: [{ op: "for_session", session: "red", actions: [
+      { op: "for_single_player", players: { team: "blue" }, actions: [] },
+    ] }],
+  }), /PlayerSet must match session red/);
+
+  const teams = Array.from({ length: 8 }, (_, index) => ({ team: `t${index}` }));
+  assert.throws(() => parseProgram({
+    version: 15,
+    state: {},
+    playerSets: teams,
+    sessions: teams.map((players, index) => ({
+      id: `s${index}`,
+      players,
+      state: {},
+      grids: [
+        { id: "a", width: 64, height: 32, initial: 0, outside: 0 },
+        { id: "b", width: 64, height: 32, initial: 0, outside: 0 },
+      ],
+    })),
+    tick: [],
+  }), /aggregate session grid cell count 16384/);
+});
+
 test("representative checked-in examples compile deterministically", () => {
   const cases = [
     ["examples/portable-bounce/datapack/data/portable_bounce/mcgame/main.ts", "portable_bounce", 1],
@@ -474,6 +635,8 @@ test("representative checked-in examples compile deterministically", () => {
     ["examples/portable-multiplayer-core/datapack/data/portable_multiplayer/mcgame/main.ts", "portable_multiplayer", 12],
     ["examples/portable-procedural-roguelike/datapack/data/portable_roguelike/mcgame/main.ts", "portable_roguelike", 13],
     ["examples/portable-team-player-sets/datapack/data/portable_team_players/mcgame/main.ts", "portable_team_players", 14],
+    ["examples/portable-session-local/datapack/data/portable_sessions/mcgame/main.ts", "portable_sessions", 15],
+    ["examples/portable-session-local/datapack/data/portable_sessions/mcgame/main.ts", "portable_sessions", 15],
   ];
   for (const [relative, namespace, expectedVersion] of cases) {
     const source = fs.readFileSync(path.join(root, relative), "utf8");

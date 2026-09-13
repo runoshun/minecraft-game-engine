@@ -30,6 +30,12 @@ export function fullGridObjectiveBank(namespace) {
   for (let i = 0; i < LIMITS.grids; i++) out.push(gridObjective(namespace, i));
   return out;
 }
+export function sessionGridObjective(namespace, index) { return `mgs${hashHex8(namespace)}${slot(index)}`; }
+export function fullSessionGridObjectiveBank(namespace) {
+  const out = [];
+  for (let i = 0; i < LIMITS.sessions * LIMITS.grids; i++) out.push(sessionGridObjective(namespace, i));
+  return out;
+}
 export function runtimeStorage(namespace) { return `${namespace}:portable_runtime`; }
 export function fullPlayerObjectiveBank(namespace) {
   const out = [playerInitObjective(namespace)];
@@ -54,6 +60,20 @@ export class CompileContext {
     [...(program.grids || [])].map(grid => grid.id).sort().forEach((id, index) => this.gridObjectives.set(id, gridObjective(namespace, index)));
     this.rngHolders = new Map();
     [...(program.rngs || [])].map(rng => rng.id).sort().forEach((id, index) => this.rngHolders.set(id, `#r${slot(index)}`));
+    this.sessionStateHolders = new Map();
+    this.sessionGridObjectives = new Map();
+    this.sessionRngHolders = new Map();
+    [...(program.sessions || [])].sort((a, b) => a.id.localeCompare(b.id)).forEach((session, sessionIndex) => {
+      Object.keys(session.initialState).sort().forEach((name, stateIndex) => {
+        this.sessionStateHolders.set(`${session.id}:${name}`, `#ss${slot(sessionIndex)}${slot(stateIndex)}`);
+      });
+      [...session.grids].map(grid => grid.id).sort().forEach((id, gridIndex) => {
+        this.sessionGridObjectives.set(`${session.id}:${id}`, sessionGridObjective(namespace, sessionIndex * LIMITS.grids + gridIndex));
+      });
+      [...session.rngs].map(rng => rng.id).sort().forEach((id, rngIndex) => {
+        this.sessionRngHolders.set(`${session.id}:${id}`, `#sr${slot(sessionIndex)}${slot(rngIndex)}`);
+      });
+    });
     this.gridWorldSlots = new Map();
     [...(program.gridWorlds || [])].map(value => value.id).sort().forEach((id, index) => this.gridWorldSlots.set(id, index));
     this.nextConstant = 0;
@@ -95,6 +115,21 @@ export class CompileContext {
     if (!holder) fail(`unknown RNG holder: ${id}`);
     return holder;
   }
+  sessionStateHolder(session, name) {
+    const holder = this.sessionStateHolders.get(`${session}:${name}`);
+    if (!holder) fail(`unknown session state holder: ${session}.${name}`);
+    return holder;
+  }
+  sessionGridObjective(session, id) {
+    const objective = this.sessionGridObjectives.get(`${session}:${id}`);
+    if (!objective) fail(`unknown session grid objective: ${session}.${id}`);
+    return objective;
+  }
+  sessionRngHolder(session, id) {
+    const holder = this.sessionRngHolders.get(`${session}:${id}`);
+    if (!holder) fail(`unknown session RNG holder: ${session}.${id}`);
+    return holder;
+  }
   gridWorldSlot(id) {
     const index = this.gridWorldSlots.get(id);
     if (index === undefined) fail(`unknown grid-world projection: ${id}`);
@@ -116,6 +151,7 @@ export class CompileContext {
   score(value) {
     switch (value.kind) {
       case "state": return { holder: stateHolder(value.name), objective: this.objective };
+      case "session_state": return { holder: this.sessionStateHolder(value.session, value.name), objective: this.objective };
       case "input": return { holder: inputHolder(value.name), objective: this.objective };
       case "player_state": return { holder: "@s", objective: this.playerStateObjective(value.name) };
       case "player_input": return { holder: "@s", objective: this.playerInputObjective(value.name) };

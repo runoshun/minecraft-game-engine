@@ -68,6 +68,13 @@ export function compileDatapack(program, namespace, outputRoot) {
 
   const load = [`scoreboard objectives add ${ctx.objective} dummy`];
   for (const [name, raw] of Object.entries(program.initialState)) load.push(`scoreboard players set #${name} ${ctx.objective} ${raw}`);
+  if (program.version >= 15) {
+    for (const session of [...program.sessions].sort((a, b) => a.id.localeCompare(b.id))) {
+      for (const [name, raw] of Object.entries(session.initialState).sort(([a], [b]) => a.localeCompare(b))) {
+        load.push(`scoreboard players set ${ctx.sessionStateHolder(session.id, name)} ${ctx.objective} ${raw}`);
+      }
+    }
+  }
   for (const [name, raw] of Object.entries(program.initialInputs)) load.push(`scoreboard players set ${inputHolder(name)} ${ctx.objective} ${raw}`);
   compilePlayerLoad(program, load, ctx);
   compileGridLoad(program, load, ctx);
@@ -122,6 +129,14 @@ export function compileDatapack(program, namespace, outputRoot) {
     for (const value of [...program.rngs].sort((a, b) => a.id.localeCompare(b.id))) marker += `rng.${value.id}=${ctx.rngHolder(value.id)}\n`;
     for (const value of [...program.gridWorlds].sort((a, b) => a.id.localeCompare(b.id))) marker += `gridWorld.${value.id}.ready=${ctx.gridWorldReadyHolder(value.id)}\n`;
   }
+  if (program.version >= 15) {
+    for (const session of [...program.sessions].sort((a, b) => a.id.localeCompare(b.id))) {
+      marker += `session.${session.id}.team=${session.players.team}\n`;
+      for (const name of Object.keys(session.initialState).sort()) marker += `session.${session.id}.state.${name}=${ctx.sessionStateHolder(session.id, name)}\n`;
+      for (const value of [...session.grids].sort((a, b) => a.id.localeCompare(b.id))) marker += `session.${session.id}.grid.${value.id}=${ctx.sessionGridObjective(session.id, value.id)}\n`;
+      for (const value of [...session.rngs].sort((a, b) => a.id.localeCompare(b.id))) marker += `session.${session.id}.rng.${value.id}=${ctx.sessionRngHolder(session.id, value.id)}\n`;
+    }
+  }
   write(path.join(outputRoot, ".mcgame-portable-generated"), marker);
 
   return {
@@ -131,6 +146,10 @@ export function compileDatapack(program, namespace, outputRoot) {
     playerStateCount: Object.keys(program.initialPlayerState || {}).length,
     playerInputCount: program.playerInputs?.size ?? 0,
     playerSetCount: program.playerTeams?.size ?? 0,
+    sessionCount: program.sessions?.length ?? 0,
+    sessionStateCount: (program.sessions || []).reduce((sum, session) => sum + Object.keys(session.initialState).length, 0),
+    sessionGridCount: (program.sessions || []).reduce((sum, session) => sum + session.grids.length, 0),
+    sessionRngCount: (program.sessions || []).reduce((sum, session) => sum + session.rngs.length, 0),
     gridCount: program.grids?.length ?? 0,
     rngCount: program.rngs?.length ?? 0,
     gridWorldCount: program.gridWorlds?.length ?? 0,

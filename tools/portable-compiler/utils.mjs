@@ -13,6 +13,9 @@ export const LIMITS = Object.freeze({
   inputs: 32,
   playerStates: 32,
   playerSets: 8,
+  sessions: 8,
+  sessionStates: 64,
+  sessionGridCellsTotal: 16384,
   grids: 4,
   gridDimension: 64,
   gridCells: 2048,
@@ -38,7 +41,7 @@ export const LIMITS = Object.freeze({
   depth: 16,
 });
 
-export const CURRENT_VERSION = 14;
+export const CURRENT_VERSION = 15;
 
 export function fail(message) { throw new Error(message); }
 export function has(object, member) { return Object.prototype.hasOwnProperty.call(object, member); }

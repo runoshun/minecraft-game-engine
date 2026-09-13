@@ -9,6 +9,9 @@ function operation(targetHolder, targetObjective, operator, value, ctx) {
   const source = score(value, ctx);
   return `scoreboard players operation ${targetHolder} ${targetObjective} ${operator} ${source.holder} ${source.objective}`;
 }
+function actionStateHolder(action, ctx) {
+  return action.session ? ctx.sessionStateHolder(action.session, action.target) : stateHolder(action.target);
+}
 
 export function condition(test, positive, ctx) {
   const left = score(test.left, ctx), right = score(test.right, ctx);
@@ -29,16 +32,16 @@ export function compileActions(actions, lines, ctx) {
     if (compileGridAction(action, lines, ctx)) continue;
     switch (action.op) {
       case "set": {
-        const target = stateHolder(action.target);
+        const target = actionStateHolder(action, ctx);
         if (action.value.kind === "constant") lines.push(`scoreboard players set ${target} ${ctx.objective} ${action.value.raw}`);
         else lines.push(operation(target, ctx.objective, "=", action.value, ctx));
         break;
       }
-      case "add": lines.push(operation(stateHolder(action.target), ctx.objective, "+=", action.value, ctx)); break;
-      case "sub": lines.push(operation(stateHolder(action.target), ctx.objective, "-=", action.value, ctx)); break;
+      case "add": lines.push(operation(actionStateHolder(action, ctx), ctx.objective, "+=", action.value, ctx)); break;
+      case "sub": lines.push(operation(actionStateHolder(action, ctx), ctx.objective, "-=", action.value, ctx)); break;
       case "negate":
         ctx.usesNegate = true;
-        lines.push(`scoreboard players operation ${stateHolder(action.target)} ${ctx.objective} *= #neg1 ${ctx.objective}`);
+        lines.push(`scoreboard players operation ${actionStateHolder(action, ctx)} ${ctx.objective} *= #neg1 ${ctx.objective}`);
         break;
       case "player_set": {
         const objective = ctx.playerStateObjective(action.target);
@@ -51,6 +54,9 @@ export function compileActions(actions, lines, ctx) {
       case "player_negate":
         ctx.usesNegate = true;
         lines.push(`scoreboard players operation @s ${ctx.playerStateObjective(action.target)} *= #neg1 ${ctx.objective}`);
+        break;
+      case "for_session":
+        compileActions(action.actions, lines, ctx);
         break;
       case "for_each_player": {
         const fn = ctx.nextPlayerFunctionName(), body = [];

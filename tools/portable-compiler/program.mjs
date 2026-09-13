@@ -4,6 +4,7 @@ import { parseVanillaScene } from "./parse-vanilla-scene.mjs";
 import { parseVanillaUi } from "./parse-vanilla-ui.mjs";
 import { parseGrids, parseRngs } from "./parse-runtime.mjs";
 import { parsePlayerSetDeclarations } from "./player-set.mjs";
+import { parseSessions, sessionContextMap } from "./session.mjs";
 
 export function parseProgram(spec, api = "portable.define") {
   if (!isObject(spec)) fail(`${api} requires an object`);
@@ -18,6 +19,7 @@ export function parseProgram(spec, api = "portable.define") {
   }
 
   const playerTeams = parsePlayerSetDeclarations(spec, version, api);
+  const sessions = parseSessions(spec, version, fixedPoint, api, playerTeams);
 
   const initialPlayerState = {};
   if (has(spec, "playerState")) {
@@ -31,8 +33,8 @@ export function parseProgram(spec, api = "portable.define") {
   }
   const grids = parseGrids(spec, version, fixedPoint, api);
   const rngs = parseRngs(spec, version, api);
-  if (Object.keys(initialState).length === 0 && Object.keys(initialPlayerState).length === 0 && grids.length === 0) {
-    fail(`${api} must define at least one shared state, player-local state, or grid`);
+  if (Object.keys(initialState).length === 0 && Object.keys(initialPlayerState).length === 0 && grids.length === 0 && sessions.length === 0) {
+    fail(`${api} must define at least one shared state, player-local state, grid, or session`);
   }
 
   const initialInputs = {};
@@ -63,6 +65,7 @@ export function parseProgram(spec, api = "portable.define") {
     version, fixedPoint,
     states: new Set(Object.keys(initialState)), inputs: new Set(Object.keys(initialInputs)),
     playerStates: new Set(Object.keys(initialPlayerState)), playerInputs, playerTeams,
+    sessions: sessionContextMap(sessions), sessionScope: null,
     grids: new Map(grids.map(grid => [grid.id, grid])),
     rngs: new Set(rngs.map(rng => rng.id)),
     gridWorlds: new Set(),
@@ -80,7 +83,7 @@ export function parseProgram(spec, api = "portable.define") {
 
   const tickActions = parseActions(requiredArray(spec, "tick", api), ctx, `${api}.tick`);
   return {
-    version, fixedPoint, initialState, initialPlayerState, initialInputs, playerInputs, playerTeams, grids, rngs,
+    version, fixedPoint, initialState, initialPlayerState, initialInputs, playerInputs, playerTeams, sessions, grids, rngs,
     vanillaInputs: vanilla.inputs, projections: vanilla.projections, texts: vanilla.texts,
     actors: vanilla.actors, worldBatches: vanilla.worldBatches, gridWorlds: vanilla.gridWorlds, cameras: vanilla.cameras,
     particles: vanilla.particles, sounds: vanilla.sounds, huds: vanilla.huds, playerHuds: vanilla.playerHuds,

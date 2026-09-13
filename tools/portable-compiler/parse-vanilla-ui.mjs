@@ -1,7 +1,7 @@
 import { LIMITS, fail, has, requiredArray, requiredMember, requiredObject, requiredString, memberString, memberNumber, memberBoolean, memberBoundedInt, boundedInteger, memberResource, portableId, floorDiv } from "./utils.mjs";
 import { parseCondition, parseCoordinate, parseTokens } from "./parse-value.mjs";
 import { parseVec3 } from "./parse-shapes.mjs";
-import { parsePlayerSetRef, validateDisjointAudiences } from "./player-set.mjs";
+import { parsePlayerSetRef, playerSetKey, validateDisjointAudiences } from "./player-set.mjs";
 
 function uniqueIds(values, path) {
   const seen = new Set();
@@ -68,10 +68,18 @@ export function parseVanillaUi(vanilla, ctx, api) {
     const playerHudLimit = ctx.version >= 14 ? LIMITS.playerHuds : 1;
     if (values.length > playerHudLimit) fail(`${api}.vanilla.playerHuds exceeds max player HUD count ${playerHudLimit}`);
     uniqueIds(values, `${api}.vanilla.playerHuds`);
-    const playerCtx = { ...ctx, playerScope: true };
     out.playerHuds = values.map((v, i) => {
       const p = `${api}.vanilla.playerHuds[${i}]`, audience = parsePlayerSetRef(requiredMember(v, "audience", p), ctx, `${p}.audience`);
-      return { id: v.id, audience, tokens: parseTokens(requiredArray(v, "tokens", p), playerCtx, `${p}.tokens`) };
+      let session = null, playerCtx = { ...ctx, playerScope: true, sessionScope: null };
+      if (has(v, "session")) {
+        if (ctx.version < 15) fail(`${p}.session requires portable version 15`);
+        session = requiredString(v, "session", p);
+        const declaration = ctx.sessions?.get(session);
+        if (!declaration) fail(`${p}.session references unknown session ${session}`);
+        if (playerSetKey(audience) !== playerSetKey(declaration.players)) fail(`${p}.audience must match session ${session}`);
+        playerCtx = { ...playerCtx, sessionScope: session };
+      }
+      return { id: v.id, audience, session, tokens: parseTokens(requiredArray(v, "tokens", p), playerCtx, `${p}.tokens`) };
     });
     validateDisjointAudiences(out.playerHuds, `${api}.vanilla.playerHuds`);
     const playerHudValues = out.playerHuds.reduce((total, hud) => total + hud.tokens.filter(token => token.kind === "value").length, 0);

@@ -8,6 +8,7 @@ type PortableInputRef = { input: string };
 type PortablePlayerStateRef = { playerState: string };
 type PortablePlayerInputRef = { playerInput: PortablePlayerInputName };
 type PortableGridWorldReadyRef = { gridWorldReady: string };
+type PortableSessionStateRef = { sessionState: { session: string; state: string } };
 type PortablePlayerInputName = "hotbarSlot" | "forward" | "backward" | "left" | "right" | "jump" | "sneak" | "sprint";
 type PortableValue = number | PortableStateRef | PortableInputRef;
 type PortablePlayerValue = PortableValue | PortablePlayerStateRef | PortablePlayerInputRef;
@@ -127,6 +128,9 @@ type PortableVanillaHud = { id: string; tokens: PortableHudToken[] };
 type PortablePlayerHudToken = { text: string } | { value: PortablePlayerValue };
 type PortableVanillaPlayerHud = { id: string; audience: "all_online"; tokens: PortablePlayerHudToken[] };
 type PortableVanillaPlayerHudV14 = { id: string; audience: PortablePlayerSetRefV14; tokens: PortablePlayerHudToken[] };
+type PortableV15Value = PortableV13Value | PortableSessionStateRef;
+type PortableV15PlayerHudToken = { text: string } | { value: PortableV15Value };
+type PortableVanillaPlayerHudV15 = { id: string; audience: PortablePlayerSetRefV14; session?: string; tokens: PortableV15PlayerHudToken[] };
 type PortableVanillaSidebarRow = { id: string; tokens: PortableHudToken[] };
 type PortableVanillaSidebar = { id: string; title: string; rows: PortableVanillaSidebarRow[] };
 type PortableVanillaOwnershipRegion = { dimension?: string; minX: number; minZ: number; maxX: number; maxZ: number };
@@ -327,7 +331,56 @@ type PortableProgramSpecV14 = {
   };
   tick: PortableV14Action[];
 };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14;
+type PortableV15Comparison = {
+  op: "eq" | "ne" | "lt" | "lte" | "gt" | "gte";
+  left: PortableV15Value;
+  right: PortableV15Value;
+};
+type PortableV15Aabb = { x: PortableV15Value; y: PortableV15Value; width: number; height: number };
+type PortableV15Circle = { x: PortableV15Value; y: PortableV15Value; radius: number };
+type PortableV15Point = { x: PortableV15Value; y: PortableV15Value };
+type PortableV15Action =
+  | { op: "set" | "add" | "sub"; target: string; value: PortableV15Value }
+  | { op: "negate"; target: string }
+  | { op: "player_set" | "player_add" | "player_sub"; target: string; value: PortableV15Value }
+  | { op: "player_negate"; target: string }
+  | { op: "grid_fill"; grid: string; value: PortableV15Value }
+  | { op: "grid_get"; grid: string; x: PortableV15Value; z: PortableV15Value; target: string }
+  | { op: "grid_set"; grid: string; x: PortableV15Value; z: PortableV15Value; value: PortableV15Value }
+  | { op: "grid_fill_rect"; grid: string; x: PortableV15Value; z: PortableV15Value; width: PortableV15Value; height: PortableV15Value; value: PortableV15Value }
+  | { op: "rng_reset"; rng: string }
+  | { op: "rng_int"; rng: string; target: string; min: number; max: number }
+  | { op: "grid_world_rebuild"; target: string }
+  | { op: "if"; condition: PortableV15Comparison; then: PortableV15Action[]; else?: PortableV15Action[] }
+  | { op: "if_aabb"; a: PortableV15Aabb; b: PortableV15Aabb; then: PortableV15Action[]; else?: PortableV15Action[] }
+  | { op: "if_circle"; a: PortableV15Circle; b: PortableV15Circle; then: PortableV15Action[]; else?: PortableV15Action[] }
+  | { op: "if_circle_capsule"; circle: PortableV15Circle; capsule: PortableCapsule; then: PortableV15Action[]; else?: PortableV15Action[] }
+  | { op: "if_trigger"; trigger: PortableV15Aabb; point: PortableV15Point; then: PortableV15Action[]; else?: PortableV15Action[] }
+  | { op: "for_each_player" | "for_single_player"; players: PortablePlayerSetRefV14; actions: PortableV15Action[] }
+  | { op: "for_session"; session: string; actions: PortableV15Action[] };
+type PortableSessionSpecV15 = {
+  id: string;
+  players: { team: string };
+  state?: Record<string, number>;
+  grids?: PortableGridSpec[];
+  rngs?: PortableRngSpec[];
+};
+type PortableProgramSpecV15 = {
+  version: 15;
+  fixedPoint?: number;
+  state: Record<string, number>;
+  playerState?: Record<string, number>;
+  playerInputs?: PortablePlayerInputName[];
+  playerSets?: Array<{ team: string }>;
+  sessions?: PortableSessionSpecV15[];
+  grids?: PortableGridSpec[];
+  rngs?: PortableRngSpec[];
+  vanilla?: Omit<NonNullable<PortableProgramSpecV14["vanilla"]>, "playerHuds"> & {
+    playerHuds?: PortableVanillaPlayerHudV15[];
+  };
+  tick: PortableV15Action[];
+};
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14 | PortableProgramSpecV15;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -356,10 +409,17 @@ type PortableDslPlayerState = PortableDslComparable & {
   sub(value: PortableDslValue): void;
   negate(): void;
 };
+type PortableDslSessionState = PortableDslComparable & {
+  readonly name: string;
+  set(value: PortableDslValue): void;
+  add(value: PortableDslValue): void;
+  sub(value: PortableDslValue): void;
+  negate(): void;
+};
 type PortableDslPlayerInput = PortableDslComparable & { readonly name: PortablePlayerInputName };
 type PortableDslGridWorldReady = PortableDslComparable & { readonly name: string };
 type PortableDslSharedValue = number | PortableDslState | PortableDslInput | PortableDslGridWorldReady;
-type PortableDslValue = PortableDslSharedValue | PortableDslPlayerState | PortableDslPlayerInput;
+type PortableDslValue = PortableDslSharedValue | PortableDslSessionState | PortableDslPlayerState | PortableDslPlayerInput;
 type PortableDslCondition = { readonly __portableDslCondition?: never };
 type PortableDslCoordinate = number | PortableDslState | { readonly __portableDslCoordinate?: never };
 type PortableDslInputBinding = { source: PortableVanillaInputSource };
@@ -396,6 +456,20 @@ type PortableDslRng = {
   readonly id: string;
   reset(): void;
   int(target: PortableDslState, min: number, max: number): void;
+};
+type PortableDslSessionGrid = {
+  readonly id: string;
+  readonly width: number;
+  readonly height: number;
+  fill(value: PortableDslValue): void;
+  get(x: PortableDslValue, z: PortableDslValue, target: PortableDslSessionState): void;
+  set(x: PortableDslValue, z: PortableDslValue, value: PortableDslValue): void;
+  fillRect(spec: { x: PortableDslValue; z: PortableDslValue; width: PortableDslValue; height: PortableDslValue; value: PortableDslValue }): void;
+};
+type PortableDslSessionRng = {
+  readonly id: string;
+  reset(): void;
+  int(target: PortableDslSessionState, min: number, max: number): void;
 };
 type PortableDslGridWorld = {
   readonly id: string;
@@ -487,7 +561,7 @@ type PortableDslFlipperSpec = {
 };
 type PortableDslCollider = PortableDslBox | PortableDslCircle | PortableDslSegment | PortableDslCapsule | PortableDslFlipper;
 type PortableDslHudSpec = { text: string | Array<string | PortableDslState | PortableDslInput> };
-type PortableDslPlayerHudSpec = { text: string | Array<string | PortableDslState | PortableDslInput | PortableDslPlayerState | PortableDslPlayerInput> };
+type PortableDslPlayerHudSpec = { text: string | Array<string | PortableDslState | PortableDslInput | PortableDslSessionState | PortableDslPlayerState | PortableDslPlayerInput> };
 type PortableDslPlayerContext = {
   state(name: string, initial: number): PortableDslPlayerState;
   readonly input: {
@@ -502,6 +576,15 @@ type PortableDslPlayerContext = {
   };
   hud(id: string, spec: PortableDslPlayerHudSpec): void;
 };
+type PortableDslSessionContext = {
+  readonly id: string;
+  readonly players: PortableDslPlayerSet;
+  state(name: string, initial: number): PortableDslSessionState;
+  grid(id: string, spec: { width: number; height: number; initial?: number; outside?: number }): PortableDslSessionGrid;
+  rng(id: string, spec: { seed: number }): PortableDslSessionRng;
+  forEachPlayer(callback: (player: PortableDslPlayerContext) => void): void;
+  forSinglePlayer(callback: (player: PortableDslPlayerContext) => void): void;
+};
 type PortableDslSidebarRow = { id: string; text: string | Array<string | PortableDslState | PortableDslInput> };
 type PortableDslSidebarSpec = { title: string; rows: PortableDslSidebarRow[] };
 type PortableDsl = {
@@ -511,6 +594,7 @@ type PortableDsl = {
   teamPlayers(team: string): PortableDslPlayerSet;
   forEachPlayer(players: PortableDslPlayerSet, callback: (player: PortableDslPlayerContext) => void): void;
   forSinglePlayer(players: PortableDslPlayerSet, callback: (player: PortableDslPlayerContext) => void): void;
+  session(id: string, players: PortableDslPlayerSet, callback: (session: PortableDslSessionContext) => void): void;
   grid(id: string, spec: { width: number; height: number; initial?: number; outside?: number }): PortableDslGrid;
   rng(id: string, spec: { seed: number }): PortableDslRng;
   gridWorld(id: string, spec: PortableDslGridWorldSpec): PortableDslGridWorld;

@@ -1,9 +1,20 @@
 import { LIMITS, fail, has, isObject, requiredArray, requiredMember, requiredObject, requiredString, boundedInteger, scale } from "./utils.mjs";
 import { parseCondition, parseValue } from "./parse-value.mjs";
 import { parseAabb, parseCapsule, parseCircle, validateCircleCapsule } from "./parse-shapes.mjs";
-import { parsePlayerSetRef } from "./player-set.mjs";
+import { parsePlayerSetRef, playerSetKey } from "./player-set.mjs";
 
 function childContext(ctx, playerScope) { return { ...ctx, playerScope }; }
+function sessionChildContext(ctx, sessionScope) { return { ...ctx, sessionScope }; }
+function currentSession(ctx, path) {
+  const session = ctx.sessions?.get(ctx.sessionScope);
+  if (!session) fail(`${path} references unknown active session ${ctx.sessionScope}`);
+  return session;
+}
+function requireSessionPlayers(ctx, players, path) {
+  if (!ctx.sessionScope) return;
+  const session = currentSession(ctx, path);
+  if (playerSetKey(players) !== playerSetKey(session.players)) fail(`${path} PlayerSet must match session ${ctx.sessionScope}`);
+}
 
 export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }) {
   if (!Array.isArray(array)) fail(`${path} must be an array`);
@@ -19,8 +30,15 @@ export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }
     if (["set", "add", "sub", "negate"].includes(op)) {
       if (ctx.playerScope === "multi") fail(`${p} shared state mutation is not allowed inside PlayerContext`);
       const target = requiredString(a, "target", p);
-      if (!ctx.states.has(target)) fail(`${p} references unknown target state ${target}`);
-      out.push(op === "negate" ? { op, target } : { op, target, value: parseValue(requiredMember(a, "value", p), ctx, `${p}.value`) });
+      if (ctx.sessionScope) {
+        const session = currentSession(ctx, p);
+        if (!session.states.has(target)) fail(`${p} references unknown target session state ${ctx.sessionScope}.${target}`);
+        const parsed = op === "negate" ? { op, session: ctx.sessionScope, target } : { op, session: ctx.sessionScope, target, value: parseValue(requiredMember(a, "value", p), ctx, `${p}.value`) };
+        out.push(parsed);
+      } else {
+        if (!ctx.states.has(target)) fail(`${p} references unknown target state ${target}`);
+        out.push(op === "negate" ? { op, target } : { op, target, value: parseValue(requiredMember(a, "value", p), ctx, `${p}.value`) });
+      }
       continue;
     }
     if (["player_set", "player_add", "player_sub", "player_negate"].includes(op)) {
@@ -31,10 +49,20 @@ export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }
       out.push(op === "player_negate" ? { op, target } : { op, target, value: parseValue(requiredMember(a, "value", p), ctx, `${p}.value`) });
       continue;
     }
+    if (op === "for_session") {
+      if (ctx.version < 15) fail(`${p}.op requires portable version 15`);
+      if (ctx.sessionScope) fail(`${p} nested SessionContext is not supported`);
+      if (ctx.playerScope) fail(`${p} SessionContext cannot be entered from PlayerContext`);
+      const session = requiredString(a, "session", p);
+      if (!ctx.sessions?.has(session)) fail(`${p}.session references unknown session ${session}`);
+      out.push({ op, session, actions: parseActions(requiredArray(a, "actions", p), sessionChildContext(ctx, session), `${p}.actions`, depth + 1, counter) });
+      continue;
+    }
     if (op === "for_each_player") {
       if (ctx.version < 12) fail(`${p}.op requires portable version 12`);
       if (ctx.playerScope) fail(`${p} nested PlayerContext is not supported`);
       const players = parsePlayerSetRef(requiredMember(a, "players", p), ctx, `${p}.players`);
+      requireSessionPlayers(ctx, players, p);
       out.push({ op, players, actions: parseActions(requiredArray(a, "actions", p), childContext(ctx, "multi"), `${p}.actions`, depth + 1, counter) });
       continue;
     }
@@ -42,6 +70,7 @@ export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }
       if (ctx.version < 13) fail(`${p}.op requires portable version 13`);
       if (ctx.playerScope) fail(`${p} nested PlayerContext is not supported`);
       const players = parsePlayerSetRef(requiredMember(a, "players", p), ctx, `${p}.players`);
+      requireSessionPlayers(ctx, players, p);
       out.push({ op, players, actions: parseActions(requiredArray(a, "actions", p), childContext(ctx, "single"), `${p}.actions`, depth + 1, counter) });
       continue;
     }
@@ -49,25 +78,30 @@ export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }
       if (ctx.version < 13) fail(`${p}.op requires portable version 13`);
       if (ctx.playerScope === "multi") fail(`${p}.op is shared grid mutation and is not allowed inside multi-player PlayerContext`);
       const grid = requiredString(a, "grid", p);
-      if (!ctx.grids.has(grid)) fail(`${p}.grid references unknown grid ${grid}`);
+      const session = ctx.sessionScope ? currentSession(ctx, p) : null;
+      const grids = session ? session.grids : ctx.grids;
+      if (!grids.has(grid)) fail(`${p}.grid references unknown ${session ? `session ${ctx.sessionScope} ` : ""}grid ${grid}`);
+      const scoped = ctx.sessionScope ? { session: ctx.sessionScope } : {};
       if (op === "grid_fill") {
-        out.push({ op, grid, value: parseValue(requiredMember(a, "value", p), ctx, `${p}.value`) });
+        out.push({ op, ...scoped, grid, value: parseValue(requiredMember(a, "value", p), ctx, `${p}.value`) });
         continue;
       }
       const x = parseValue(requiredMember(a, "x", p), ctx, `${p}.x`);
       const z = parseValue(requiredMember(a, "z", p), ctx, `${p}.z`);
       if (op === "grid_get") {
         const target = requiredString(a, "target", p);
-        if (!ctx.states.has(target)) fail(`${p}.target references unknown shared state ${target}`);
-        out.push({ op, grid, x, z, target });
+        if (session) {
+          if (!session.states.has(target)) fail(`${p}.target references unknown session state ${ctx.sessionScope}.${target}`);
+        } else if (!ctx.states.has(target)) fail(`${p}.target references unknown shared state ${target}`);
+        out.push({ op, ...scoped, grid, x, z, target });
         continue;
       }
       if (op === "grid_set") {
-        out.push({ op, grid, x, z, value: parseValue(requiredMember(a, "value", p), ctx, `${p}.value`) });
+        out.push({ op, ...scoped, grid, x, z, value: parseValue(requiredMember(a, "value", p), ctx, `${p}.value`) });
         continue;
       }
       out.push({
-        op, grid, x, z,
+        op, ...scoped, grid, x, z,
         width: parseValue(requiredMember(a, "width", p), ctx, `${p}.width`),
         height: parseValue(requiredMember(a, "height", p), ctx, `${p}.height`),
         value: parseValue(requiredMember(a, "value", p), ctx, `${p}.value`),
@@ -78,21 +112,27 @@ export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }
       if (ctx.version < 13) fail(`${p}.op requires portable version 13`);
       if (ctx.playerScope === "multi") fail(`${p}.op is shared RNG mutation and is not allowed inside multi-player PlayerContext`);
       const rng = requiredString(a, "rng", p);
-      if (!ctx.rngs.has(rng)) fail(`${p}.rng references unknown random stream ${rng}`);
-      if (op === "rng_reset") { out.push({ op, rng }); continue; }
+      const session = ctx.sessionScope ? currentSession(ctx, p) : null;
+      const rngs = session ? session.rngs : ctx.rngs;
+      if (!rngs.has(rng)) fail(`${p}.rng references unknown ${session ? `session ${ctx.sessionScope} ` : ""}random stream ${rng}`);
+      const scoped = ctx.sessionScope ? { session: ctx.sessionScope } : {};
+      if (op === "rng_reset") { out.push({ op, ...scoped, rng }); continue; }
       const target = requiredString(a, "target", p);
-      if (!ctx.states.has(target)) fail(`${p}.target references unknown shared state ${target}`);
+      if (session) {
+        if (!session.states.has(target)) fail(`${p}.target references unknown session state ${ctx.sessionScope}.${target}`);
+      } else if (!ctx.states.has(target)) fail(`${p}.target references unknown shared state ${target}`);
       const min = boundedInteger(requiredMember(a, "min", p), -2147483648, 2147483647, `${p}.min`);
       const max = boundedInteger(requiredMember(a, "max", p), -2147483648, 2147483647, `${p}.max`);
       if (min > max) fail(`${p} requires min <= max`);
       scale(min, ctx.fixedPoint, `${p}.min`); scale(max, ctx.fixedPoint, `${p}.max`);
       const range = max - min + 1;
       if (!Number.isSafeInteger(range) || range < 1 || range > 2147483647) fail(`${p} random range is too large`);
-      out.push({ op, rng, target, min, max, range });
+      out.push({ op, ...scoped, rng, target, min, max, range });
       continue;
     }
     if (op === "grid_world_rebuild") {
       if (ctx.version < 13) fail(`${p}.op requires portable version 13`);
+      if (ctx.sessionScope) fail(`${p}.op is global world projection and is not available inside SessionContext`);
       if (ctx.playerScope === "multi") fail(`${p}.op is shared world projection and is not allowed inside multi-player PlayerContext`);
       const target = requiredString(a, "target", p);
       if (!ctx.gridWorlds.has(target)) fail(`${p}.target references unknown grid-world projection ${target}`);

@@ -9,6 +9,7 @@
   const FLIPPER = Symbol("mcgame.portableDsl.flipper");
   const PLAYER_SET = Symbol("mcgame.portableDsl.playerSet");
   const PLAYER_SCOPE = Symbol("mcgame.portableDsl.playerScope");
+  const SESSION_SCOPE = Symbol("mcgame.portableDsl.sessionScope");
   const GRID = Symbol("mcgame.portableDsl.grid");
   const RNG = Symbol("mcgame.portableDsl.rng");
   const GRID_WORLD = Symbol("mcgame.portableDsl.gridWorld");
@@ -77,6 +78,9 @@
     const playerStateValues = Object.create(null);
     const playerInputs = new Set();
     const playerTeams = new Set();
+    const sessions = [];
+    const sessionTeams = new Set();
+    let sessionGridCellCount = 0;
     const grids = [];
     const rngs = [];
     const gridWorlds = [];
@@ -99,9 +103,14 @@
     let activePlayerMode = null;
     let playerRootSink = null;
     let nextPlayerScope = 0;
+    let activeSessionScope = null;
+    let activeSessionId = null;
+    let activeSessionPlayers = null;
+    let nextSessionScope = 0;
     let usesPlayerApi = false;
     let usesV13 = false;
     let usesV14 = false;
+    let usesV15 = false;
 
     function assertUnique(name) {
       if (Object.prototype.hasOwnProperty.call(stateValues, name) || Object.prototype.hasOwnProperty.call(inputValues, name)) {
@@ -113,10 +122,18 @@
       return value && (value[REF] === "player_state" || value[REF] === "player_input");
     }
 
+    function isSessionRef(value) { return value && value[REF] === "session_state"; }
+
     function unwrapValue(value) {
       if (typeof value === "number") return finiteNumber(value, "value");
       if (value && value[REF] === "state") return { state: value.name };
       if (value && value[REF] === "input") return { input: value.name };
+      if (value && value[REF] === "session_state") {
+        if (activeSessionScope === null || value[SESSION_SCOPE] !== activeSessionScope || value.session !== activeSessionId) {
+          fail("session state reference escaped its SessionContext");
+        }
+        return { sessionState: { session: value.session, state: value.name } };
+      }
       if (value && value[REF] === "player_state") {
         if (activePlayerScope === null || value[PLAYER_SCOPE] !== activePlayerScope) fail("player state reference escaped its PlayerContext");
         return { playerState: value.name };
@@ -130,20 +147,24 @@
     }
 
     function comparison(op, left, right) {
-      const scope = isPlayerRef(left) || isPlayerRef(right) ? activePlayerScope : null;
+      const playerScope = isPlayerRef(left) || isPlayerRef(right) ? activePlayerScope : null;
+      const sessionScope = isSessionRef(left) || isSessionRef(right) ? activeSessionScope : null;
       return Object.freeze({
         [CONDITION]: true,
-        [PLAYER_SCOPE]: scope,
+        [PLAYER_SCOPE]: playerScope,
+        [SESSION_SCOPE]: sessionScope,
         op,
         left: unwrapValue(left),
         right: unwrapValue(right),
       });
     }
 
-    function comparable(kind, name, scope = null) {
+    function comparable(kind, name, scope = null, sessionScope = null, sessionId = null) {
       const ref = {
         [REF]: kind,
         [PLAYER_SCOPE]: scope,
+        [SESSION_SCOPE]: sessionScope,
+        session: sessionId,
         name,
         eq(value) { return comparison("eq", ref, value); },
         ne(value) { return comparison("ne", ref, value); },
@@ -161,10 +182,14 @@
     }
 
     function makeState(name, initial) {
+      if (activeSessionScope !== null) fail("game.state(...) is global; use session.state(...) inside SessionContext");
       assertUnique(name);
       stateValues[name] = finiteNumber(initial, "state " + name + " initial value");
       const ref = comparable("state", name);
-      const assertSharedWrite = () => { if (activePlayerMode === "multi") fail("shared state mutation is not allowed inside PlayerContext"); };
+      const assertSharedWrite = () => {
+        if (activeSessionScope !== null) fail("global shared state mutation is not allowed inside SessionContext");
+        if (activePlayerMode === "multi") fail("shared state mutation is not allowed inside PlayerContext");
+      };
       ref.set = value => { assertSharedWrite(); emit({ op: "set", target: name, value: unwrapValue(value) }); };
       ref.add = value => { assertSharedWrite(); emit({ op: "add", target: name, value: unwrapValue(value) }); };
       ref.sub = value => { assertSharedWrite(); emit({ op: "sub", target: name, value: unwrapValue(value) }); };
@@ -173,6 +198,7 @@
     }
 
     function makeInput(name, initial, binding) {
+      if (activeSessionScope !== null) fail("game.input(...) is global and not available inside SessionContext");
       assertUnique(name);
       inputValues[name] = finiteNumber(initial, "input " + name + " initial value");
       if (binding !== undefined) {
@@ -200,6 +226,7 @@
     function serializedCondition(condition, label = "condition") {
       if (!condition || condition[CONDITION] !== true) fail(label + " must be created by eq/ne/lt/lte/gt/gte");
       if (condition[PLAYER_SCOPE] !== null && condition[PLAYER_SCOPE] !== activePlayerScope) fail(label + " escaped its PlayerContext");
+      if (condition[SESSION_SCOPE] !== null && condition[SESSION_SCOPE] !== activeSessionScope) fail(label + " escaped its SessionContext");
       return { op: condition.op, left: condition.left, right: condition.right };
     }
 
@@ -289,13 +316,18 @@
         }
         return { value: unwrapValue(token) };
       });
-      playerHuds.push({ id, audience: set, tokens });
+      const hud = { id, audience: set, tokens };
+      if (activeSessionId !== null) hud.session = activeSessionId;
+      playerHuds.push(hud);
     }
 
     function capturePlayerContext(set, callback, mode, op, label) {
       if (actionSink === null) fail(label + "(...) is only valid inside tick(...)");
       if (activePlayerScope !== null) fail("nested PlayerContext is not supported");
       const serializedSet = requirePlayerSet(set, label + " player set");
+      if (activeSessionScope !== null && playerSetKey(serializedSet) !== playerSetKey(activeSessionPlayers)) {
+        fail(label + " PlayerSet must match the active session");
+      }
       if (typeof callback !== "function") fail(label + " callback is required");
       usesPlayerApi = true;
       if (mode === "single") usesV13 = true;
@@ -329,6 +361,124 @@
       capturePlayerContext(set, callback, "single", "for_single_player", "forSinglePlayer");
     }
 
+    function sessionBlock(id, set, callback) {
+      if (actionSink === null) fail("session(...) is only valid inside tick(...)");
+      if (activeSessionScope !== null) fail("nested SessionContext is not supported");
+      if (activePlayerScope !== null) fail("session(...) cannot be entered from PlayerContext");
+      if (typeof id !== "string" || !/^[a-z][a-z0-9_]{0,23}$/.test(id)) fail("session id must match [a-z][a-z0-9_]{0,23}");
+      if (sessions.some(value => value.id === id)) fail("duplicate session id: " + id);
+      if (sessions.length >= 8) fail("portable v15 supports at most 8 sessions");
+      const serializedSet = requirePlayerSet(set, "session player set");
+      if (serializedSet === "all_online") fail("session(...) requires a team PlayerSet");
+      const setKey = playerSetKey(serializedSet);
+      if (sessionTeams.has(setKey)) fail("session player set is already bound to another session: " + setKey);
+      if (typeof callback !== "function") fail("session(...) callback is required");
+
+      usesV15 = true;
+      usesV14 = true;
+      usesPlayerApi = true;
+      sessionTeams.add(setKey);
+      const scope = ++nextSessionScope;
+      const declarationIds = new Set();
+      const declaration = { id, players: serializedSet, state: Object.create(null), grids: [], rngs: [] };
+      sessions.push(declaration);
+
+      function assertSessionActive(label) {
+        if (activeSessionScope !== scope || activeSessionId !== id) fail(label + " escaped its SessionContext");
+      }
+      function assertSessionSharedMutation(label) {
+        assertSessionActive(label);
+        if (activePlayerMode === "multi") fail(label + " is session-shared mutation and cannot run inside multi-player PlayerContext");
+      }
+      function localId(value, label) {
+        if (typeof value !== "string" || !/^[a-z][a-z0-9_]{0,23}$/.test(value)) fail(label + " id must match [a-z][a-z0-9_]{0,23}");
+        if (declarationIds.has(value)) fail("duplicate session declaration id: " + value);
+        declarationIds.add(value);
+      }
+      function sessionState(name, initial) {
+        assertSessionActive("session.state(...)");
+        if (typeof name !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,31}$/.test(name)) fail("session state name must match [A-Za-z][A-Za-z0-9_]{0,31}");
+        const value = finiteNumber(initial, "session state " + name + " initial value");
+        if (!Object.prototype.hasOwnProperty.call(declaration.state, name) && Object.keys(declaration.state).length >= 64) fail("portable v15 supports at most 64 states per session");
+        if (Object.prototype.hasOwnProperty.call(declaration.state, name) && declaration.state[name] !== value) fail("session state " + name + " was declared with a different initial value");
+        declaration.state[name] = value;
+        const ref = comparable("session_state", name, null, scope, id);
+        ref.set = next => { assertSessionSharedMutation("session state set"); emit({ op: "set", target: name, value: unwrapValue(next) }); };
+        ref.add = next => { assertSessionSharedMutation("session state add"); emit({ op: "add", target: name, value: unwrapValue(next) }); };
+        ref.sub = next => { assertSessionSharedMutation("session state sub"); emit({ op: "sub", target: name, value: unwrapValue(next) }); };
+        ref.negate = () => { assertSessionSharedMutation("session state negate"); emit({ op: "negate", target: name }); };
+        return Object.freeze(ref);
+      }
+      function sessionGrid(gridId, spec) {
+        assertSessionActive("session.grid(...)");
+        localId(gridId, "session grid");
+        if (declaration.grids.length >= 4) fail("portable v15 supports at most 4 grids per session");
+        if (spec == null || typeof spec !== "object") fail("session grid " + gridId + " spec must be an object");
+        const width = finiteInteger(spec.width, "session grid " + gridId + " width", 1, 64);
+        const height = finiteInteger(spec.height, "session grid " + gridId + " height", 1, 64);
+        if (width * height > 2048) fail("session grid " + gridId + " exceeds 2048 cells");
+        if (sessionGridCellCount + width * height > 16384) fail("portable v15 session grids exceed aggregate 16384 cells");
+        sessionGridCellCount += width * height;
+        const initial = finiteNumber(spec.initial === undefined ? 0 : spec.initial, "session grid " + gridId + " initial");
+        const outside = finiteNumber(spec.outside === undefined ? initial : spec.outside, "session grid " + gridId + " outside");
+        declaration.grids.push({ id: gridId, width, height, initial, outside });
+        const ref = {
+          [GRID]: true, id: gridId, width, height, [SESSION_SCOPE]: scope, session: id,
+          fill(value) { assertSessionSharedMutation("session grid.fill(...)"); emit({ op: "grid_fill", grid: gridId, value: unwrapValue(value) }); },
+          get(x, z, target) {
+            assertSessionSharedMutation("session grid.get(...)");
+            if (!target || target[REF] !== "session_state" || target[SESSION_SCOPE] !== scope) fail("session grid.get(...) target must be a state from the same session");
+            emit({ op: "grid_get", grid: gridId, x: unwrapValue(x), z: unwrapValue(z), target: target.name });
+          },
+          set(x, z, value) { assertSessionSharedMutation("session grid.set(...)"); emit({ op: "grid_set", grid: gridId, x: unwrapValue(x), z: unwrapValue(z), value: unwrapValue(value) }); },
+          fillRect(rect) {
+            assertSessionSharedMutation("session grid.fillRect(...)");
+            if (rect == null || typeof rect !== "object") fail("session grid.fillRect(...) requires an object");
+            emit({ op: "grid_fill_rect", grid: gridId, x: unwrapValue(rect.x), z: unwrapValue(rect.z), width: unwrapValue(rect.width), height: unwrapValue(rect.height), value: unwrapValue(rect.value) });
+          },
+        };
+        return Object.freeze(ref);
+      }
+      function sessionRng(rngId, spec) {
+        assertSessionActive("session.rng(...)");
+        localId(rngId, "session rng");
+        if (declaration.rngs.length >= 4) fail("portable v15 supports at most 4 random streams per session");
+        if (spec == null || typeof spec !== "object") fail("session rng " + rngId + " spec must be an object");
+        const seed = finiteInteger(spec.seed, "session rng " + rngId + " seed", -2147483648, 2147483647);
+        declaration.rngs.push({ id: rngId, seed });
+        return Object.freeze({
+          [RNG]: true, id: rngId, [SESSION_SCOPE]: scope, session: id,
+          reset() { assertSessionSharedMutation("session rng.reset(...)"); emit({ op: "rng_reset", rng: rngId }); },
+          int(target, min, max) {
+            assertSessionSharedMutation("session rng.int(...)");
+            if (!target || target[REF] !== "session_state" || target[SESSION_SCOPE] !== scope) fail("session rng.int(...) target must be a state from the same session");
+            finiteInteger(min, "session rng.int min", -2147483648, 2147483647);
+            finiteInteger(max, "session rng.int max", -2147483648, 2147483647);
+            if (min > max) fail("session rng.int(...) requires min <= max");
+            emit({ op: "rng_int", rng: rngId, target: target.name, min, max });
+          },
+        });
+      }
+
+      const sessionContext = Object.freeze({
+        id,
+        players: set,
+        state: sessionState,
+        grid: sessionGrid,
+        rng: sessionRng,
+        forEachPlayer(playerCallback) { assertSessionActive("session.forEachPlayer(...)"); capturePlayerContext(set, playerCallback, "multi", "for_each_player", "session.forEachPlayer"); },
+        forSinglePlayer(playerCallback) { assertSessionActive("session.forSinglePlayer(...)"); capturePlayerContext(set, playerCallback, "single", "for_single_player", "session.forSinglePlayer"); },
+      });
+
+      const previousSink = actionSink, previousScope = activeSessionScope, previousId = activeSessionId, previousPlayers = activeSessionPlayers;
+      const captured = [];
+      actionSink = captured; activeSessionScope = scope; activeSessionId = id; activeSessionPlayers = serializedSet;
+      try { callback(sessionContext); } finally {
+        actionSink = previousSink; activeSessionScope = previousScope; activeSessionId = previousId; activeSessionPlayers = previousPlayers;
+      }
+      emit({ op: "for_session", session: id, actions: captured });
+    }
+
     function repeat(count, callback) {
       const total = finiteInteger(count, "repeat count", 0, 256);
       if (typeof callback !== "function") fail("repeat callback is required");
@@ -355,13 +505,15 @@
 
     function normalizeBoxValue(value, label) {
       if (typeof value === "number") return finiteNumber(value, label);
-      if (value && (value[REF] === "state" || value[REF] === "input" || value[REF] === "player_state" || value[REF] === "player_input")) return unwrapValue(value);
+      if (value && (value[REF] === "state" || value[REF] === "input" || value[REF] === "session_state" || value[REF] === "player_state" || value[REF] === "player_input")) return unwrapValue(value);
       fail(label + " must be a number or portable state/input reference");
     }
 
     function valuePlayerScope(value) { return isPlayerRef(value) ? value[PLAYER_SCOPE] : null; }
+    function valueSessionScope(value) { return isSessionRef(value) ? value[SESSION_SCOPE] : null; }
     function requireShapeScope(value, label) {
       if (value && value[PLAYER_SCOPE] !== null && value[PLAYER_SCOPE] !== activePlayerScope) fail(label + " escaped its PlayerContext");
+      if (value && value[SESSION_SCOPE] !== null && value[SESSION_SCOPE] !== activeSessionScope) fail(label + " escaped its SessionContext");
     }
 
     function box(id, spec) {
@@ -372,9 +524,11 @@
       if (width <= 0 || width > 1000) fail("box " + id + " width must be > 0 and <= 1000");
       if (height <= 0 || height > 1000) fail("box " + id + " height must be > 0 and <= 1000");
       const scope = valuePlayerScope(spec.x) || valuePlayerScope(spec.y);
+      const sessionScope = valueSessionScope(spec.x) || valueSessionScope(spec.y);
       return Object.freeze({
         [BOX]: true,
         [PLAYER_SCOPE]: scope,
+        [SESSION_SCOPE]: sessionScope,
         id,
         x: normalizeBoxValue(spec.x, "box " + id + " x"),
         y: normalizeBoxValue(spec.y, "box " + id + " y"),
@@ -389,9 +543,11 @@
       const radius = finiteNumber(spec.radius, "circle " + id + " radius");
       if (radius <= 0 || radius > 1000) fail("circle " + id + " radius must be > 0 and <= 1000");
       const scope = valuePlayerScope(spec.x) || valuePlayerScope(spec.y);
+      const sessionScope = valueSessionScope(spec.x) || valueSessionScope(spec.y);
       return Object.freeze({
         [CIRCLE]: true,
         [PLAYER_SCOPE]: scope,
+        [SESSION_SCOPE]: sessionScope,
         id,
         x: normalizeBoxValue(spec.x, "circle " + id + " x"),
         y: normalizeBoxValue(spec.y, "circle " + id + " y"),
@@ -540,6 +696,7 @@
 
     function assertSharedPresentation(label) {
       if (activePlayerScope !== null) fail(label + " is shared presentation and cannot be declared inside PlayerContext");
+      if (activeSessionScope !== null) fail(label + " is global presentation and cannot be declared inside SessionContext");
     }
 
     function assertV13Id(id, label) {
@@ -549,11 +706,13 @@
     }
 
     function assertV13SharedMutation(label) {
+      if (activeSessionScope !== null) fail(label + " is global shared mutation and cannot run inside SessionContext");
       if (activePlayerMode === "multi") fail(label + " is shared mutation and cannot run inside multi-player PlayerContext");
       usesV13 = true;
     }
 
     function gridDeclaration(id, spec) {
+      if (activeSessionScope !== null) fail("game.grid(...) is global; use session.grid(...) inside SessionContext");
       assertV13Id(id, "grid");
       if (grids.length >= 4) fail("portable v13 supports at most 4 grids");
       if (spec == null || typeof spec !== "object") fail("grid " + id + " spec must be an object");
@@ -583,6 +742,7 @@
     }
 
     function rngDeclaration(id, spec) {
+      if (activeSessionScope !== null) fail("game.rng(...) is global; use session.rng(...) inside SessionContext");
       assertV13Id(id, "rng");
       if (rngs.length >= 4) fail("portable v13 supports at most 4 random streams");
       if (spec == null || typeof spec !== "object") fail("rng " + id + " spec must be an object");
@@ -604,6 +764,7 @@
     }
 
     function gridWorldDeclaration(id, spec) {
+      if (activeSessionScope !== null) fail("game.gridWorld(...) is global and is not available inside SessionContext in v15");
       assertV13Id(id, "gridWorld");
       if (gridWorlds.length >= 4) fail("portable v13 supports at most 4 grid-world projections");
       if (spec == null || typeof spec !== "object") fail("gridWorld " + id + " spec must be an object");
@@ -890,6 +1051,7 @@
       teamPlayers,
       forEachPlayer,
       forSinglePlayer,
+      session: sessionBlock,
       grid: gridDeclaration,
       rng: rngDeclaration,
       gridWorld: gridWorldDeclaration,
@@ -919,7 +1081,7 @@
 
     build(dsl);
     if (tickActions === null) fail("tick(...) must be declared exactly once");
-    if (Object.keys(stateValues).length === 0 && Object.keys(playerStateValues).length === 0 && grids.length === 0) fail("at least one shared state, player-local state, or grid is required");
+    if (Object.keys(stateValues).length === 0 && Object.keys(playerStateValues).length === 0 && grids.length === 0 && sessions.length === 0) fail("at least one shared state, player-local state, grid, or session is required");
 
     if (usesPlayerApi) {
       if (Object.keys(inputValues).length > 0 || Object.keys(vanillaInputs).length > 0) fail("game.input(...) is v1-v11 compatibility only; use player.input.* in multiplayer v12");
@@ -933,13 +1095,14 @@
 
     const usesSpectateCamera = cameras.some(camera => camera.mode === "spectate");
     const spec = {
-      version: usesV14 ? 14 : (usesV13 ? 13 : (usesPlayerApi ? 12 : (usesSpectateCamera ? 11 : (ownership === null ? 9 : 10)))),
+      version: usesV15 ? 15 : (usesV14 ? 14 : (usesV13 ? 13 : (usesPlayerApi ? 12 : (usesSpectateCamera ? 11 : (ownership === null ? 9 : 10))))),
       fixedPoint,
       state: stateValues,
       tick: tickActions,
     };
     if (Object.keys(inputValues).length > 0) spec.inputs = inputValues;
     if (playerTeams.size > 0) spec.playerSets = Array.from(playerTeams).sort().map(team => ({ team }));
+    if (sessions.length > 0) spec.sessions = sessions;
     if (grids.length > 0) spec.grids = grids;
     if (rngs.length > 0) spec.rngs = rngs;
     if (usesPlayerApi) {

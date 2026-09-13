@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for implementation. The v15 milestone remains open until compiler support and the two-session Minecraft 26.1 acceptance gate in this ADR pass.
+Accepted and implemented. Portable v15 compiler support and the two-session Minecraft 26.1 acceptance gate passed on the mod-free `second` environment.
 
 ## Context
 
@@ -130,3 +130,12 @@ The v15 milestone is complete only when all of the following pass:
 8. `/reload` deterministically resets all session-local state/Grid/RNG to declarations.
 9. `portable/cleanup` removes all session Grid objectives and portable resources while leaving external teams/memberships intact.
 10. All retained v1-v14 examples continue to compile deterministically.
+
+
+## Acceptance result
+
+The gate passed with the checked-in `examples/portable-session-local` program and Node regression suite 17/17 green. The reference pack declared `red` and `blue` sessions bound to external teams `v15_red` / `v15_blue`, intentionally reusing local scalar names `score`, `cell`, and `sample`, Grid id `map`, and RNG id `run`.
+
+With real clients `Camera` and `Camera2` simultaneously online, red input changed only red scalar/Grid/RNG state and blue input changed only blue state. Both identically seeded streams began at RNG state `1879724910` with sample `31000`; one red step advanced only red to state `804324341` / sample `30000`. Session-local actionbar captures rendered `RED S 1 C 1 R 30` and `BLUE S 1 C 1 R 30`. Emptying and restoring the red external team preserved the active red logical state and resumed from it. `/reload` reset both sessions to their declarations and reproduced the first deterministic RNG state/sample while preserving team membership.
+
+`portable/cleanup` removed all portable/session objectives, eight ownership force-loaded chunks, and generated owner/camera entities while leaving external teams and memberships intact. Test teardown then removed the temporary teams and datapack. This closes the v15 milestone; private/session-local world projection remains deferred as specified above.
