@@ -89,11 +89,15 @@ function ensureGridFunctions(gridValue, ctx) {
     ];
     for (let z = 0; z < gridValue.height; z++) {
       const zHolder = ctx.constantHolder(z);
+      const row = `grid_${id}_rect_row_${String(z).padStart(2, "0")}`;
+      const rowBody = [];
       for (let x = 0; x < gridValue.width; x++) {
         const xHolder = ctx.constantHolder(x);
         const index = z * gridValue.width + x;
-        body.push(`execute if score #gx ${ctx.objective} <= ${xHolder} ${ctx.objective} if score #gex ${ctx.objective} >= ${xHolder} ${ctx.objective} if score #gz ${ctx.objective} <= ${zHolder} ${ctx.objective} if score #gez ${ctx.objective} >= ${zHolder} ${ctx.objective} run scoreboard players operation g${index} ${objective} = #gv ${ctx.objective}`);
+        rowBody.push(`execute if score #gx ${ctx.objective} <= ${xHolder} ${ctx.objective} if score #gex ${ctx.objective} >= ${xHolder} ${ctx.objective} run scoreboard players operation g${index} ${objective} = #gv ${ctx.objective}`);
       }
+      ctx.functions.set(row, rowBody);
+      body.push(`execute if score #gz ${ctx.objective} <= ${zHolder} ${ctx.objective} if score #gez ${ctx.objective} >= ${zHolder} ${ctx.objective} run function ${ctx.namespace}:portable/${row}`);
     }
     ctx.functions.set(rectPrepare, body);
   }

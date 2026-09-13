@@ -28,7 +28,7 @@ The compiler accepts one TypeScript source, namespace, and output directory. Mod
 
 Portable IR is the versioned semantic contract between authoring and vanilla lowering. It contains deterministic fixed-point values, bounded actions, collision primitives, declarative presentation/world resources, input mappings, and lifecycle metadata. Arbitrary JavaScript callbacks are not an IR feature.
 
-IR versions 1 through 12 are implemented. ADR 0020 defines the multiplayer v12 contract.
+IR versions 1 through 13 are implemented. ADR 0020 defines the multiplayer v12 contract; ADR 0022 defines the procedural grid/RNG v13 contract.
 
 ### Generated datapack
 
@@ -174,11 +174,11 @@ v12 exists only in the Node compiler/generated-datapack backend; there is no com
 
 ## Portable procedural grid v13 core
 
-ADR 0022 is the implemented contract for the v13 compiler core. The core adds bounded shared runtime topology without restoring arbitrary JavaScript runtime collections; the 29 x 37 procedural roguelike remains the reference acceptance task for closing the full v13 milestone:
+ADR 0022 is the implemented and accepted contract for portable v13. It adds bounded shared runtime topology without restoring arbitrary JavaScript runtime collections; the 29 x 37 procedural roguelike is the completed reference acceptance game:
 
 - `game.forSinglePlayer(game.players(), player => ...)` executes only when exactly one online participant exists and, unlike multi-player `forEachPlayer`, may deterministically mutate shared state/grid/RNG/projection state from that sole player's input;
 - `game.grid(id, { width, height, initial, outside })` declares a fixed-size shared 2D grid, initially limited to 4 grids and 2,048 cells per grid;
-- runtime `fill`, `get`, `set`, and clipped `fillRect` actions provide dynamic indexed access while remaining compiler-bounded;
+- runtime `fill`, `get`, `set`, and clipped `fillRect` actions provide dynamic indexed access while remaining compiler-bounded; `fillRect` lowers through row dispatch so large procedural generation does not scan every grid cell for every rectangle;
 - grid values use the normal portable fixed-point representation, while runtime coordinates are interpreted as integer cell units;
 - `game.rng(id, { seed })` declares a deterministic shared random stream with `int(target, min, max)` and `reset()` actions;
 - the v13 RNG algorithm is versioned and deterministic, using a fixed 32-bit LCG step lowered to scoreboard arithmetic;
@@ -189,7 +189,7 @@ ADR 0022 is the implemented contract for the v13 compiler core. The core adds bo
 
 Minecraft 26.1 function macros are the intended internal lowering for dynamic grid indexes. A mod-free probe on `second` verified dynamic scoreboard holders of the form `g$(i)` can be written and read using namespace-owned command storage. Raw macros/storage are not exposed through the portable API.
 
-The v13 reference acceptance target is a regenerated top-down procedural roguelike: runtime room/corridor generation on a 29 x 37 grid, deterministic seed replay, floor-to-floor regeneration, grid-authoritative movement collision, bounded enemy/loot slots, and incremental terrain projection. Generic arrays/maps/sets, BFS/A*, runtime-created actors, persistent saves, player-local grids/RNG, and multi-layer cell templates remain out of scope for the first v13 implementation.
+The accepted v13 reference is a regenerated top-down procedural roguelike with runtime room/corridor generation on a 29 x 37 grid, deterministic seed replay, floor-to-floor regeneration, grid-authoritative movement collision, bounded enemy/loot slots, and incremental terrain projection. Generic arrays/maps/sets, BFS/A*, runtime-created actors, persistent saves, player-local grids/RNG, and multi-layer cell templates remain out of scope for v13.
 
 ## Current limitations
 
@@ -214,6 +214,12 @@ Node migration ADR 0021 additionally established byte-for-byte output parity wit
 The v13 compiler core has focused mod-free Minecraft 26.1 validation on `second`. Runtime grid `fill`, clipped `fillRect`, dynamic macro-backed `get`/`set`, out-of-bounds fallback, deterministic RNG reset/reload behavior, and incremental `gridWorld` projection were exercised against a generated 4 x 3 smoke grid. The projection completed in three 5-cell slices, exposed `ready == 1` in portable fixed-point form, produced the expected 5 white / 7 black block footprint, and left no force-loaded chunks. `/reload` reproduced the same first RNG sample and grid result.
 
 `forSinglePlayer` was validated at zero, one, and two participants. With only real client `Camera2` online, a real A input changed shared `inputHits` from `0` to `1000` through `player.input.left`; with a second participant simultaneously online, the same real A input left both `inputHits` and a shared singleton tick counter at `0`, proving exact-cardinality suppression rather than arbitrary first-player selection. Cleanup removed the complete grid bank, player-input objective, main objective, and force-loads; the 12-cell temporary terrain footprint was explicitly restored to air and the smoke pack removed. The current v13 compiler was also compared against `6dc6da7` for all eight retained v1-v12 examples (Bounce, Pinball, Breakout, Presentation, UI, World, JRPG, and Multiplayer), with byte-for-byte identical generated output.
+
+### v13 procedural roguelike validation
+
+The full v13 reference E2E passed on mod-free Minecraft 26.1 `second`. The generated 29 x 37 dungeon reached `projection.ready == 1` without embedding final topology at compile time. `/reload` reproduced the same first-floor RNG state and all six room coordinates. Consuming the stream produced a different second floor, including a projected floor-cell count change from 217 to 224. With the target Minecraft block deliberately replaced by black concrete while the corresponding grid cell remained floor, real `Camera2` D input still moved logical position `(19,5) -> (20,5)`, collected the generated loot slot, and changed score `0 -> 1`, directly validating grid-authoritative collision. A second real-input setup entered the generated enemy slot and changed score `1 -> 6`; stepping onto the generated exit advanced to floor 3 and completed another projection rebuild.
+
+The first large-grid attempt exposed Minecraft's 65,536-command execution limit in the original all-cell `fillRect` lowering. Row-dispatch lowering removed that failure; repeated reload and floor generation produced no further command-limit event. Final teardown removed every generated objective, force-load, and owned/presentation entity, explicitly cleared the 1,073-cell projected footprint, deleted the reference datapack, and reloaded with no datapack problems.
 
 ### v12 multiplayer validation
 

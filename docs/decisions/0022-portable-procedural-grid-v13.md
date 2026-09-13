@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. The bounded grid/RNG/grid-world compiler core and singleton player scope are implemented in portable v13. The full v13 milestone remains open until the procedural roguelike reference acceptance gate below is completed.
+Accepted. The bounded grid/RNG/grid-world compiler core, singleton player scope, and the full procedural-roguelike reference milestone are implemented and accepted in portable v13.
 
 ## Context
 
@@ -123,7 +123,7 @@ Each declared grid receives one namespace-stable scoreboard objective from a fix
 
 Dynamic `get`/`set` calculates `index = z * width + x` in compiler scratch scores, stores that integer into namespace-owned command storage, then calls a generated Minecraft function macro whose holder is `g$(i)`. The macro storage is compiler-owned scratch state and is cleared on load/cleanup. It is not a public persistence API.
 
-`fillRect` uses bounded generated function control flow plus the same indexed macro primitive. The compiler does not expose raw function macros or command strings to game code.
+`fillRect` uses bounded generated row dispatch: the compiler first checks which declared grid rows intersect the runtime rectangle, then evaluates X bounds only inside those rows. This keeps large procedural-room generation below Minecraft command-chain limits without exposing raw commands. Dynamic single-cell `get`/`set` continue to use the indexed macro primitive. The compiler does not expose raw function macros or command strings to game code.
 
 ### Deterministic random streams
 
@@ -210,7 +210,7 @@ Those capabilities require separate evidence and design rather than being smuggl
 
 The v13 compiler core is independently acceptable once its bounded lowering, cleanup, deterministic seed behavior, and singleton cardinality/input path are covered by Node tests plus a focused Minecraft 26.1 smoke test. The initial core acceptance on `second` covered a generated 4 x 3 grid, macro-backed dynamic access, clipped rectangle fill, deterministic `/reload`, incremental projection, real-client singleton input, two-participant suppression, complete objective/force-load cleanup, and explicit terrain teardown.
 
-The **full v13 milestone** is complete only when the procedural reference game and a mod-free Minecraft 26.1 E2E additionally prove all of the following:
+The **full v13 milestone** acceptance criteria are:
 
 1. a generated pack creates a dungeon topology at runtime after load, rather than embedding the final tile map at compile time;
 2. the same declared RNG seed and same action sequence reproduce the same first-floor topology across `/reload`;
@@ -221,6 +221,8 @@ The **full v13 milestone** is complete only when the procedural reference game a
 7. at least one bounded enemy/loot slot uses the generated topology and existing presentation primitives;
 8. cleanup removes grid objectives, RNG/projection scratch state, generated entities, and force-loads while explicitly leaving projected terrain persistent;
 9. all retained v1-v12 examples continue to compile deterministically.
+
+The full gate passed on the mod-free Minecraft 26.1 `second` environment with `examples/portable-procedural-roguelike`. The 29 x 37 map was generated at runtime and projected incrementally; `/reload` reproduced the same first-floor RNG state and all six room coordinates. Advancing the same RNG stream produced a different second floor (`217 -> 224` projected floor cells), and a real `Camera2` D input moved the logical player from `(19,5)` to `(20,5)` even after the corresponding Minecraft block was replaced with black concrete, proving `grid.get` rather than projected terrain was authoritative. That move collected a topology-derived loot slot (`score 0 -> 1`); a second real-input setup entered an enemy slot (`score 1 -> 6`, enemy inactive), and stepping onto the generated exit advanced the game to floor 3 and completed another projection rebuild. The initial all-cell `fillRect` lowering hit Minecraft's 65,536-command execution limit; the final row-dispatch lowering completed repeated generation without recurrence. Final teardown ran `portable/cleanup`, removed all objectives and force-loads, removed owned/presentation entities, explicitly cleared the 1,073 projected blocks, deleted the datapack, and reloaded cleanly.
 
 ## Consequences
 

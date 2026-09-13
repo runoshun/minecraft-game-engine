@@ -248,6 +248,7 @@ test("v13 grid RNG projection and singleton player scope lower to bounded vanill
   const getMacro = read(output, "data/portable_v13_grid/function/portable/grid_dungeon_get_macro.mcfunction");
   const setMacro = read(output, "data/portable_v13_grid/function/portable/grid_dungeon_set_macro.mcfunction");
   const rect = read(output, "data/portable_v13_grid/function/portable/grid_dungeon_rect_prepare.mcfunction");
+  const rectRow0 = read(output, "data/portable_v13_grid/function/portable/grid_dungeon_rect_row_00.mcfunction");
   const jumpBranch = read(output, "data/portable_v13_grid/function/portable/branch_001.mcfunction");
   const cleanup = read(output, "data/portable_v13_grid/function/portable/cleanup.mcfunction");
   const marker = read(output, ".mcgame-portable-generated");
@@ -264,7 +265,10 @@ test("v13 grid RNG projection and singleton player scope lower to bounded vanill
   assert.match(load, /scoreboard players set #c\d+ .* 1664525/);
   assert.match(load, /scoreboard players set #c\d+ .* 1013904223/);
   assert.match(jumpBranch, /scoreboard players set #w00a .* 1/);
-  assert.match(rect, /run scoreboard players operation g0 mgg/);
+  assert.match(rect, /run function portable_v13_grid:portable\/grid_dungeon_rect_row_00/);
+  assert.match(rectRow0, /run scoreboard players operation g0 mgg/);
+  assert.ok(rect.trim().split("\n").length <= 6 + program.grids[0].height);
+  assert.equal(rectRow0.trim().split("\n").length, program.grids[0].width);
   assert.doesNotMatch(rect, /return run function/);
   assert.match(tick, /execute store result score #pc .* if entity @a/);
   assert.match(tick, /matches 1 as @a\[limit=1,sort=arbitrary\] run function portable_v13_grid:portable\/player_000/);
@@ -316,6 +320,38 @@ test("v13 singleton scope permits shared writes but multiplayer scope still reje
   }), /exceeds max grid count 4/);
 });
 
+test("v13 procedural roguelike reference keeps topology runtime-authoritative", () => {
+  const relative = "examples/portable-procedural-roguelike/datapack/data/portable_roguelike/mcgame/main.ts";
+  const source = fs.readFileSync(path.join(root, relative), "utf8");
+  const program = parseProgram(extractPortableSpec(relative, transpileTypeScript(relative, source, root), root));
+  const output = fs.mkdtempSync(path.join(os.tmpdir(), "mcgame-v13-roguelike-"));
+  const result = compileDatapack(program, "portable_roguelike", output);
+
+  assert.equal(program.version, 13);
+  assert.equal(program.grids.length, 1);
+  assert.equal(program.grids[0].width, 29);
+  assert.equal(program.grids[0].height, 37);
+  assert.equal(program.rngs.length, 1);
+  assert.equal(program.gridWorlds.length, 1);
+  assert.equal(program.worldBatches.length, 0);
+  assert.equal(result.actorCount, 3);
+  assert.equal(result.projectionCount, 2);
+
+  const load = read(output, "data/portable_roguelike/function/portable/load.mcfunction");
+  const tick = read(output, "data/portable_roguelike/function/portable/tick.mcfunction");
+  const rect = read(output, "data/portable_roguelike/function/portable/grid_dungeon_rect_prepare.mcfunction");
+  const finalRectRow = read(output, "data/portable_roguelike/function/portable/grid_dungeon_rect_row_36.mcfunction");
+  assert.doesNotMatch(load, /setblock /);
+  assert.match(load, /scoreboard players set #r00 .* 1374772973/);
+  assert.match(tick, /execute store result score #pc .* if entity @a/);
+  assert.match(tick, /grid_world_terrain_slice_008/);
+  assert.match(finalRectRow, /if score #gx .* <= .* if score #gex .* >=/);
+  assert.match(rect, /grid_dungeon_rect_row_36/);
+  assert.match(finalRectRow, /scoreboard players operation g1072 mgg/);
+  assert.equal(rect.trim().split("\n").length, 6 + 37);
+  assert.equal(finalRectRow.trim().split("\n").length, 29);
+});
+
 test("representative checked-in examples compile deterministically", () => {
   const cases = [
     ["examples/portable-bounce/datapack/data/portable_bounce/mcgame/main.ts", "portable_bounce", 1],
@@ -326,6 +362,7 @@ test("representative checked-in examples compile deterministically", () => {
     ["examples/portable-world-core/datapack/data/portable_world/mcgame/main.ts", "portable_world", 10],
     ["examples/jrpg-demo/datapack/data/jrpg_demo/mcgame/main.ts", "jrpg_demo", 10],
     ["examples/portable-multiplayer-core/datapack/data/portable_multiplayer/mcgame/main.ts", "portable_multiplayer", 12],
+    ["examples/portable-procedural-roguelike/datapack/data/portable_roguelike/mcgame/main.ts", "portable_roguelike", 13],
   ];
   for (const [relative, namespace, expectedVersion] of cases) {
     const source = fs.readFileSync(path.join(root, relative), "utf8");
