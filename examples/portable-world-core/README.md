@@ -1,6 +1,6 @@
 # Portable World Projection
 
-Portable v8 acceptance example for bounded Minecraft world projection. It compiles declared block-write batches into ordinary datapack `setblock` functions; no Fabric runtime is required on the target server.
+Portable v8 acceptance example for bounded Minecraft world projection. It compiles declared block-write batches into ordinary datapack `setblock` functions.
 
 Controls: **A** paints the left side red, **D** paints the right side green, and **Space** resets the top surface to white. The black base and initial white surface are an unconditional load-time batch. Input-controlled batches are guarded by portable held-input conditions.
 

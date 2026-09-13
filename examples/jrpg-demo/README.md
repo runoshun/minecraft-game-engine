@@ -1,6 +1,6 @@
 # Portable JRPG mechanics demo
 
-This retained example is authored entirely with `portableDsl` and compiles to an ordinary Minecraft 26.1 datapack. The deployed game does **not** require Fabric, MC Game Runtime, GraalJS, or runtime TypeScript callbacks.
+This retained example is authored entirely with `portableDsl` and compiles to an ordinary Minecraft 26.1 datapack. The deployed game is an ordinary Minecraft 26.1 datapack; TypeScript runs only at build time.
 
 Implemented mechanics:
 
@@ -17,7 +17,7 @@ The former Fabric-host version used `/function jrpg_demo:start` / `stop`, mutabl
 
 ## Compile
 
-Use Java 25:
+Compile with Node.js 22:
 
 ```bash
 npm run compile:portable -- \

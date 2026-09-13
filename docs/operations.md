@@ -1,148 +1,124 @@
-# Runtime Operations
+# Compiler and Datapack Operations
 
-This document records operational knowledge that should survive individual development sessions. It complements `docs/architecture.md`; gameplay/runtime design belongs there, while release and deployment procedures belong here.
+This document records the current operational workflow. Design/API semantics belong in `docs/architecture.md` and ADRs.
 
-## Canonical artifacts
+## Canonical artifact
 
-The source repository is public at `runoshun/minecraft-game-engine`.
+For a portable game, the canonical deployment artifact is the directory emitted by the Node portable compiler. Generated packs belong under `build/` and are not committed.
 
-For a portable game, the canonical deployment artifact is the directory emitted by `compilePortable`; copy it to the target world's `datapacks/` directory. The target may be a vanilla Minecraft 26.1 server. Generated game packs belong under `build/` and are not committed.
+The target may be a vanilla Minecraft 26.1 server. No runtime JAR, Fabric loader, Java, GraalVM, or Node.js is required on the target server.
 
-The Fabric runtime is now an optional compatibility/development backend. Built runtime JARs are **not** committed to the source tree. When a Fabric-runtime release is needed, tagged builds publish the runtime JAR and its SHA-256 checksum as GitHub Release assets.
+## Toolchain
 
-For version `X.Y.Z`, the canonical download URL is:
+The validated compiler toolchain is Node.js 22. `.mise.toml` pins the repository version.
 
-```text
-https://github.com/runoshun/minecraft-game-engine/releases/download/vX.Y.Z/mc-game-runtime-X.Y.Z.jar
+```bash
+node --version
+npm test
 ```
 
-The release asset, rather than a file under `dist/`, is the deployable artifact of record.
+The repository intentionally has no Java/Gradle/Fabric build path.
 
-Before publishing an optional Fabric-runtime release:
+## Compile a portable source
 
-1. update the project/runtime version consistently;
-2. run a clean Gradle build;
-3. record the SHA-256 of the generated runtime JAR;
-4. commit and push the source change;
-5. push tag `vX.Y.Z`;
-6. wait for the tag GitHub Actions run to publish both the JAR and `.sha256` Release assets;
-7. verify the unauthenticated public Release URL returns a real JAR and its SHA-256 matches the local build.
+General form:
 
-Do not place GitHub tokens, deploy keys, RCON credentials, `.env` files, or server-local secrets in repository resources or release artifacts. The GitHub Actions workflow's `${{ github.token }}` is an execution-time reference, not a committed credential value.
-
-## Deploying the optional Fabric runtime with mc-mcp
-
-`mc-mcp` is the deployment/test control plane for the development server. The runtime is a custom GitHub-hosted JAR rather than a Modrinth project.
-
-For the `main` server, the established update sequence is:
-
-1. `list_mods(main)` to inspect the current Fabric loader, staged Modrinth projects, and installed JARs.
-2. `install_mod_jar(main, <GitHub Release URL>)` to stage the new runtime JAR.
-3. `delete_mod_jar(main, <old runtime jar filename>)` to remove the superseded manually installed runtime JAR.
-4. `set_mods(main, loader="fabric", mods=["fabric-api"], confirm=true)` to restart the server while preserving the Modrinth-managed Fabric API dependency.
-5. `list_mods(main)` and `tail_server_log(main)` to verify exactly one runtime JAR is installed and Fabric reports the intended `mc_game_runtime` version.
-
-Important details:
-
-- `set_mods.mods` is an **absolute list of Modrinth projects**, not a list of every JAR in the mods directory.
-- A custom JAR installed with `install_mod_jar` remains in the mods directory across `set_mods`; remove old runtime versions explicitly so Fabric never sees two runtime JARs.
-- `install_mod_jar` accepts the public `github.com/.../releases/download/...` URL and follows GitHub's redirect to the release asset host.
-- A runtime JAR is only loaded after a restart.
-
-## Main validation environment
-
-The primary validation server is currently:
-
-```text
-server: main
-world: world2
-Minecraft: Java 26.1
-loader: Fabric
-Fabric API: fabric-api
+```bash
+npm run compile:portable -- \
+  --source <path/to/main.ts> \
+  --namespace <namespace> \
+  --output <generated-directory>
 ```
 
-After a runtime update, validate at least:
-
-- startup log reports the expected `mc_game_runtime` version;
-- the existing `topdown_ts` script loads without requiring a manual recovery step;
-- `/reload` still reloads TypeScript scripts;
-- changed capabilities get a focused smoke test on `main` before calling the release validated;
-- temporary smoke datapacks/entities are removed and the top-down example is returned to its normal Room 1 initial state.
-
-Known unrelated reload noise from the `athletic` datapack (`body08`, `body09`, `body10` referencing unknown `minecraft:chain`) is not a runtime regression and should not be modified as part of MC Game Runtime work.
-
-## Release validation lessons
-
-Local Fabric dev-server smoke tests are useful but are not sufficient for entity lifecycle or cold-start behavior. `main` has exposed behavior hidden by a warm/local spawn-chunk test, including GraalJS cold initialization cost and Minecraft entity/chunk lifecycle differences when the server is empty or paused.
-
-Therefore, changes involving the optional Fabric backend's script startup, watchdogs, render entities, chunk behavior, UI packets, menus, or player interaction must get a `main`-server validation pass before a Fabric release is considered finished. Portable compiler/backend changes must also get a mod-free `second` validation pass; vanilla behavior is now the primary acceptance path.
-
-## Compiling the portable subset to a vanilla datapack
-
-The portable compiler compiles one portable program from a TypeScript `main.ts` into a dedicated vanilla datapack directory. The source may use low-level `portable.define(...)` or the bundled `portableDsl(...)` frontend. ADR 0021 makes the Node.js 22 CLI the canonical compiler. Provide source, namespace, and output explicitly:
+Examples:
 
 ```bash
 npm run compile:portable -- \
   --source examples/portable-breakout-core/datapack/data/portable_breakout/mcgame/main.ts \
   --namespace portable_breakout \
   --output build/portable/portable_breakout
-```
 
-The v6 pinball retirement-gate example compiles with:
-
-```bash
 npm run compile:portable -- \
   --source examples/portable-pinball-core/datapack/data/portable_pinball/mcgame/main.ts \
   --namespace portable_pinball \
   --output build/portable/portable_pinball
-```
 
-The v7 bounded presentation acceptance example (actors + dynamic scalar labels) compiles with:
-
-```bash
-npm run compile:portable -- \
-  --source examples/portable-presentation-core/datapack/data/portable_presentation/mcgame/main.ts \
-  --namespace portable_presentation \
-  --output build/portable/portable_presentation
-```
-
-The v8 bounded world-projection acceptance example compiles with:
-
-```bash
-npm run compile:portable -- \
-  --source examples/portable-world-core/datapack/data/portable_world/mcgame/main.ts \
-  --namespace portable_world \
-  --output build/portable/portable_world
-```
-
-The v9 bounded sidebar/input acceptance example compiles with:
-
-```bash
-npm run compile:portable -- \
-  --source examples/portable-ui-core/datapack/data/portable_ui/mcgame/main.ts \
-  --namespace portable_ui \
-  --output build/portable/portable_ui
-```
-
-The retained portable JRPG example compiles with:
-
-```bash
 npm run compile:portable -- \
   --source examples/jrpg-demo/datapack/data/jrpg_demo/mcgame/main.ts \
   --namespace jrpg_demo \
   --output build/portable/jrpg_demo
 ```
 
-The JRPG generated pack starts from its load function rather than carrying the former Fabric-host `/function jrpg_demo:start` / `stop` bridge. Before removing it from an acceptance world, run `jrpg_demo:portable/cleanup`, then explicitly restore the x=59..75 / y=99..104 / z=-1..13 arena footprint because portable world projection intentionally persists terrain.
+The output contains `.mcgame-portable-generated`. Re-running the compiler may replace a directory carrying that marker; it refuses to delete an unrelated non-empty directory.
 
-For a DSL-only source that uses only implemented portable primitives, the generated output is the deployment artifact: copy that directory into a Minecraft 26.1 world's `datapacks/` directory. Fabric, Fabric API, GraalJS, Java, TypeScript, Node.js, and MC Game Runtime are not required on that target server. Node.js and TypeScript are build-time compiler concerns only. Portable v10 currently emits held player-input predicates, conditionally visible block/text-display projections, one fixed player-position camera, particle/sound emitters, one actionbar HUD, one bounded vanilla scoreboard sidebar, 2D AABB and circle/circle collision, circle/static-segment-or-capsule collision, center-point AABB triggers, two-pose flippers, bounded mannequin/zombie/skeleton actor projections, bounded state/input-backed world-text tokens, bounded compile-time world batches/fills, and declarations expanded by compile-time `repeat`.
+## Compiler validation
 
-The output directory is treated as generated content and contains `.mcgame-portable-generated`. Re-running the compiler may replace a directory carrying that marker; it refuses to delete a non-empty directory without the marker. Generated output belongs under `build/` and is not committed.
+Every compiler change must run:
 
-For `mc-mcp` deployment from the development container, prefer URL transfer over embedding a base64 archive in the tool call. After compilation, create a `tar.gz` whose root is the generated datapack contents, publish that file through the devcontainer file-sharing capability, and immediately pass the resulting short-lived HTTPS URL to `mc-mcp` as `archive_url` with the destination pack directory as `replace_under`. Mint a fresh URL for every deployment; published file URLs are intentionally short-lived and must not be cached or reused. The downloader reports the fetched archive SHA-256, which should match the local archive hash when validating the transfer. This is the standard generated-datapack handoff path between `devcontainer-mcp` and `mc-mcp`; base64 transfer is only a fallback when URL transfer is unavailable.
+```bash
+npm test
+```
 
-For v10 entity-heavy programs, declare a bounded `ownership` rectangle around all generated entity projections. Acceptance must verify the generated `#ready` reaches 1, the declared chunks remain force-loaded while the pack is active, the namespace owner-entity count is unchanged across at least two consecutive `/reload` cycles, and `portable/cleanup` returns owner entities, owned force-loads, and generated objectives to zero. The v10 camera must be validated in Adventure (or the player's existing non-spectator mode): held input must still update portable state while the player is position-locked, and no generated controller tag/gamemode cleanup debt may remain.
+For changes to lowering, also compile the affected representative examples. For changes involving Minecraft command syntax or behavior, run a focused mod-free Minecraft 26.1 acceptance pass rather than relying only on generated text.
 
-After URL deployment, inspect the pack state. Replacing the directory of a world pack that was previously disabled does not implicitly enable it; if `read_datapack` reports the generated pack as available but disabled, explicitly enable `file/<pack-name>` and reload before interpreting missing functions/objectives as a compiler failure.
+Important real-client checks include:
 
-Validation for compiler changes should include `npm test` and loading a generated pack on Minecraft 26.1. For camera/input changes, use a real 26.1 client. For the default `position_lock` mode, verify that the generated camera position-locks the first non-spectator controller without changing persistent gamemode/tags, the view stays fixed, and held input predicates continue changing portable state. For portable v11 `mode: "spectate"`, explicitly place the acceptance controller in Spectator before the test, verify it observes the generated camera carrier without per-tick player teleports, verify held input still changes portable state while spectating, and confirm the generated tick/cleanup functions contain no `gamemode spectator`/`gamemode adventure` commands. Restore the acceptance controller gamemode as explicit test teardown because player gamemode is outside portable camera ownership. For particle/sound changes, load the generated commands and capture a short run where the emitter condition becomes true. For text/HUD changes, verify the text display and actionbar on a real client. For v9 sidebar changes, verify the real vanilla sidebar title/rows on a real client, mutate a referenced scalar through real held input, and prove a held Jump only triggers one rising-edge action until released. For collision changes, inspect generated state after a known overlap and a known miss for every affected shape family; v6 segment/capsule work also requires endpoint/interior coverage, while trigger work requires an inside and outside check. For flippers, use the real client and confirm A/D selects the active pose and produces the expected collision response rather than only checking generated text. For portable actors, verify state-backed position/yaw against entity `Pos`/`Rotation`, verify every supported appearance on the real client, and exercise false->true `when` lifetime so respawn re-applies appearance. For dynamic world text, mutate a referenced scalar and inspect/render the resulting `text_display.text` component, not only the generated mcfunction text. For v8 world projection, verify an unconditional batch on load plus a condition-driven batch using a real input predicate; inspect the actual blocks, and explicitly restore the test footprint because `portable/cleanup` intentionally does not roll terrain back. Do not validate zombie/skeleton by temporarily changing the server difficulty; the vanilla backend intentionally maps them through mannequin head equipment. For visibility changes, inspect the Display transformation before and after its `when` condition changes. Keep a player/bot online while observing `minecraft:tick` behavior because the development server can pause while empty. For v10 ownership-region packs, replacement reload is designed to remove/recreate namespace-owned entities without a pre-cleanup; still run `portable/cleanup` before final pack deletion so owner entities, ownership force-loads, optional sidebar state, and the main objective are removed. Legacy v1-v9 entity-heavy packs retain weaker initial-chunk cleanup semantics and should be explicitly cleaned with relevant chunks loaded before deletion or replacement.
+- held input actually changes the intended scoreboard state;
+- camera behavior is visually stable and does not mutate gamemode unexpectedly;
+- text/actionbar/sidebar components render rather than merely parse;
+- actor appearances and state-backed transforms match declarations;
+- particles/sounds execute when their conditions become true;
+- collision behavior is verified with known overlap and miss cases;
+- ownership reload does not duplicate generated entities;
+- cleanup removes generated objectives/entities/force-loads.
+
+## Deploying with devcontainer-mcp and mc-mcp
+
+For `mc-mcp` deployment from the development container, prefer file-sharing URL transfer rather than embedding base64 in a tool call:
+
+1. compile the generated datapack under `build/`;
+2. create a `tar.gz` whose archive root is the generated datapack contents;
+3. publish/share that archive through the devcontainer file-sharing capability;
+4. immediately pass the short-lived HTTPS URL to `mc-mcp` using its archive deployment path and replace the target pack directory;
+5. compare the downloader-reported SHA-256 with the local archive hash when validating transfer;
+6. reload and inspect datapack state.
+
+Mint a fresh shared URL for every deployment; shared URLs are short-lived. Base64 is a fallback only when URL transfer is unavailable.
+
+Replacing a pack directory that was previously disabled does not automatically enable it. If the generated pack is present but disabled, explicitly enable it and reload before diagnosing missing functions/objectives as compiler failures.
+
+## Minecraft acceptance environment
+
+Portable compiler/backend acceptance should use a **mod-free** Minecraft 26.1 environment. Existing project convention is to use `second` for generated-pack acceptance and avoid moving or repurposing `main` unless explicitly requested.
+
+Keep a real client/player online for tests that depend on ticking or visual/player-input behavior.
+
+## Ownership-region programs
+
+For v10+ entity-heavy programs, declare a bounded `ownership` rectangle around generated entity projections.
+
+Acceptance should verify:
+
+- generated `#ready` reaches `1`;
+- declared chunks remain force-loaded while active;
+- namespace owner-entity count is stable across at least two `/reload` cycles;
+- player gamemode/tags are not taken over by the generated camera;
+- `portable/cleanup` returns owner entities, owned force-loads, and generated objectives to zero.
+
+Before final deletion/replacement, run `<namespace>:portable/cleanup` when the pack is still enabled.
+
+## World projection teardown
+
+`worldBatch` / `worldFill` intentionally write persistent terrain. `portable/cleanup` does not restore blocks. Acceptance tests must explicitly restore or clear any temporary world footprint after cleanup.
+
+The retained JRPG example, for example, requires explicit arena-footprint teardown after its generated resources are cleaned.
+
+## Camera acceptance
+
+For v10 `position_lock`, verify the selected non-spectator controller remains at the generated carrier, held input continues to update portable state, and no generated player tags/gamemode debt remains.
+
+For v11 `mode: "spectate"`, place the acceptance controller in Spectator explicitly before the test. Verify it observes the generated shared carrier, held input still updates state, and generated tick/cleanup functions never issue `gamemode spectator` or `gamemode adventure`. Restore the controller's desired gamemode as explicit test teardown because gamemode is outside compiler ownership.
+
+## Multiplayer v12
+
+v12 is not implemented yet. When implementation begins, acceptance must use at least two simultaneous clients and prove independent player-local state/input/HUD plus shared-camera audience behavior. ADR 0020 and `docs/architecture.md` define that future contract.

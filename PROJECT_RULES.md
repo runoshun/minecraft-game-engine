@@ -1,42 +1,39 @@
 # Project Rules
 
-These rules are part of the repository contract and should be followed by humans and coding agents working on MC Game Runtime.
+These rules are part of the repository contract for humans and coding agents working on Minecraft Game Engine.
 
 ## Architecture documentation is authoritative
 
-When a change modifies any of the following, update `docs/architecture.md` in the **same commit/change**:
+When a change modifies any of the following, update `docs/architecture.md` in the same commit/change:
 
-- responsibility boundaries between Minecraft, the runtime mod, and game scripts
-- script loading/reload lifecycle
-- public TypeScript API or input model
-- entity/camera ownership and cleanup semantics
-- sandbox/security model
-- execution/tick model or performance budgets
-- datapack/script layout
-- compatibility targets or required runtime dependencies
+- responsibility boundaries between the Node compiler, generated datapack, Minecraft, and game source;
+- public Portable IR or `portableDsl` API;
+- input, camera, presentation, ownership, reload, or cleanup semantics;
+- compiler extraction/sandbox model;
+- generated datapack layout or lifecycle;
+- compatibility targets or required build/runtime dependencies.
 
-Do not leave obsolete architecture text in place. Rewrite it so the document describes the current implementation and clearly labels planned-but-not-implemented behavior.
+Do not leave obsolete architecture text in place. Current behavior must be described as current; planned behavior must be labeled as planned. Significant architectural choices must add or supersede an ADR under `docs/decisions/`.
 
-For a significant architectural choice, also add or supersede an ADR under `docs/decisions/`.
+## Design principles
 
-## Runtime design principles
-
-1. Minecraft is the view/input/world host; gameplay rules should live in script code where practical.
-2. The Fabric mod should expose a small stable capability API rather than raw Minecraft Java objects.
-3. Vanilla clients should remain sufficient unless a feature explicitly requires a client mod.
-4. `/reload` is the primary prototype iteration loop.
-5. Scripts must not receive unrestricted host/filesystem/network/reflection access.
-6. Runtime-created entities/resources must have deterministic ownership and cleanup.
-7. A bad game script should be isolated/disabled rather than intentionally crashing the whole server where feasible.
-8. Keep `mc-mcp` compatible: it is the development, inspection, capture, world-editing, and E2E-test control plane; it is not the gameplay logic owner.
+1. `portableDsl` plus versioned Portable IR is the game-facing semantic boundary.
+2. The generated vanilla datapack is the deployment artifact and Minecraft 26.1 is the runtime host.
+3. Game rules should remain backend-independent and deterministic where practical; do not expose raw command strings as the general game API.
+4. Vanilla clients must remain sufficient unless a future decision explicitly changes that requirement.
+5. Compiler evaluation must not depend on live Minecraft state, unrestricted filesystem/network access, or arbitrary host objects.
+6. Generated entities, objectives, force-loads, UI resources, and other namespace-owned resources require deterministic reload/replacement/cleanup semantics.
+7. Add new capabilities to Portable IR deliberately, with bounded vanilla lowering and tests.
+8. Keep `mc-mcp` as the development, inspection, capture, deployment, and E2E-test control plane; it is not gameplay logic.
 
 ## Operational documentation
 
-Release, GitHub Release asset, mc-mcp deployment, and main-server validation procedures are documented in `docs/operations.md`. Update that document in the same change whenever the artifact distribution path, deployment tooling, server validation workflow, or required post-deploy checks change.
+Compile, generated-artifact deployment, mc-mcp transfer, and Minecraft validation procedures live in `docs/operations.md`. Update it in the same change whenever those workflows or requirements change.
 
 ## Repository hygiene
 
-- Keep generated Gradle output out of Git.
-- Do not commit credentials, server tokens, or local world data.
-- Keep example script packs runnable against the current public API.
-- Build the project after changes to Java/runtime code when the environment permits.
+- Keep generated compiler output under `build/` and out of Git.
+- Do not commit credentials, server tokens, local worlds, Node caches, or temporary captures.
+- Keep every retained example compilable against the current portable API.
+- Run `npm test` after compiler changes.
+- For behavior that depends on Minecraft semantics, also perform focused mod-free Minecraft 26.1 validation.

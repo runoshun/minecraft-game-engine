@@ -2,11 +2,11 @@
 
 ## Status
 
-Accepted design direction; implementation is planned and not yet present in portable v11.
+Accepted design direction; implementation is planned and not yet present in portable v11. The retired Java/Fabric backend is not part of the v12 implementation target.
 
 ## Context
 
-Portable v11 is single-controller-oriented. Input bindings such as `first_player_left` are sampled into global fake-score holders, portable state is global, camera/HUD selection uses one controller, and the Fabric compatibility adapter collapses its already per-player input snapshots to `input.players()[0]`. This prevents a generated vanilla game from treating multiple clients as independent participants.
+Portable v11 is single-controller-oriented. Input bindings such as `first_player_left` are sampled into global fake-score holders, portable state is global, and camera/HUD selection uses one controller. This prevents a generated vanilla game from treating multiple clients as independent participants.
 
 A multiplayer design based on `game.player(name)` or compile-time UUID/name selection would encode deployment-specific identities into otherwise portable game logic. It would also conflate three separate concerns: selecting a set of participants, entering execution context for one participant, and storing state owned by that participant.
 
@@ -125,13 +125,9 @@ Camera mode does not own gamemode. `spectate` applies only to spectator particip
 
 Sound and other commands with a vanilla target audience should address the declared/default participant `PlayerSet` instead of unconditional `@a`, so unrelated players are not treated as game participants. Shared actors, block/text displays, and terrain remain server-global scene state unless a later primitive explicitly introduces private presentation.
 
-### Fabric compatibility semantics
+### Compiler/backend scope
 
-The Fabric compatibility backend must implement the same portable semantics rather than continuing to collapse portable behavior to `input.players()[0]`.
-
-In particular, the v12 portable camera adapter must **not** call the existing legacy `camera.attach`/`camera.detach` implementation as-is: that legacy host API changes player gamemode and creates one carrier per attached player, which conflicts with v10-v12 portable ownership rules. The portable adapter must use a non-gamemode-owning implementation with a shared camera carrier and per-audience observation/position-lock behavior, either through a dedicated internal portable capability or a compatible refactoring of the host camera layer. Legacy Fabric camera API behavior may remain for non-portable scripts while that backend is transitional.
-
-Per-player input and actionbar UI already have usable Fabric host primitives; their v12 adapters must preserve player identity/context rather than selecting the first player.
+v12 is implemented only in the Node portable compiler and generated vanilla datapack backend. The Java/Fabric compatibility runtime was retired before v12 implementation begins, so there is no second runtime adapter whose player semantics must be kept in sync.
 
 ### Lifecycle
 
@@ -161,5 +157,4 @@ The semantic contract above is fixed. Implementation may still choose internal d
 
 - the exact finite number of player-state objective slots exposed by the first v12 compiler;
 - concrete short objective-name encoding within Minecraft's naming limit;
-- Java record/class names for the new IR nodes;
 - whether player input objectives use the same slot-bank helper as player state or a separate fixed field layout.

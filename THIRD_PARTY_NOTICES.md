@@ -1,9 +1,5 @@
 # Third-party notices
 
-MC Game Runtime bundles or depends on third-party software. This document is informational; the authoritative license text is the license shipped by each upstream project/artifact.
+Minecraft Game Engine bundles TypeScript 5.9.2 from Microsoft Corporation under the Apache License 2.0. The bundled distribution in `tools/portable-compiler/assets/typescript.cjs` retains its upstream copyright/license notice.
 
-- **TypeScript 5.9.2** — Microsoft Corporation — Apache License 2.0. The bundled `typescript.js` includes its upstream copyright/license notice.
-- **GraalJS / GraalVM Polyglot / Truffle 25.0.2 components** — Oracle and contributors — upstream artifacts use UPL 1.0 and/or MIT licenses as declared by their Maven metadata.
-- **Fabric Loader / Fabric API / Minecraft mappings/tooling** — used according to their respective upstream licenses and terms.
-
-This repository does not include or redistribute the Minecraft server binary.
+This repository does not bundle a Java runtime, GraalVM, Fabric Loader/API, or the Minecraft server/client binary. Minecraft itself remains subject to Mojang/Microsoft terms.

@@ -1,49 +1,27 @@
-# gradle
-
-.gradle/
+# generated compiler output
 build/
 out/
-classes/
 
-# eclipse
+# node
+node_modules/
+npm-debug.log*
 
-*.launch
-
-# idea
-
+# editors
 .idea/
 *.iml
 *.ipr
 *.iws
-
-# vscode
-
 .settings/
 .vscode/
 bin/
+*.launch
 .classpath
 .project
 
 # macos
-
 *.DS_Store
 
-# fabric
-
-run/
-
-# java
-
-hs_err_*.log
-replay_*.log
-*.hprof
-*.jfr
-
-# release artifacts
-dist/
-
-# local runtime/compiler logs
+# local compiler/test/capture scratch
 logs/
-
-# local capture scratch
 .tmp-video/
+dist/

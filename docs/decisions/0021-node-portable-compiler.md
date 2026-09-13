@@ -1,6 +1,6 @@
 # ADR 0021: Move the portable compiler to Node.js before retiring Java/Fabric
 
-Status: accepted and implemented for portable IR v1-v11.
+Status: accepted and implemented for portable IR v1-v11; the Java/Fabric compiler/runtime was subsequently retired.
 
 ## Context
 
@@ -37,5 +37,5 @@ Portable IR semantics and generated datapack ABI are not changed by the v1-v11 N
 - Minecraft 26.1 remains the generated-pack target and does not require Node at runtime.
 - `portableDsl` and the TypeScript compiler remain build-time assets of the repository.
 - Compiler sandboxing is a Node build-tool boundary, not a Minecraft runtime security mechanism.
-- The Java compiler may remain temporarily only as a parity oracle during the migration change; it is not a second canonical backend.
+- The Java compiler was retained only long enough to establish v1-v11 parity and was then removed together with Fabric/Graal/Gradle tooling.
 - v12 implementation begins only after Java/Fabric removal so there is one compiler and one semantic source of truth.

@@ -25,9 +25,3 @@ portable.define({
     },
   ],
 });
-
-game.onTick(({ tick }) => {
-  if (tick % 20 === 0) {
-    game.log("PORTABLE_BOUNCE", portable.get("x"), portable.get("vx"));
-  }
-});

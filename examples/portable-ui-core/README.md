@@ -8,7 +8,7 @@ Controls:
 - **S**: select option 1
 - **Space**: confirm on a rising edge; holding Space must increment `CONFIRMS` only once
 
-The generated datapack requires no Fabric runtime. Its sidebar is a real vanilla scoreboard sidebar. Because portable v9 is still a single-controller model, the sidebar uses the server-global vanilla sidebar display slot.
+Its generated datapack sidebar is a real vanilla scoreboard sidebar. Because portable v9 is still a single-controller model, the sidebar uses the server-global vanilla sidebar display slot.
 
 Compile with Node.js 22:
 

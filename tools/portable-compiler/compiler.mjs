@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { compileActions } from "./compile-actions.mjs";
-import { CompileContext, inputHolder } from "./compile-context.mjs";
+import { CompileContext, inputHolder, ownerTag } from "./compile-context.mjs";
 import {
   cleanupLines, compileVanillaActorLoad, compileVanillaActorUpdates, compileVanillaCameraLoad,
   compileVanillaCameraLock, compileVanillaCameraUpdates, compileVanillaHuds, compileVanillaInputs,
@@ -67,7 +67,7 @@ export function compileDatapack(program, namespace, outputRoot) {
   if (program.ownership) {
     load.push(`scoreboard players set #ready ${ctx.objective} 0`);
     load.push(ownershipForceloadCommand(program.ownership, true));
-    const ownedInit = [`execute in ${program.ownership.dimension} run kill @e[tag=mcg_o_${(awaitHashBase36(namespace))}]`];
+    const ownedInit = [`execute in ${program.ownership.dimension} run kill @e[tag=${ownerTag(namespace)}]`];
     compileVanillaProjectionLoad(program, ownedInit, ctx);
     compileVanillaTextLoad(program, ownedInit, ctx);
     compileVanillaActorLoad(program, ownedInit, ctx);
@@ -87,7 +87,7 @@ export function compileDatapack(program, namespace, outputRoot) {
   }
   compileVanillaSidebarLoad(program, load, ctx);
 
-  const pack = { pack: { description: `Generated MC Game Runtime portable program: ${namespace}`, min_format: [101, 1], max_format: [101, 1] } };
+  const pack = { pack: { description: `Generated Minecraft Game Engine portable program: ${namespace}`, min_format: [101, 1], max_format: [101, 1] } };
   write(path.join(outputRoot, "pack.mcmeta"), prettyJson(pack));
   write(path.join(outputRoot, "data", "minecraft", "tags", "function", "load.json"), functionTag(`${namespace}:portable/load`));
   write(path.join(outputRoot, "data", "minecraft", "tags", "function", "tick.json"), functionTag(`${namespace}:portable/tick`));
@@ -118,11 +118,4 @@ export function compileDatapack(program, namespace, outputRoot) {
     sidebarCount: program.sidebars.length,
     branchFunctionCount: ctx.nextBranch,
   };
-}
-
-// Kept local to avoid importing tag helpers only for one ownership load line.
-function awaitHashBase36(value) {
-  let hash = 0;
-  for (let i = 0; i < value.length; i++) hash = (Math.imul(31, hash) + value.charCodeAt(i)) | 0;
-  return (hash >>> 0).toString(36);
 }

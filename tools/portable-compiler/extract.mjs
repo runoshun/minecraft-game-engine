@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
 function unavailable(api) {
-  return () => { throw new Error(`${api} is unavailable while extracting portable.define; portable IR must not depend on live host state`); };
+  return () => { throw new Error(`${api} is unavailable while extracting portable.define; portable IR must not depend on live Minecraft host state`); };
 }
 
 function unavailableMethods(object, names) {
@@ -14,7 +14,7 @@ function unavailableMethods(object, names) {
 }
 
 export function transpileTypeScript(sourceName, source, repoRoot) {
-  const ts = require(path.join(repoRoot, "src/main/resources/mcgame/typescript.js"));
+  const ts = require(path.join(repoRoot, "tools/portable-compiler/assets/typescript.cjs"));
   const result = ts.transpileModule(source, {
     fileName: sourceName,
     compilerOptions: {
@@ -35,31 +35,30 @@ export function transpileTypeScript(sourceName, source, repoRoot) {
 
 export function extractPortableSpec(sourceName, javascript, repoRoot) {
   let captured = null;
-  const noops = Object.freeze({ onStart() {}, onBeforeTick() {}, onTick() {}, log() {} });
   const portable = Object.freeze({
     define(spec) {
       if (captured !== null) throw new Error("portable.define may only be called once");
       captured = JSON.parse(JSON.stringify(spec));
     },
-    get: unavailable("portable.get"),
-    raw: unavailable("portable.raw"),
-    setInput: unavailable("portable.setInput"),
-    input: unavailable("portable.input"),
   });
+
+  // These names intentionally exist only to produce explicit errors for retired
+  // runtime-host APIs instead of an ambiguous ReferenceError during extraction.
   const sandbox = {
     portable,
-    game: noops,
-    menu: Object.freeze({ onAction() {}, open: unavailable("menu.open"), update: unavailable("menu.update"), close: unavailable("menu.close") }),
-    input: Object.freeze({ players: unavailable("input.players"), get: unavailable("input.get"), pressed: unavailable("input.pressed") }),
+    game: unavailableMethods("game", ["onStart", "onBeforeTick", "onTick", "log"]),
+    input: unavailableMethods("input", ["players", "get", "pressed"]),
     actors: unavailableMethods("actors", ["spawn", "move", "remove"]),
+    render: unavailableMethods("render", ["spawn", "update", "remove", "attach", "detach"]),
+    ui: unavailableMethods("ui", ["panel", "hud"]),
+    menu: unavailableMethods("menu", ["onAction", "open", "update", "close"]),
     camera: unavailableMethods("camera", ["attach", "move", "detach"]),
     world: unavailableMethods("world", ["setBlock", "setBlocks", "fill"]),
     effects: unavailableMethods("effects", ["particle", "sound"]),
-    render: unavailableMethods("render", ["spawn", "update", "remove", "attach", "detach"]),
-    ui: unavailableMethods("ui", ["panel", "hud"]),
   };
+
   const context = vm.createContext(sandbox, { codeGeneration: { strings: false, wasm: false } });
-  const dsl = fs.readFileSync(path.join(repoRoot, "src/main/resources/mcgame/portable-dsl.js"), "utf8");
+  const dsl = fs.readFileSync(path.join(repoRoot, "tools/portable-compiler/assets/portable-dsl.js"), "utf8");
   new vm.Script(dsl, { filename: "portable-dsl.js" }).runInContext(context, { timeout: 1000 });
   new vm.Script(javascript, { filename: sourceName }).runInContext(context, { timeout: 1000 });
   if (captured === null) throw new Error(`${sourceName} does not call portable.define(...)`);
