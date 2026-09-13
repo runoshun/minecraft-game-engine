@@ -25,57 +25,87 @@ The initial v12 milestone is **one shared game instance with N participants**. M
 
 ### Player selection
 
-The portable core will not center its API on `game.player(name)` or `game.player(uuid)`. The intended default entry point is a participant set, conceptually:
+The portable core will not center its API on `game.player(name)` or `game.player(uuid)`. The default entry point is an opaque participant set:
 
 ```ts
 const players = game.players();
 ```
 
-The first implementation may define this default membership as all online players while preserving `PlayerSet` as an IR abstraction. Later lobby/team/session membership may refine how the set is produced without changing player-scoped state or execution semantics. Arbitrary raw selector strings are not part of the initial API.
+For v12, `game.players()` has a stable meaning: it is the current shared game's online participant set. Because v12 has one shared game instance and no lobby/session membership primitive, that set is all online players. A later lobby/team/session feature must add another explicit `PlayerSet` producer or filter; it must not silently change the meaning of `game.players()` for existing sources.
 
-A tag-filtered or otherwise externally managed set may be added later, but such filters must return `PlayerSet`, not an ambiguous single player. Generated portable lifecycle must not depend on persistent runtime-owned entity tags on players.
+Arbitrary raw selector strings are not part of the portable API. A future tag/team/lobby filter may produce another `PlayerSet`, but portable lifecycle must not depend on persistent runtime-owned entity tags on players.
 
 ### Player execution context
 
-Portable rules need an explicit player context, conceptually:
+Portable rules enter player context explicitly. `game.forEachPlayer` is a compiler primitive nested inside the existing `game.tick(...)` action program, not an unrestricted JavaScript runtime loop:
 
 ```ts
 const players = game.players();
 
-game.forEachPlayer(players, player => {
-  const hp = player.state("hp", 20);
-  game.when(player.input.left.eq(1), () => {
-    hp.sub(1);
+game.tick(() => {
+  game.forEachPlayer(players, player => {
+    const hp = player.state("hp", 20);
+    game.when(player.input.left.eq(1), () => {
+      hp.sub(1);
+    });
   });
 });
 ```
 
-`game.forEachPlayer` is the current preferred spelling, but the final surface name may change before implementation. The semantic decision is that this is a **compiler primitive**, not an unrestricted JavaScript runtime loop. The vanilla backend lowers the scope to `execute as <participants> ...`, and player-local value references resolve against `@s`.
+The v12 IR represents this scope explicitly, conceptually as `ForEachPlayerAction(PlayerSet, actions)`. The vanilla backend lowers it to `execute as <participants> run function ...`, and player-local value references resolve against `@s` plus their generated player-local objective.
+
+`PlayerContext` is lexical and compiler-checked:
+
+- `game.forEachPlayer(...)` is only valid while capturing `game.tick(...)` actions;
+- player-local values created or obtained from the callback may only be referenced from that same player context and its nested branches/presentation declarations;
+- a player-local reference must not escape and later be used as a shared value;
+- nested `game.forEachPlayer(...)` scopes are rejected in the initial v12 implementation.
+
+The surface name `forEachPlayer` remains the intended v12 API unless implementation work reveals a concrete conflict; its execution-context semantics are fixed by this ADR.
 
 ### Shared and player-local state
 
-`game.state(name, initial)` remains one game-wide value. `player.state(name, initial)` is planned as a value independently stored for each player.
+`game.state(name, initial)` remains one game-wide value. `player.state(name, initial)` declares a scalar independently stored for each player. Shared state may be read from player context, but **shared-state mutation from player context is rejected in v12**. Player-local state may be mutated normally inside its owning player context.
 
-Join/reconnect semantics for the initial milestone are:
+This intentionally avoids trying to infer whether a shared mutation is mathematically commutative. Deterministic reductions such as participant count, sum, min, max, or team aggregation should be added later as explicit IR primitives when required rather than depending on selector iteration order.
 
-- a participant with no existing player-local value receives its declared initial value;
-- disconnect preserves player-local values while the game remains active;
-- reconnect of the same Minecraft player reuses those values;
-- generated namespace cleanup/replacement removes the owning player-local objectives, which clears both online and offline scoreboard entries without requiring the player entity to be selectable.
+Player-local values are backed by a bounded namespace-stable objective slot bank, not objective names derived from source variable names. The compiler assigns declared player-state values to slots in that bank. The implementation must define a finite compile-time slot count and reject a v12 program that exceeds it. Stable slot names let a newer build remove every objective the namespace could have owned even when player-state declarations were renamed or deleted between builds.
 
-Player-local state is therefore game-session state, not durable persistence across cleanup. A future persistence API, if any, is a separate concern.
+The player-local lifecycle is:
 
-### Determinism and shared writes
+- load/replacement removes the namespace's complete player-local objective bank and initialization marker objective before recreating the objectives for the new game instance;
+- before portable rules run, each online participant with no initialization marker receives every declared player-state initial value and is marked initialized;
+- disconnect leaves that player's scoreboard entries intact while the game instance remains active;
+- reconnect during the same active instance reuses the preserved values;
+- `/reload` or namespace replacement starts a new game instance, so player-local state is reset just like existing shared portable state;
+- `portable/cleanup` removes the complete player-local objective bank and initialization marker objective, which removes offline scoreboard entries without selecting offline entities.
 
-A player iteration has no portable ordering guarantee. Code that mutates one shared scalar once per selected player can become dependent on selector/execution order. Therefore v12 must not silently compile arbitrary order-sensitive writes from player context into shared state.
+Player-local state is therefore game-instance state, not durable persistence.
 
-The first implementation should allow player-local writes freely and either reject shared-state mutation from player context or permit only operations proven order-independent. If games later need reductions such as player count, totals, min/max, or team aggregation, those should receive explicit deterministic aggregation primitives rather than relying on player iteration order.
+### Input and tick ordering
 
-### Input
+The existing `first_player_*` binding vocabulary remains for v1-v11 compatibility. New multiplayer authoring uses player-scoped input, conceptually `player.input.left`, `player.input.jump`, `player.input.sneak`, and `player.input.hotbarSlot`.
 
-The existing `first_player_*` binding vocabulary remains for v1-v11 compatibility. New multiplayer authoring should use player-scoped input, conceptually `player.input.left`, `player.input.jump`, and `player.input.hotbarSlot`. Held values and any rising-edge history must be independent per player.
+Player input is sampled per participant into namespace-stable player-local input objectives. The initial v12 player-input vocabulary is the existing portable server-observable held input plus hotbar slot; v12 does not need a new generic event channel. Rising-edge behavior can be authored deterministically with `player.state(...)` previous-value state, as existing portable games do with shared state today. Dedicated edge helpers may be added later without changing the player-context model.
 
-The vanilla lowering should sample predicates/data while executing as each selected player and store the result on that player's scoreboard holder. The Fabric adapter already snapshots input per UUID and must expose the same portable semantics instead of selecting `input.players()[0]`.
+Each portable tick has this ordering:
+
+1. initialize missing player-local state for online participants;
+2. sample the current player-local input values;
+3. execute the authored portable action tree in source order, including `ForEachPlayerAction` scopes;
+4. project camera/HUD/effects and other presentation from the post-rule state.
+
+A player joining between ticks therefore receives initialized state and current input before its first authored player-context action executes.
+
+### Value scope and presentation
+
+Player-local references are intentionally narrower than shared references.
+
+Shared state can continue to drive shared world presentation. Player-local state/input may be consumed by player-context rules and player-local presentation such as the current participant's actionbar HUD. It may not drive shared block/text/actor/world projection, the global sidebar, or shared camera coordinates in v12 because those resources have one server-global result and no meaningful single `@s` owner.
+
+The v12 player-local HUD surface is conceptually `player.hud(id, spec)` inside `PlayerContext`; it may contain shared and player-local scalar tokens and lowers to an actionbar command addressed to the current player. Existing shared portable HUD behavior remains versioned for older IR.
+
+The vanilla scoreboard sidebar remains shared/global. Independent per-player portable sidebars are not promised by v12.
 
 ### Camera and presentation audiences
 
@@ -89,11 +119,19 @@ game.camera("main", {
 });
 ```
 
-For a shared fixed spectator camera, one owned camera carrier may be observed by every spectator in the audience. Player names and UUIDs are not embedded in the generated pack. Distinct per-player camera positions/carriers are deferred until a concrete game requires them.
+One owned camera carrier is shared by the audience. Camera coordinates are shared values only in v12; distinct per-player positions/carriers are deferred. Player names and UUIDs are never embedded in generated packs.
 
-Per-player actionbar HUD is in the initial scope because the vanilla backend can render while executing as the current participant. The vanilla scoreboard sidebar remains shared/global: independent packet-local sidebars are a Fabric capability and are not promised by the portable vanilla backend. Shared world entities, displays, text, and terrain likewise remain shared scene state unless a later primitive explicitly introduces private presentation.
+Camera mode does not own gamemode. `spectate` applies only to spectator participants in the audience; `position_lock` applies only to non-spectator participants in the audience. Entering or leaving Spectator remains external session lifecycle.
 
-Sound and other presentation commands should target participants rather than unconditional `@a` where vanilla permits an audience selector, so unrelated online players are not treated as game participants.
+Sound and other commands with a vanilla target audience should address the declared/default participant `PlayerSet` instead of unconditional `@a`, so unrelated players are not treated as game participants. Shared actors, block/text displays, and terrain remain server-global scene state unless a later primitive explicitly introduces private presentation.
+
+### Fabric compatibility semantics
+
+The Fabric compatibility backend must implement the same portable semantics rather than continuing to collapse portable behavior to `input.players()[0]`.
+
+In particular, the v12 portable camera adapter must **not** call the existing legacy `camera.attach`/`camera.detach` implementation as-is: that legacy host API changes player gamemode and creates one carrier per attached player, which conflicts with v10-v12 portable ownership rules. The portable adapter must use a non-gamemode-owning implementation with a shared camera carrier and per-audience observation/position-lock behavior, either through a dedicated internal portable capability or a compatible refactoring of the host camera layer. Legacy Fabric camera API behavior may remain for non-portable scripts while that backend is transitional.
+
+Per-player input and actionbar UI already have usable Fabric host primitives; their v12 adapters must preserve player identity/context rather than selecting the first player.
 
 ### Lifecycle
 
@@ -101,25 +139,27 @@ Portable multiplayer must preserve the lifecycle guarantees established by v10/v
 
 - no generated persistent controller tags on player entities;
 - no implicit portable ownership of player gamemode;
-- cleanup must work even when previous participants are offline;
-- namespace replacement must not duplicate owned entities or retain stale player-local objectives;
+- cleanup works even when previous participants are offline;
+- namespace replacement does not duplicate owned entities or retain any stale player-local objective slots;
 - spectator entry/exit remains external game/session lifecycle unless an offline-safe restoration mechanism is designed later.
 
 ## Consequences
 
 - Multiplayer becomes a first-class IR concern rather than a selector string pasted onto single-player commands.
 - Player identity stays runtime-bound; portable game sources do not require fixed names or UUIDs.
-- The current scalar IR needs a new version because player-scoped value references and execution context cannot be represented by the v11 global fake-score model.
+- `game.players()` has stable v12 semantics; future membership models add explicit `PlayerSet` producers instead of redefining it.
+- The IR gains explicit player execution scopes plus player-state/player-input value kinds.
+- Player-context shared writes are rejected, keeping selector order from becoming observable game logic.
+- Namespace-stable bounded objective slots make offline cleanup and declaration rename/removal deterministic.
 - Existing v1-v11 sources and their `first_player_*` semantics remain compatible.
-- Camera, input, HUD, state, and lifecycle can share one participant abstraction instead of each inventing its own controller-selection rule.
-- Multiple concurrent matches/sessions, player-private world scenes, per-player vanilla sidebars, and arbitrary shared-state mutation inside player iteration remain out of the initial v12 scope.
+- Camera, input, HUD, state, and lifecycle share one participant abstraction instead of each inventing its own controller-selection rule.
+- Multiple concurrent matches/sessions, player-private world scenes, per-player vanilla sidebars, distinct per-player cameras, and implicit shared-state reductions remain out of the initial v12 scope.
 
-## Open implementation details
+## Remaining implementation choices
 
-The architectural model above is accepted, but these details should be settled during v12 implementation rather than encoded prematurely in the public API:
+The semantic contract above is fixed. Implementation may still choose internal details that do not change it, including:
 
-- the final method name for entering `PlayerContext` (`forEachPlayer` is the preferred current spelling);
-- exact membership configuration accepted by `game.players(...)` beyond the default participant set;
-- generated objective layout and naming for player-local state/input;
-- whether a small subset of provably commutative shared mutations is allowed inside player context or all such writes are initially rejected;
-- the precise DSL surface for per-player HUD declarations and player-scoped input edge helpers.
+- the exact finite number of player-state objective slots exposed by the first v12 compiler;
+- concrete short objective-name encoding within Minecraft's naming limit;
+- Java record/class names for the new IR nodes;
+- whether player input objectives use the same slot-bank helper as player state or a separate fixed field layout.
