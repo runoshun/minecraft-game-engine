@@ -192,6 +192,7 @@ type PortableVanillaCamera = {
   yaw?: number;
   pitch?: number;
 };
+type PortableVanillaCameraV11 = PortableVanillaCamera & { mode?: "position_lock" | "spectate" };
 type PortableVanillaParticleEmitter = {
   id: string;
   dimension?: string;
@@ -317,7 +318,15 @@ type PortableProgramSpecV10 = {
   vanilla?: PortableProgramSpecV9["vanilla"] & { ownership?: PortableVanillaOwnershipRegion };
   tick: PortableAction[];
 };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10;
+type PortableProgramSpecV11 = {
+  version: 11;
+  fixedPoint?: number;
+  state: Record<string, number>;
+  inputs?: Record<string, number>;
+  vanilla?: Omit<NonNullable<PortableProgramSpecV10["vanilla"]>, "cameras"> & { cameras?: PortableVanillaCameraV11[] };
+  tick: PortableAction[];
+};
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -374,6 +383,7 @@ type PortableDslCameraSpec = {
   z: PortableDslCoordinate;
   yaw?: number;
   pitch?: number;
+  mode?: "position_lock" | "spectate";
 };
 type PortableDslActorSpec = {
   dimension?: string;

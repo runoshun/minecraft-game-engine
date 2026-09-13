@@ -514,7 +514,9 @@
       if (cameras.length > 0) fail("only one camera(...) is currently supported");
       if (typeof id !== "string" || id.length === 0) fail("camera id must be a non-empty string");
       if (spec == null || typeof spec !== "object") fail("camera " + id + " spec must be an object");
-      cameras.push({
+      const mode = spec.mode === undefined ? "position_lock" : spec.mode;
+      if (!["position_lock", "spectate"].includes(mode)) fail("camera " + id + " mode must be position_lock or spectate");
+      const camera = {
         id,
         dimension: spec.dimension === undefined ? "minecraft:overworld" : spec.dimension,
         x: normalizeCoordinate(spec.x, "camera " + id + " x"),
@@ -522,7 +524,9 @@
         z: normalizeCoordinate(spec.z, "camera " + id + " z"),
         yaw: finiteNumber(spec.yaw === undefined ? 0 : spec.yaw, "camera " + id + " yaw"),
         pitch: finiteNumber(spec.pitch === undefined ? 0 : spec.pitch, "camera " + id + " pitch"),
-      });
+      };
+      if (mode === "spectate") camera.mode = mode;
+      cameras.push(camera);
     }
 
     function particleEmitter(id, spec) {
@@ -646,8 +650,9 @@
     if (tickActions === null) fail("tick(...) must be declared exactly once");
     if (Object.keys(stateValues).length === 0) fail("at least one state(...) is required");
 
+    const usesSpectateCamera = cameras.some(camera => camera.mode === "spectate");
     const spec = {
-      version: ownership === null ? 9 : 10,
+      version: usesSpectateCamera ? 11 : (ownership === null ? 9 : 10),
       fixedPoint,
       state: stateValues,
       tick: tickActions,

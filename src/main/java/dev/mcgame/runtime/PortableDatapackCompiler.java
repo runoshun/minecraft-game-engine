@@ -200,6 +200,10 @@ final class PortableDatapackCompiler {
     }
 
     private static String controllerSelector(PortableProgram program, CompileContext context) {
+        if (!program.vanillaCameras().isEmpty()
+            && program.vanillaCameras().getFirst().mode() == PortableProgram.VanillaCameraMode.SPECTATE) {
+            return "@a[gamemode=spectator,limit=1,sort=arbitrary]";
+        }
         return "@a[gamemode=!spectator,limit=1,sort=arbitrary]";
     }
 
@@ -592,8 +596,13 @@ final class PortableDatapackCompiler {
         if (program.vanillaCameras().isEmpty()) return;
         PortableProgram.VanillaCamera camera = program.vanillaCameras().getFirst();
         String tag = cameraTag(context.namespace, camera.id());
-        lines.add("execute as " + controllerSelector(program, context) + " in " + camera.dimension()
-            + " if entity @e[type=minecraft:armor_stand,tag=" + tag + ",limit=1] run teleport @s @e[type=minecraft:armor_stand,tag=" + tag + ",limit=1]");
+        if (camera.mode() == PortableProgram.VanillaCameraMode.SPECTATE) {
+            lines.add("execute as " + controllerSelector(program, context) + " in " + camera.dimension()
+                + " if entity @e[type=minecraft:armor_stand,tag=" + tag + ",limit=1] run spectate @e[type=minecraft:armor_stand,tag=" + tag + ",limit=1] @s");
+        } else {
+            lines.add("execute as " + controllerSelector(program, context) + " in " + camera.dimension()
+                + " if entity @e[type=minecraft:armor_stand,tag=" + tag + ",limit=1] run teleport @s @e[type=minecraft:armor_stand,tag=" + tag + ",limit=1]");
+        }
     }
 
     private void compileVanillaParticles(PortableProgram program, List<String> lines, CompileContext context) {

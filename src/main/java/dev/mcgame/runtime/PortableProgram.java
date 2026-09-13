@@ -16,7 +16,8 @@ final class PortableProgram {
     static final int VERSION_8 = 8;
     static final int VERSION_9 = 9;
     static final int VERSION_10 = 10;
-    static final int CURRENT_VERSION = VERSION_10;
+    static final int VERSION_11 = 11;
+    static final int CURRENT_VERSION = VERSION_11;
 
     sealed interface ValueRef permits StateValue, InputValue, ConstantValue {}
     record StateValue(String name) implements ValueRef {}
@@ -93,6 +94,8 @@ final class PortableProgram {
         VanillaWorldBatch { blocks = List.copyOf(blocks); }
     }
 
+    enum VanillaCameraMode { POSITION_LOCK, SPECTATE }
+
     record VanillaCamera(
         String id,
         String dimension,
@@ -100,7 +103,8 @@ final class PortableProgram {
         VanillaCoordinate y,
         VanillaCoordinate z,
         double yaw,
-        double pitch
+        double pitch,
+        VanillaCameraMode mode
     ) {}
 
     record Condition(Comparison comparison, ValueRef left, ValueRef right) {}

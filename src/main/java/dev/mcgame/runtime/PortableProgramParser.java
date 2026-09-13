@@ -286,7 +286,16 @@ final class PortableProgramParser {
                     double yaw = memberNumber(camera, "yaw", 0, path);
                     double pitch = memberNumber(camera, "pitch", 0, path);
                     if (pitch < -90 || pitch > 90) throw new IllegalArgumentException(path + ".pitch must be between -90 and 90");
-                    vanillaCameras.add(new PortableProgram.VanillaCamera(id, dimension, x, y, z, yaw, pitch));
+                    String modeName = memberString(camera, "mode", "position_lock", path);
+                    if (camera.hasMember("mode") && version < PortableProgram.VERSION_11) {
+                        throw new IllegalArgumentException(path + ".mode requires portable version 11");
+                    }
+                    PortableProgram.VanillaCameraMode mode = switch (modeName) {
+                        case "position_lock" -> PortableProgram.VanillaCameraMode.POSITION_LOCK;
+                        case "spectate" -> PortableProgram.VanillaCameraMode.SPECTATE;
+                        default -> throw new IllegalArgumentException(path + ".mode must be position_lock or spectate");
+                    };
+                    vanillaCameras.add(new PortableProgram.VanillaCamera(id, dimension, x, y, z, yaw, pitch, mode));
                 }
             }
 

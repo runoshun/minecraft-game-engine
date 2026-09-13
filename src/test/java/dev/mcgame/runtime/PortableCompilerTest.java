@@ -233,6 +233,38 @@ class PortableCompilerTest {
 
 
     @Test
+    void versionElevenDslCompilesSpectateCameraWithoutManagingGamemode() throws Exception {
+        String source = """
+            portableDsl({ fixedPoint: 1000 }, game => {
+              const x = game.state("x", 0);
+              const left = game.input("left", 0, { source: "first_player_left" });
+              game.camera("main", { x: 20, y: 80, z: -20, yaw: 15, pitch: 10, mode: "spectate" });
+              game.tick(() => game.when(left.eq(1), () => x.sub(1)));
+            });
+            """;
+
+        PortableProgram program = extract(source);
+        assertEquals(11, program.version());
+        assertEquals(PortableProgram.VanillaCameraMode.SPECTATE, program.vanillaCameras().getFirst().mode());
+
+        Path output = Files.createTempDirectory("mcgame-portable-v11-camera-test");
+        PortableDatapackCompiler.Result result = new PortableDatapackCompiler().compile(program, "portable_v11_camera", output);
+        String tick = Files.readString(output.resolve("data/portable_v11_camera/function/portable/tick.mcfunction"));
+        assertTrue(tick.contains("@a[gamemode=spectator,limit=1,sort=arbitrary]"));
+        assertTrue(tick.contains("run spectate @e[type=minecraft:armor_stand,tag=mcg_c_"));
+        assertTrue(tick.contains("if predicate portable_v11_camera:portable/input/left"));
+        assertFalse(tick.contains("gamemode spectator"));
+        assertFalse(tick.contains("gamemode adventure"));
+
+        String cleanup = Files.readString(output.resolve("data/portable_v11_camera/function/portable/cleanup.mcfunction"));
+        assertFalse(cleanup.contains("gamemode spectator"));
+        assertFalse(cleanup.contains("gamemode adventure"));
+        assertTrue(cleanup.contains("kill @e[tag=mcg_c_"));
+        assertEquals(1, result.cameraCount());
+    }
+
+
+    @Test
     void versionFourDslCompilesSoundTextHudAndAabbCollision() throws Exception {
         String source = """
             portableDsl({ fixedPoint: 1000 }, game => {
