@@ -1,361 +1,401 @@
-type PlayerInput = {
-  id: string; name: string; dimension: string; x: number; y: number; z: number;
-  forward: boolean; backward: boolean; left: boolean; right: boolean;
-  jump: boolean; sneak: boolean; sprint: boolean;
-  jumpPressed: boolean; sneakPressed: boolean; sprintPressed: boolean;
-};
-type DirectionButtons = { forward: boolean; backward: boolean; left: boolean; right: boolean };
-type Mode = "inactive" | "field" | "dialogue" | "shop" | "battle" | "victory" | "defeat";
-type BattlePhase = "choose" | "enemy";
-type Point = { gx: number; gz: number };
-type Enemy = Point & { id: string; name: string; hp: number; maxHp: number; attack: number; gold: number; xp: number; alive: boolean };
-type CameraState = { x: number; y: number; z: number; yaw: number; pitch: number };
+const ORIGIN_X = 60;
+const ORIGIN_Z = 0;
+const FLOOR_Y = 100;
+const ACTOR_Y = 101;
+const GUIDE_X = 4;
+const GUIDE_Z = 4;
+const MERCHANT_X = 9;
+const MERCHANT_Z = 4;
+const SLIME1_X = 10;
+const SLIME1_Z = 9;
+const SLIME2_X = 12;
+const SLIME2_Z = 8;
 
-const MAP_WIDTH = 15, MAP_HEIGHT = 13, ORIGIN_X = 60, ORIGIN_Z = 0, FLOOR_Y = 100, ACTOR_Y = 101;
-const FIELD_CAMERA: CameraState = { x: 58, y: 107, z: -1, yaw: -50, pitch: 32 };
-const BATTLE_CAMERA: CameraState = { x: 75.5, y: 106.5, z: 15, yaw: 135, pitch: 25 };
-const POSITION_EPSILON = 0.25;
-const START_TRIGGER = { x: 57.5, y: 143, z: 6.5 };
-const STOP_TRIGGER = { x: 58.5, y: 143, z: 6.5 };
-const GUIDE = { gx: 4, gz: 4, id: "jrpg_guide" };
-const MERCHANT = { gx: 9, gz: 4, id: "jrpg_merchant" };
-const PLAYER_START = { gx: 7, gz: 6 };
-const PLAYER_MAX_HP = 20, BASE_ATTACK = 7, SWORD_BONUS = 3, POTION_HEAL = 8;
-const POTION_PRICE = 5, SWORD_PRICE = 12, ENEMY_ACTION_DELAY = 12, VICTORY_DELAY = 24, DEFEAT_DELAY = 32;
+const MODE_FIELD = 0;
+const MODE_DIALOGUE = 1;
+const MODE_SHOP = 2;
+const MODE_BATTLE = 3;
+const MODE_VICTORY = 4;
+const MODE_DEFEAT = 5;
 
-const guideLines = [
-  "Guide: Welcome to the prototype plaza!",
-  "Guide: The Merchant sells potions and a sword upgrade.",
-  "Guide: Bump into a slime to enter turn-based combat.",
-];
-const player = { gx: 7, gz: 6, yaw: 0, hp: 20, attack: 7, gold: 20, xp: 0, potions: 1, swordBought: false };
-let enemies: Enemy[] = [];
-let mode: Mode = "inactive", controllerId: string | null = null, controllerName = "", cameraAttached = false, skipInput = false;
-let previousDirection: DirectionButtons = { forward: false, backward: false, left: false, right: false };
-let dialogueIndex = 0, shopSelection = 0, shopMessage = "Choose an item.", battleSelection = 0;
-let battlePhase: BattlePhase = "choose", battleTimer = 0, battleMessage = "", activeEnemyId: string | null = null, battleTurn = 0;
-const startTriggerConsumed = new Set<string>(), stopTriggerConsumed = new Set<string>();
+portableDsl({ fixedPoint: 1000, ownership: { minX: 56, minZ: -4, maxX: 80, maxZ: 16 } }, game => {
+  const forward = game.input("forward", 0, { source: "first_player_forward" });
+  const backward = game.input("backward", 0, { source: "first_player_backward" });
+  const left = game.input("left", 0, { source: "first_player_left" });
+  const right = game.input("right", 0, { source: "first_player_right" });
+  const jump = game.input("jump", 0, { source: "first_player_jump" });
+  const sneak = game.input("sneak", 0, { source: "first_player_sneak" });
 
-function worldX(gx: number): number { return ORIGIN_X + gx + 0.5; }
-function worldZ(gz: number): number { return ORIGIN_Z + gz + 0.5; }
-function yawForStep(dx: number, dz: number): number {
-  if (dz > 0) return 0; if (dz < 0) return 180; if (dx > 0) return -90; if (dx < 0) return 90; return player.yaw;
-}
-function inBounds(gx: number, gz: number): boolean { return gx >= 1 && gx < MAP_WIDTH - 1 && gz >= 1 && gz < MAP_HEIGHT - 1; }
-function near(value: number, expected: number): boolean { return Math.abs(value - expected) <= POSITION_EPSILON; }
-function isTrigger(p: PlayerInput, t: { x: number; y: number; z: number }): boolean {
-  return p.dimension === "minecraft:overworld" && near(p.x, t.x) && near(p.y, t.y) && near(p.z, t.z);
-}
-function isAtCameraAnchor(p: PlayerInput, camera: CameraState): boolean {
-  return p.dimension === "minecraft:overworld" && near(p.x, camera.x) && near(p.y, camera.y) && near(p.z, camera.z);
-}
-function currentCameraOptions(): CameraState {
-  if (mode === "battle" || mode === "victory" || mode === "defeat") return BATTLE_CAMERA;
-  return FIELD_CAMERA;
-}
-function directionAction(p: PlayerInput): { dx: number; dz: number } | null {
-  if (p.forward && !previousDirection.forward) return { dx: 0, dz: 1 };
-  if (p.backward && !previousDirection.backward) return { dx: 0, dz: -1 };
-  if (p.left && !previousDirection.left) return { dx: 1, dz: 0 };
-  if (p.right && !previousDirection.right) return { dx: -1, dz: 0 };
-  return null;
-}
-function menuDelta(p: PlayerInput): number {
-  if (p.forward && !previousDirection.forward) return -1;
-  if (p.backward && !previousDirection.backward) return 1;
-  return 0;
-}
-function rememberDirections(p: PlayerInput): void {
-  previousDirection = { forward: p.forward, backward: p.backward, left: p.left, right: p.right };
-}
-function spawnText(id: string, text: string, gx: number, gz: number, yOffset: number): void {
-  render.spawn(id, { visual: { kind: "text", text }, x: worldX(gx), y: ACTOR_Y + yOffset, z: worldZ(gz), billboard: "center", scale: 0.8 });
-}
-function resetEnemies(): void {
-  enemies = [
-    { id: "jrpg_slime_1", name: "Green Slime", gx: 10, gz: 9, hp: 18, maxHp: 18, attack: 5, gold: 6, xp: 4, alive: true },
-    { id: "jrpg_slime_2", name: "Blue Slime", gx: 12, gz: 8, hp: 24, maxHp: 24, attack: 6, gold: 9, xp: 6, alive: true },
-  ];
-}
-function spawnEnemyProjection(enemy: Enemy): void {
-  render.spawn(enemy.id, {
-    visual: { kind: "block", block: enemy.id.endsWith("1") ? "minecraft:slime_block" : "minecraft:blue_concrete" },
-    x: worldX(enemy.gx), y: ACTOR_Y + 0.05, z: worldZ(enemy.gz), scale: 0.62, offset: { x: -0.31, y: 0, z: -0.31 },
+  const prevForward = game.state("prevForward", 0);
+  const prevBackward = game.state("prevBackward", 0);
+  const prevLeft = game.state("prevLeft", 0);
+  const prevRight = game.state("prevRight", 0);
+  const prevJump = game.state("prevJump", 0);
+  const prevSneak = game.state("prevSneak", 0);
+  const actionLock = game.state("actionLock", 0);
+  const fx = game.state("fx", 0);
+
+  const mode = game.state("mode", MODE_FIELD);
+  const playerX = game.state("playerX", 7);
+  const playerZ = game.state("playerZ", 6);
+  const playerYaw = game.state("playerYaw", 0);
+  const playerHp = game.state("playerHp", 20);
+  const playerAttack = game.state("playerAttack", 7);
+  const gold = game.state("gold", 20);
+  const xp = game.state("xp", 0);
+  const potions = game.state("potions", 1);
+  const swordBought = game.state("swordBought", 0);
+
+  const dialogueIndex = game.state("dialogueIndex", 0);
+  const selection = game.state("selection", 0);
+  const activeEnemy = game.state("activeEnemy", 0);
+  const battlePhase = game.state("battlePhase", 0);
+  const battleTimer = game.state("battleTimer", 0);
+  const battleTurn = game.state("battleTurn", 0);
+
+  const slime1Hp = game.state("slime1Hp", 18);
+  const slime1Alive = game.state("slime1Alive", 1);
+  const slime2Hp = game.state("slime2Hp", 24);
+  const slime2Alive = game.state("slime2Alive", 1);
+
+  const dialogue0Visible = game.state("dialogue0Visible", 0);
+  const dialogue1Visible = game.state("dialogue1Visible", 0);
+  const dialogue2Visible = game.state("dialogue2Visible", 0);
+  const shopVisible = game.state("shopVisible", 0);
+  const battleVisible = game.state("battleVisible", 0);
+  const victoryVisible = game.state("victoryVisible", 0);
+  const defeatVisible = game.state("defeatVisible", 0);
+
+  game.camera("main", { x: 58, y: 107, z: -1, yaw: -50, pitch: 32 });
+
+  game.worldFill("clear", {
+    fromX: 59, fromY: 99, fromZ: -1,
+    toX: 75, toY: 104, toZ: 13,
+    block: "minecraft:air",
   });
-  spawnText(`${enemy.id}_label`, `${enemy.name} ${enemy.hp}/${enemy.maxHp}`, enemy.gx, enemy.gz, 1.15);
-}
-function updateEnemyProjection(enemy: Enemy): void {
-  if (enemy.alive) render.update(`${enemy.id}_label`, { visual: { kind: "text", text: `${enemy.name} ${Math.max(0, enemy.hp)}/${enemy.maxHp}` } });
-}
-function spawnScene(): void {
-  actors.spawn("jrpg_hero", { x: worldX(player.gx), y: ACTOR_Y, z: worldZ(player.gz), yaw: player.yaw });
-  actors.spawn(GUIDE.id, { x: worldX(GUIDE.gx), y: ACTOR_Y, z: worldZ(GUIDE.gz), yaw: 180 });
-  actors.spawn(MERCHANT.id, { x: worldX(MERCHANT.gx), y: ACTOR_Y, z: worldZ(MERCHANT.gz), yaw: 180 });
-  spawnText("jrpg_guide_label", "Guide", GUIDE.gx, GUIDE.gz, 2.15);
-  spawnText("jrpg_merchant_label", "Merchant", MERCHANT.gx, MERCHANT.gz, 2.15);
-  for (const enemy of enemies) if (enemy.alive) spawnEnemyProjection(enemy);
-}
-function clearScene(): void {
-  actors.remove("jrpg_hero"); actors.remove(GUIDE.id); actors.remove(MERCHANT.id);
-  render.remove("jrpg_guide_label"); render.remove("jrpg_merchant_label");
-  for (const enemy of enemies) { render.remove(enemy.id); render.remove(`${enemy.id}_label`); }
-}
-function projectPlayer(): void {
-  actors.move("jrpg_hero", { x: worldX(player.gx), y: ACTOR_Y, z: worldZ(player.gz), yaw: player.yaw });
-}
-function resetPlayer(): void {
-  player.gx = PLAYER_START.gx; player.gz = PLAYER_START.gz; player.yaw = 0; player.hp = PLAYER_MAX_HP;
-  player.attack = BASE_ATTACK; player.gold = 20; player.xp = 0; player.potions = 1; player.swordBought = false;
-}
-function currentEnemy(): Enemy | undefined { return activeEnemyId ? enemies.find(enemy => enemy.id === activeEnemyId) : undefined; }
-function startSession(p: PlayerInput): void {
-  if (controllerId) stopSession(false);
-  controllerId = p.id; controllerName = p.name; resetPlayer(); resetEnemies(); mode = "field"; activeEnemyId = null;
-  battlePhase = "choose"; battleTimer = 0; battleTurn = 0; battleSelection = 0; dialogueIndex = 0; shopSelection = 0;
-  shopMessage = "Choose an item."; previousDirection = { forward: false, backward: false, left: false, right: false }; skipInput = true;
-  spawnScene();
-  effects.sound({ sound: "minecraft:block.amethyst_block.chime", x: worldX(player.gx), y: ACTOR_Y, z: worldZ(player.gz), volume: 0.8, pitch: 1.0 });
-  game.log("JRPG_START", p.name, `gold=${player.gold}`, `hp=${player.hp}`);
-}
-function stopSession(logStop: boolean): void {
-  const oldController = controllerId; clearScene();
-  if (oldController) { ui.panel(oldController, null); if (cameraAttached) camera.detach(oldController); }
-  cameraAttached = false; controllerId = null; controllerName = ""; mode = "inactive"; activeEnemyId = null; battleTimer = 0;
-  previousDirection = { forward: false, backward: false, left: false, right: false };
-  if (logStop) game.log("JRPG_STOP");
-}
-function openDialogue(): void {
-  mode = "dialogue"; dialogueIndex = 0; skipInput = true;
-  effects.sound({ sound: "minecraft:entity.villager.yes", x: worldX(GUIDE.gx), y: ACTOR_Y, z: worldZ(GUIDE.gz), volume: 0.7, pitch: 1.1 });
-  game.log("JRPG_DIALOGUE_OPEN", "Guide");
-}
-function advanceDialogue(): void {
-  dialogueIndex += 1;
-  if (dialogueIndex >= guideLines.length) { mode = "field"; dialogueIndex = 0; game.log("JRPG_DIALOGUE_CLOSE", "Guide"); }
-  else effects.sound({ sound: "minecraft:ui.button.click", x: worldX(GUIDE.gx), y: ACTOR_Y, z: worldZ(GUIDE.gz), volume: 0.5, pitch: 1.2 });
-}
-function openShop(): void {
-  mode = "shop"; shopSelection = 0; shopMessage = "Choose an item."; skipInput = true;
-  effects.sound({ sound: "minecraft:entity.villager.trade", x: worldX(MERCHANT.gx), y: ACTOR_Y, z: worldZ(MERCHANT.gz), volume: 0.7, pitch: 1.0 });
-  game.log("JRPG_SHOP_OPEN", `gold=${player.gold}`);
-}
-function leaveShop(): void {
-  mode = "field"; shopMessage = "";
-  effects.sound({ sound: "minecraft:ui.button.click", x: worldX(MERCHANT.gx), y: ACTOR_Y, z: worldZ(MERCHANT.gz), volume: 0.5, pitch: 0.9 });
-  game.log("JRPG_SHOP_CLOSE", `gold=${player.gold}`, `potions=${player.potions}`, `attack=${player.attack}`);
-}
-function buySelectedShopItem(): void {
-  if (shopSelection === 0) {
-    if (player.gold < POTION_PRICE) { shopMessage = "Not enough gold."; effects.sound({ sound: "minecraft:entity.villager.no", x: worldX(MERCHANT.gx), y: ACTOR_Y, z: worldZ(MERCHANT.gz), volume: 0.6, pitch: 1.0 }); return; }
-    player.gold -= POTION_PRICE; player.potions += 1; shopMessage = `Bought Potion. Gold ${player.gold}.`;
-    effects.sound({ sound: "minecraft:entity.experience_orb.pickup", x: worldX(MERCHANT.gx), y: ACTOR_Y, z: worldZ(MERCHANT.gz), volume: 0.6, pitch: 1.3 });
-    game.log("JRPG_SHOP_BUY", "potion", `gold=${player.gold}`, `potions=${player.potions}`); return;
-  }
-  if (shopSelection === 1) {
-    if (player.swordBought) { shopMessage = "Iron Sword already owned."; return; }
-    if (player.gold < SWORD_PRICE) { shopMessage = "Not enough gold."; effects.sound({ sound: "minecraft:entity.villager.no", x: worldX(MERCHANT.gx), y: ACTOR_Y, z: worldZ(MERCHANT.gz), volume: 0.6, pitch: 1.0 }); return; }
-    player.gold -= SWORD_PRICE; player.swordBought = true; player.attack = BASE_ATTACK + SWORD_BONUS;
-    shopMessage = `Equipped Iron Sword. ATK ${player.attack}.`;
-    effects.sound({ sound: "minecraft:item.armor.equip_iron", x: worldX(MERCHANT.gx), y: ACTOR_Y, z: worldZ(MERCHANT.gz), volume: 0.8, pitch: 1.1 });
-    game.log("JRPG_SHOP_BUY", "iron_sword", `gold=${player.gold}`, `attack=${player.attack}`); return;
-  }
-  leaveShop();
-}
-function startBattle(enemy: Enemy): void {
-  mode = "battle"; activeEnemyId = enemy.id; battleSelection = 0; battlePhase = "choose"; battleTimer = 0; battleTurn = 1;
-  battleMessage = `${enemy.name} appeared!`; skipInput = true;
-  effects.sound({ sound: "minecraft:entity.player.levelup", x: worldX(enemy.gx), y: ACTOR_Y, z: worldZ(enemy.gz), volume: 0.8, pitch: 0.7 });
-  game.log("JRPG_BATTLE_START", enemy.name, `hp=${enemy.hp}`);
-}
-function beginEnemyTurn(message: string): void { battleMessage = message; battlePhase = "enemy"; battleTimer = ENEMY_ACTION_DELAY; }
-function finishVictory(enemy: Enemy): void {
-  enemy.alive = false; enemy.hp = 0; render.remove(enemy.id); render.remove(`${enemy.id}_label`);
-  player.gold += enemy.gold; player.xp += enemy.xp; mode = "victory"; battleTimer = VICTORY_DELAY;
-  battleMessage = `Victory! +${enemy.gold}G +${enemy.xp}XP`;
-  effects.particle({ particle: "minecraft:happy_villager", x: worldX(enemy.gx), y: ACTOR_Y + 0.8, z: worldZ(enemy.gz) });
-  effects.sound({ sound: "minecraft:ui.toast.challenge_complete", x: worldX(enemy.gx), y: ACTOR_Y, z: worldZ(enemy.gz), volume: 0.8, pitch: 1.0 });
-  game.log("JRPG_BATTLE_VICTORY", enemy.name, `gold=${player.gold}`, `xp=${player.xp}`);
-}
-function playerAttackEnemy(enemy: Enemy): void {
-  const variance = (battleTurn % 3) - 1, damage = Math.max(1, player.attack + variance);
-  enemy.hp -= damage; battleMessage = `${controllerName} attacks for ${damage}!`;
-  effects.particle({ particle: "minecraft:damage_indicator", x: worldX(enemy.gx), y: ACTOR_Y + 0.8, z: worldZ(enemy.gz) });
-  effects.sound({ sound: "minecraft:entity.player.attack.strong", x: worldX(enemy.gx), y: ACTOR_Y, z: worldZ(enemy.gz), volume: 0.75, pitch: 1.0 });
-  game.log("JRPG_PLAYER_ATTACK", enemy.name, `damage=${damage}`, `enemyHp=${Math.max(0, enemy.hp)}`);
-  if (enemy.hp <= 0) { finishVictory(enemy); return; }
-  updateEnemyProjection(enemy); beginEnemyTurn(`${enemy.name} is preparing to attack...`);
-}
-function usePotionInBattle(enemy: Enemy): void {
-  if (player.potions <= 0) { battleMessage = "No potions left."; effects.sound({ sound: "minecraft:entity.villager.no", x: worldX(player.gx), y: ACTOR_Y, z: worldZ(player.gz), volume: 0.5, pitch: 1.1 }); return; }
-  player.potions -= 1; const before = player.hp; player.hp = Math.min(PLAYER_MAX_HP, player.hp + POTION_HEAL); const healed = player.hp - before;
-  effects.particle({ particle: "minecraft:heart", x: worldX(player.gx), y: ACTOR_Y + 1.0, z: worldZ(player.gz) });
-  effects.sound({ sound: "minecraft:entity.experience_orb.pickup", x: worldX(player.gx), y: ACTOR_Y, z: worldZ(player.gz), volume: 0.6, pitch: 1.5 });
-  game.log("JRPG_USE_POTION", `healed=${healed}`, `remaining=${player.potions}`); beginEnemyTurn(`Potion restored ${healed} HP.`);
-}
-function executeBattleCommand(): void {
-  const enemy = currentEnemy();
-  if (!enemy || !enemy.alive || battlePhase !== "choose") return;
-  if (battleSelection === 0) { playerAttackEnemy(enemy); return; }
-  if (battleSelection === 1) { usePotionInBattle(enemy); return; }
-  battleMessage = `Escaped from ${enemy.name}.`; mode = "field"; activeEnemyId = null; battlePhase = "choose";
-  effects.sound({ sound: "minecraft:entity.enderman.teleport", x: worldX(player.gx), y: ACTOR_Y, z: worldZ(player.gz), volume: 0.6, pitch: 1.3 });
-  game.log("JRPG_BATTLE_RUN", enemy.name);
-}
-function enemyAttack(): void {
-  const enemy = currentEnemy(); if (!enemy || !enemy.alive || mode !== "battle") return;
-  const damage = Math.max(1, enemy.attack + ((battleTurn + 1) % 2)); player.hp -= damage; battleMessage = `${enemy.name} hits for ${damage}!`;
-  effects.particle({ particle: "minecraft:damage_indicator", x: worldX(player.gx), y: ACTOR_Y + 0.8, z: worldZ(player.gz) });
-  effects.sound({ sound: "minecraft:entity.player.hurt", x: worldX(player.gx), y: ACTOR_Y, z: worldZ(player.gz), volume: 0.8, pitch: 0.9 });
-  game.log("JRPG_ENEMY_ATTACK", enemy.name, `damage=${damage}`, `playerHp=${Math.max(0, player.hp)}`);
-  if (player.hp <= 0) {
-    player.hp = 0; mode = "defeat"; battleTimer = DEFEAT_DELAY; battleMessage = "Defeated... Returning to the plaza.";
-    effects.sound({ sound: "minecraft:entity.player.death", x: worldX(player.gx), y: ACTOR_Y, z: worldZ(player.gz), volume: 0.7, pitch: 1.0 });
-    game.log("JRPG_BATTLE_DEFEAT", enemy.name); return;
-  }
-  battleTurn += 1; battlePhase = "choose";
-}
-function recoverFromDefeat(): void {
-  const enemy = currentEnemy(); if (enemy && enemy.alive) { enemy.hp = enemy.maxHp; updateEnemyProjection(enemy); }
-  activeEnemyId = null; player.hp = PLAYER_MAX_HP; player.gx = PLAYER_START.gx; player.gz = PLAYER_START.gz; player.yaw = 0;
-  projectPlayer(); mode = "field"; battlePhase = "choose"; battleMessage = ""; game.log("JRPG_RECOVER", `hp=${player.hp}`);
-}
-function tryFieldStep(dx: number, dz: number): void {
-  const nx = player.gx + dx, nz = player.gz + dz; player.yaw = yawForStep(dx, dz); projectPlayer();
-  if (!inBounds(nx, nz)) { effects.sound({ sound: "minecraft:block.stone.hit", x: worldX(player.gx), y: ACTOR_Y, z: worldZ(player.gz), volume: 0.45, pitch: 0.8 }); return; }
-  if (nx === GUIDE.gx && nz === GUIDE.gz) { openDialogue(); return; }
-  if (nx === MERCHANT.gx && nz === MERCHANT.gz) { openShop(); return; }
-  const enemy = enemies.find(candidate => candidate.alive && candidate.gx === nx && candidate.gz === nz);
-  if (enemy) { startBattle(enemy); return; }
-  player.gx = nx; player.gz = nz; projectPlayer();
-  effects.sound({ sound: "minecraft:block.stone.step", x: worldX(player.gx), y: ACTOR_Y, z: worldZ(player.gz), volume: 0.35, pitch: 1.1 });
-}
-function selector(selected: boolean, label: string): string { return `${selected ? ">" : " "} ${label}`; }
-function updateHud(): void {
-  if (!controllerId) return;
-  if (mode === "field") {
-    ui.panel(controllerId, { title: "JRPG Demo", rows: [
-      { id: "hp", label: "HP", value: `${player.hp}/${PLAYER_MAX_HP}` },
-      { id: "atk", label: "ATK", value: String(player.attack) },
-      { id: "gold", label: "Gold", value: `${player.gold}G` },
-      { id: "xp", label: "XP", value: String(player.xp) },
-      { id: "potions", label: "Potions", value: String(player.potions) },
-      { id: "enemies", label: "Slimes", value: String(enemies.filter(enemy => enemy.alive).length) },
-      { id: "goal", label: "Goal", value: "Talk / shop / battle" },
-      { id: "controls", label: "WASD", value: "move / bump interact" },
-    ] }); return;
-  }
-  if (mode === "dialogue") {
-    ui.panel(controllerId, { title: "Conversation", rows: [
-      { id: "speaker", label: "NPC", value: "Guide" },
-      { id: "line", label: guideLines[dialogueIndex] ?? "..." },
-      { id: "next", label: "Jump", value: dialogueIndex + 1 < guideLines.length ? "Next" : "Close" },
-      { id: "back", label: "Sneak", value: "Close" },
-    ] }); return;
-  }
-  if (mode === "shop") {
-    ui.panel(controllerId, { title: "Merchant", rows: [
-      { id: "gold", label: "Gold", value: `${player.gold}G` },
-      { id: "potion", label: selector(shopSelection === 0, `Potion ${POTION_PRICE}G`), value: `Owned ${player.potions}` },
-      { id: "sword", label: selector(shopSelection === 1, `Iron Sword ${SWORD_PRICE}G`), value: player.swordBought ? "Owned" : "+3 ATK" },
-      { id: "leave", label: selector(shopSelection === 2, "Leave") },
-      { id: "message", label: shopMessage },
-      { id: "controls", label: "W/S + Jump", value: "select / buy" },
-      { id: "back", label: "Sneak", value: "leave" },
-    ] }); return;
-  }
-  if (mode === "battle") {
-    const enemy = currentEnemy();
-    ui.panel(controllerId, { title: "Turn Battle", rows: [
-      { id: "enemy", label: enemy?.name ?? "Enemy", value: enemy ? `${Math.max(0, enemy.hp)}/${enemy.maxHp}` : "-" },
-      { id: "hp", label: "Hero HP", value: `${player.hp}/${PLAYER_MAX_HP}` },
-      { id: "turn", label: "Turn", value: String(battleTurn) },
-      { id: "message", label: battleMessage },
-      { id: "attack", label: selector(battleSelection === 0, `Attack (${player.attack} ATK)`) },
-      { id: "potion", label: selector(battleSelection === 1, `Potion x${player.potions}`) },
-      { id: "run", label: selector(battleSelection === 2, "Run") },
-      { id: "controls", label: battlePhase === "choose" ? "W/S + Jump" : "Enemy turn...", value: battlePhase === "choose" ? "select / confirm" : "" },
-    ] }); return;
-  }
-  if (mode === "victory") {
-    ui.panel(controllerId, { title: "Victory!", rows: [
-      { id: "message", label: battleMessage }, { id: "gold", label: "Gold", value: `${player.gold}G` }, { id: "xp", label: "XP", value: String(player.xp) },
-    ] }); return;
-  }
-  if (mode === "defeat") {
-    ui.panel(controllerId, { title: "Defeat", rows: [
-      { id: "message", label: battleMessage }, { id: "recover", label: "Recovery", value: String(battleTimer) },
-    ] });
-  }
-}
+  game.worldFill("foundation", {
+    fromX: 60, fromY: 99, fromZ: 0,
+    toX: 74, toY: 99, toZ: 12,
+    block: "minecraft:stone_bricks",
+  });
+  game.worldFill("floor", {
+    fromX: 60, fromY: FLOOR_Y, fromZ: 0,
+    toX: 74, toY: FLOOR_Y, toZ: 12,
+    block: "minecraft:polished_andesite",
+  });
+  game.worldFill("wall_n", {
+    fromX: 60, fromY: 101, fromZ: 0,
+    toX: 74, toY: 103, toZ: 0,
+    block: "minecraft:stone_bricks",
+  });
+  game.worldFill("wall_s", {
+    fromX: 60, fromY: 101, fromZ: 12,
+    toX: 74, toY: 103, toZ: 12,
+    block: "minecraft:stone_bricks",
+  });
+  game.worldFill("wall_w", {
+    fromX: 60, fromY: 101, fromZ: 1,
+    toX: 60, toY: 103, toZ: 11,
+    block: "minecraft:stone_bricks",
+  });
+  game.worldFill("wall_e", {
+    fromX: 74, fromY: 101, fromZ: 1,
+    toX: 74, toY: 103, toZ: 11,
+    block: "minecraft:stone_bricks",
+  });
+  game.worldBatch("markers", { blocks: [
+    { x: 64, y: 100, z: 4, block: "minecraft:chiseled_stone_bricks" },
+    { x: 69, y: 100, z: 4, block: "minecraft:emerald_block" },
+    { x: 70, y: 100, z: 9, block: "minecraft:moss_block" },
+    { x: 72, y: 100, z: 8, block: "minecraft:moss_block" },
+  ] });
 
-function handleModeInput(p: PlayerInput): void {
-  if (mode === "field") { const action = directionAction(p); if (action) tryFieldStep(action.dx, action.dz); return; }
-  if (mode === "dialogue") {
-    if (p.sneakPressed) { mode = "field"; game.log("JRPG_DIALOGUE_CLOSE", "Guide"); }
-    else if (p.jumpPressed) advanceDialogue();
-    return;
-  }
-  if (mode === "shop") {
-    if (p.sneakPressed) { leaveShop(); return; }
-    const delta = menuDelta(p);
-    if (delta !== 0) { shopSelection = (shopSelection + delta + 3) % 3; shopMessage = "Choose an item."; effects.sound({ sound: "minecraft:ui.button.click", x: worldX(MERCHANT.gx), y: ACTOR_Y, z: worldZ(MERCHANT.gz), volume: 0.35, pitch: 1.15 }); }
-    else if (p.jumpPressed) buySelectedShopItem();
-    return;
-  }
-  if (mode === "battle" && battlePhase === "choose") {
-    const delta = menuDelta(p);
-    if (delta !== 0) { battleSelection = (battleSelection + delta + 3) % 3; effects.sound({ sound: "minecraft:ui.button.click", x: worldX(player.gx), y: ACTOR_Y, z: worldZ(player.gz), volume: 0.35, pitch: 1.1 }); }
-    else if (p.jumpPressed) executeBattleCommand();
-  }
-}
+  game.actor("hero", {
+    x: game.at(playerX, ORIGIN_X + 0.5),
+    y: ACTOR_Y,
+    z: game.at(playerZ, ORIGIN_Z + 0.5),
+    yaw: playerYaw,
+  });
+  game.actor("guide", { x: ORIGIN_X + GUIDE_X + 0.5, y: ACTOR_Y, z: ORIGIN_Z + GUIDE_Z + 0.5, yaw: 180 });
+  game.actor("merchant", { x: ORIGIN_X + MERCHANT_X + 0.5, y: ACTOR_Y, z: ORIGIN_Z + MERCHANT_Z + 0.5, yaw: 180 });
 
-// lifecycle
-game.onStart(() => {
-  mode = "inactive"; controllerId = null; controllerName = ""; cameraAttached = false; resetEnemies();
-  startTriggerConsumed.clear(); stopTriggerConsumed.clear();
-  previousDirection = { forward: false, backward: false, left: false, right: false };
-  game.log("JRPG_READY", "run /function jrpg_demo:start");
-});
+  game.block("slime1", {
+    block: "minecraft:slime_block",
+    x: ORIGIN_X + SLIME1_X + 0.5, y: ACTOR_Y + 0.25, z: ORIGIN_Z + SLIME1_Z + 0.5,
+    scale: 0.7, translation: { x: -0.35, y: -0.35, z: -0.35 },
+    when: slime1Alive.eq(1),
+  });
+  game.block("slime2", {
+    block: "minecraft:blue_concrete",
+    x: ORIGIN_X + SLIME2_X + 0.5, y: ACTOR_Y + 0.25, z: ORIGIN_Z + SLIME2_Z + 0.5,
+    scale: 0.7, translation: { x: -0.35, y: -0.35, z: -0.35 },
+    when: slime2Alive.eq(1),
+  });
 
-game.onTick(() => {
-  const players = input.players() as PlayerInput[];
-  for (const id of Array.from(startTriggerConsumed)) {
-    const p = players.find(candidate => candidate.id === id);
-    if (!p || !isTrigger(p, START_TRIGGER)) startTriggerConsumed.delete(id);
-  }
-  for (const id of Array.from(stopTriggerConsumed)) {
-    const p = players.find(candidate => candidate.id === id);
-    if (!p || !isTrigger(p, STOP_TRIGGER)) stopTriggerConsumed.delete(id);
+  game.text("title", {
+    text: "PORTABLE JRPG",
+    x: 67.5, y: 104.4, z: 6.5,
+    scale: 0.7, billboard: "center",
+  });
+  game.text("guide_label", {
+    text: "GUIDE", x: 64.5, y: 103.2, z: 4.5,
+    scale: 0.45, billboard: "center",
+  });
+  game.text("merchant_label", {
+    text: "MERCHANT", x: 69.5, y: 103.2, z: 4.5,
+    scale: 0.45, billboard: "center",
+  });
+  game.text("slime1_label", {
+    text: ["GREEN SLIME  ", slime1Hp, "/18"],
+    x: 70.5, y: 102.8, z: 9.5,
+    scale: 0.38, billboard: "center", when: slime1Alive.eq(1),
+  });
+  game.text("slime2_label", {
+    text: ["BLUE SLIME  ", slime2Hp, "/24"],
+    x: 72.5, y: 102.8, z: 8.5,
+    scale: 0.38, billboard: "center", when: slime2Alive.eq(1),
+  });
+  game.text("dialogue0", {
+    text: "Guide: Welcome to the portable prototype plaza!",
+    x: 67.5, y: 103.8, z: 5.5, scale: 0.42, billboard: "center", when: dialogue0Visible.eq(1),
+  });
+  game.text("dialogue1", {
+    text: "Guide: The Merchant sells potions and a sword upgrade.",
+    x: 67.5, y: 103.8, z: 5.5, scale: 0.42, billboard: "center", when: dialogue1Visible.eq(1),
+  });
+  game.text("dialogue2", {
+    text: "Guide: Bump into a slime to enter turn-based combat.",
+    x: 67.5, y: 103.8, z: 5.5, scale: 0.42, billboard: "center", when: dialogue2Visible.eq(1),
+  });
+  game.text("shop_help", {
+    text: ["SHOP  SELECT ", selection, "   GOLD ", gold, "   POTIONS ", potions],
+    x: 67.5, y: 103.8, z: 5.5, scale: 0.42, billboard: "center", when: shopVisible.eq(1),
+  });
+  game.text("battle_help", {
+    text: ["BATTLE  ENEMY ", activeEnemy, "   SELECT ", selection, "   TURN ", battleTurn],
+    x: 67.5, y: 103.8, z: 5.5, scale: 0.42, billboard: "center", when: battleVisible.eq(1),
+  });
+  game.text("victory", {
+    text: "VICTORY!", x: 67.5, y: 103.8, z: 5.5,
+    scale: 0.65, billboard: "center", when: victoryVisible.eq(1),
+  });
+  game.text("defeat", {
+    text: "DEFEATED... RECOVERING", x: 67.5, y: 103.8, z: 5.5,
+    scale: 0.55, billboard: "center", when: defeatVisible.eq(1),
+  });
+
+  game.sidebar("main", {
+    title: "PORTABLE JRPG",
+    rows: [
+      { id: "mode", text: ["MODE ", mode] },
+      { id: "hp", text: ["HP ", playerHp, "/20"] },
+      { id: "atk", text: ["ATK ", playerAttack] },
+      { id: "gold", text: ["GOLD ", gold] },
+      { id: "xp", text: ["XP ", xp] },
+      { id: "potions", text: ["POTIONS ", potions] },
+      { id: "select", text: ["SELECT ", selection] },
+      { id: "enemy", text: ["ENEMY ", activeEnemy] },
+      { id: "turn", text: ["TURN ", battleTurn] },
+      { id: "controls", text: "WASD / SPACE / SNEAK" },
+    ],
+  });
+  game.hud("main", {
+    text: ["MODE ", mode, "  HP ", playerHp, "  GOLD ", gold, "  SPACE CONFIRM  SNEAK BACK"],
+  });
+
+  game.particle("action", {
+    particle: "minecraft:happy_villager",
+    x: game.at(playerX, ORIGIN_X + 0.5), y: ACTOR_Y + 1.0, z: game.at(playerZ, ORIGIN_Z + 0.5),
+    delta: 0.18, speed: 0.02, count: 5, force: true, when: fx.eq(1),
+  });
+  game.sound("action", {
+    sound: "minecraft:block.note_block.pling",
+    x: game.at(playerX, ORIGIN_X + 0.5), y: ACTOR_Y, z: game.at(playerZ, ORIGIN_Z + 0.5),
+    volume: 0.65, pitch: 1.25, when: fx.eq(1),
+  });
+
+  function startBattle(enemyId: number) {
+    activeEnemy.set(enemyId);
+    mode.set(MODE_BATTLE);
+    selection.set(0);
+    battlePhase.set(0);
+    battleTimer.set(0);
+    battleTurn.set(1);
+    fx.set(1);
   }
 
-  const stopRequest = players.find(candidate => isTrigger(candidate, STOP_TRIGGER) && !stopTriggerConsumed.has(candidate.id));
-  if (stopRequest) { stopTriggerConsumed.add(stopRequest.id); stopSession(true); return; }
-  const startRequest = players.find(candidate => isTrigger(candidate, START_TRIGGER) && !startTriggerConsumed.has(candidate.id));
-  if (startRequest) { startTriggerConsumed.add(startRequest.id); startSession(startRequest); }
-
-  if (controllerId && !players.some(candidate => candidate.id === controllerId)) {
-    game.log("JRPG_CONTROLLER_DISCONNECTED", controllerName); stopSession(false); return;
-  }
-  const p = controllerId ? players.find(candidate => candidate.id === controllerId) : undefined;
-  if (!p || mode === "inactive") return;
-
-  const cameraState = currentCameraOptions();
-  if (!cameraAttached) { camera.attach(p.id, cameraState); cameraAttached = true; }
-  else if (!isAtCameraAnchor(p, cameraState)) camera.attach(p.id, cameraState);
-
-  if (mode === "battle" && battlePhase === "enemy") {
-    battleTimer -= 1; if (battleTimer <= 0) enemyAttack();
-  } else if (mode === "victory") {
-    battleTimer -= 1; if (battleTimer <= 0) { activeEnemyId = null; battleMessage = ""; mode = "field"; }
-  }
-  else if (mode === "defeat") {
-    battleTimer -= 1; if (battleTimer <= 0) recoverFromDefeat();
-  } else if (skipInput) {
-    skipInput = false;
-  } else {
-    handleModeInput(p);
+  function resolveStepInteractions(dx: number, dz: number) {
+    game.when(playerX.eq(GUIDE_X), () => game.when(playerZ.eq(GUIDE_Z), () => {
+      playerX.add(-dx); playerZ.add(-dz); mode.set(MODE_DIALOGUE); dialogueIndex.set(0); fx.set(1);
+    }));
+    game.when(playerX.eq(MERCHANT_X), () => game.when(playerZ.eq(MERCHANT_Z), () => {
+      playerX.add(-dx); playerZ.add(-dz); mode.set(MODE_SHOP); selection.set(0); fx.set(1);
+    }));
+    game.when(slime1Alive.eq(1), () => game.when(playerX.eq(SLIME1_X), () => game.when(playerZ.eq(SLIME1_Z), () => {
+      playerX.add(-dx); playerZ.add(-dz); startBattle(1);
+    })));
+    game.when(slime2Alive.eq(1), () => game.when(playerX.eq(SLIME2_X), () => game.when(playerZ.eq(SLIME2_Z), () => {
+      playerX.add(-dx); playerZ.add(-dz); startBattle(2);
+    })));
   }
 
-  rememberDirections(p);
-  updateHud();
+  function step(dx: number, dz: number, yaw: number) {
+    playerYaw.set(yaw);
+    playerX.add(dx);
+    playerZ.add(dz);
+    game.when(playerX.lt(1), () => playerX.set(1));
+    game.when(playerX.gt(13), () => playerX.set(13));
+    game.when(playerZ.lt(1), () => playerZ.set(1));
+    game.when(playerZ.gt(11), () => playerZ.set(11));
+    resolveStepInteractions(dx, dz);
+  }
+
+  function attackEnemy(enemyId: number, hp: ReturnType<typeof game.state>, alive: ReturnType<typeof game.state>, rewardGold: number, rewardXp: number) {
+    game.when(activeEnemy.eq(enemyId), () => {
+      hp.sub(playerAttack);
+      fx.set(1);
+      game.when(hp.lte(0), () => {
+        hp.set(0);
+        alive.set(0);
+        gold.add(rewardGold);
+        xp.add(rewardXp);
+        mode.set(MODE_VICTORY);
+        battleTimer.set(24);
+      }, () => {
+        battlePhase.set(1);
+        battleTimer.set(12);
+      });
+    });
+  }
+
+  function enemyTurn(enemyId: number, damage: number) {
+    game.when(activeEnemy.eq(enemyId), () => {
+      playerHp.sub(damage);
+      fx.set(1);
+      game.when(playerHp.lte(0), () => {
+        playerHp.set(0);
+        mode.set(MODE_DEFEAT);
+        battleTimer.set(32);
+      }, () => {
+        battleTurn.add(1);
+        battlePhase.set(0);
+      });
+    });
+  }
+
+  game.tick(() => {
+    fx.set(0);
+    actionLock.set(0);
+
+    game.when(mode.eq(MODE_FIELD), () => {
+      game.when(actionLock.eq(0), () => game.when(forward.eq(1), () => game.when(prevForward.eq(0), () => {
+        step(0, 1, 0); actionLock.set(1);
+      })));
+      game.when(actionLock.eq(0), () => game.when(backward.eq(1), () => game.when(prevBackward.eq(0), () => {
+        step(0, -1, 180); actionLock.set(1);
+      })));
+      game.when(actionLock.eq(0), () => game.when(left.eq(1), () => game.when(prevLeft.eq(0), () => {
+        step(1, 0, -90); actionLock.set(1);
+      })));
+      game.when(actionLock.eq(0), () => game.when(right.eq(1), () => game.when(prevRight.eq(0), () => {
+        step(-1, 0, 90); actionLock.set(1);
+      })));
+    });
+
+    game.when(mode.eq(MODE_DIALOGUE), () => {
+      game.when(sneak.eq(1), () => game.when(prevSneak.eq(0), () => { mode.set(MODE_FIELD); fx.set(1); }));
+      game.when(jump.eq(1), () => game.when(prevJump.eq(0), () => {
+        dialogueIndex.add(1); fx.set(1);
+        game.when(dialogueIndex.gt(2), () => { dialogueIndex.set(0); mode.set(MODE_FIELD); });
+      }));
+    });
+
+    game.when(mode.eq(MODE_SHOP), () => {
+      game.when(actionLock.eq(0), () => {
+        game.when(sneak.eq(1), () => game.when(prevSneak.eq(0), () => { mode.set(MODE_FIELD); fx.set(1); }));
+        game.when(forward.eq(1), () => game.when(prevForward.eq(0), () => {
+          selection.sub(1); game.when(selection.lt(0), () => selection.set(2)); fx.set(1);
+        }));
+        game.when(backward.eq(1), () => game.when(prevBackward.eq(0), () => {
+          selection.add(1); game.when(selection.gt(2), () => selection.set(0)); fx.set(1);
+        }));
+        game.when(jump.eq(1), () => game.when(prevJump.eq(0), () => {
+          game.when(selection.eq(0), () => game.when(gold.gte(5), () => { gold.sub(5); potions.add(1); fx.set(1); }));
+          game.when(selection.eq(1), () => game.when(swordBought.eq(0), () => game.when(gold.gte(12), () => {
+            gold.sub(12); swordBought.set(1); playerAttack.set(10); fx.set(1);
+          })));
+          game.when(selection.eq(2), () => { mode.set(MODE_FIELD); fx.set(1); });
+        }));
+      });
+    });
+
+    game.when(mode.eq(MODE_BATTLE), () => {
+      game.when(battlePhase.eq(0), () => {
+        game.when(actionLock.eq(0), () => {
+        game.when(forward.eq(1), () => game.when(prevForward.eq(0), () => {
+          selection.sub(1); game.when(selection.lt(0), () => selection.set(2)); fx.set(1);
+        }));
+        game.when(backward.eq(1), () => game.when(prevBackward.eq(0), () => {
+          selection.add(1); game.when(selection.gt(2), () => selection.set(0)); fx.set(1);
+        }));
+        game.when(jump.eq(1), () => game.when(prevJump.eq(0), () => {
+          game.when(selection.eq(0), () => {
+            attackEnemy(1, slime1Hp, slime1Alive, 6, 4);
+            attackEnemy(2, slime2Hp, slime2Alive, 9, 6);
+          });
+          game.when(selection.eq(1), () => {
+            game.when(potions.gt(0), () => {
+              potions.sub(1); playerHp.add(8); game.when(playerHp.gt(20), () => playerHp.set(20));
+              battlePhase.set(1); battleTimer.set(12); fx.set(1);
+            });
+          });
+          game.when(selection.eq(2), () => {
+            mode.set(MODE_FIELD); activeEnemy.set(0); battlePhase.set(0); fx.set(1);
+          });
+        }));
+        });
+      });
+      game.when(battlePhase.eq(1), () => {
+        battleTimer.sub(1);
+        game.when(battleTimer.lte(0), () => {
+          enemyTurn(1, 5);
+          enemyTurn(2, 6);
+        });
+      });
+    });
+
+    game.when(mode.eq(MODE_VICTORY), () => {
+      battleTimer.sub(1);
+      game.when(battleTimer.lte(0), () => { mode.set(MODE_FIELD); activeEnemy.set(0); battlePhase.set(0); });
+    });
+
+    game.when(mode.eq(MODE_DEFEAT), () => {
+      battleTimer.sub(1);
+      game.when(battleTimer.lte(0), () => {
+        game.when(activeEnemy.eq(1), () => game.when(slime1Alive.eq(1), () => slime1Hp.set(18)));
+        game.when(activeEnemy.eq(2), () => game.when(slime2Alive.eq(1), () => slime2Hp.set(24)));
+        playerHp.set(20); playerX.set(7); playerZ.set(6); playerYaw.set(0);
+        activeEnemy.set(0); battlePhase.set(0); mode.set(MODE_FIELD);
+      });
+    });
+
+    dialogue0Visible.set(0); dialogue1Visible.set(0); dialogue2Visible.set(0);
+    shopVisible.set(0); battleVisible.set(0); victoryVisible.set(0); defeatVisible.set(0);
+    game.when(mode.eq(MODE_DIALOGUE), () => {
+      game.when(dialogueIndex.eq(0), () => dialogue0Visible.set(1));
+      game.when(dialogueIndex.eq(1), () => dialogue1Visible.set(1));
+      game.when(dialogueIndex.eq(2), () => dialogue2Visible.set(1));
+    });
+    game.when(mode.eq(MODE_SHOP), () => shopVisible.set(1));
+    game.when(mode.eq(MODE_BATTLE), () => battleVisible.set(1));
+    game.when(mode.eq(MODE_VICTORY), () => victoryVisible.set(1));
+    game.when(mode.eq(MODE_DEFEAT), () => defeatVisible.set(1));
+
+    prevForward.set(forward);
+    prevBackward.set(backward);
+    prevLeft.set(left);
+    prevRight.set(right);
+    prevJump.set(jump);
+    prevSneak.set(sneak);
+  });
 });

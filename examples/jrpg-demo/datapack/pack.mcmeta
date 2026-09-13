@@ -1,6 +1,6 @@
 {
   "pack": {
-    "description": "JRPG mechanics demo for MC Game Runtime",
+    "description": "Portable JRPG mechanics demo source for MC Game Runtime compiler",
     "min_format": [101, 1],
     "max_format": [101, 1]
   }

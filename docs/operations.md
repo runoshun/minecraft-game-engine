@@ -124,6 +124,18 @@ The v9 bounded sidebar/input acceptance example compiles with:
   -PportableOutput=build/portable/portable_ui
 ```
 
+The retained portable JRPG example compiles with:
+
+```bash
+JAVA_HOME=/home/dev/.local/share/mise/installs/java/25.0.2 \
+  ./gradlew --no-daemon --max-workers=1 compilePortable \
+  -PportableSource=examples/jrpg-demo/datapack/data/jrpg_demo/mcgame/main.ts \
+  -PportableNamespace=jrpg_demo \
+  -PportableOutput=build/portable/jrpg_demo
+```
+
+The JRPG generated pack starts from its load function rather than carrying the former Fabric-host `/function jrpg_demo:start` / `stop` bridge. Before removing it from an acceptance world, run `jrpg_demo:portable/cleanup`, then explicitly restore the x=59..75 / y=99..104 / z=-1..13 arena footprint because portable world projection intentionally persists terrain.
+
 For a DSL-only source that uses only implemented portable primitives, the generated output is the deployment artifact: copy that directory into a Minecraft 26.1 world's `datapacks/` directory. Fabric, Fabric API, GraalJS, TypeScript, and MC Game Runtime are not required on that target server. They are build/runtime-development dependencies only. Portable v10 currently emits held player-input predicates, conditionally visible block/text-display projections, one fixed player-position camera, particle/sound emitters, one actionbar HUD, one bounded vanilla scoreboard sidebar, 2D AABB and circle/circle collision, circle/static-segment-or-capsule collision, center-point AABB triggers, two-pose flippers, bounded mannequin/zombie/skeleton actor projections, bounded state/input-backed world-text tokens, bounded compile-time world batches/fills, and declarations expanded by compile-time `repeat`.
 
 The output directory is treated as generated content and contains `.mcgame-portable-generated`. Re-running the compiler may replace a directory carrying that marker; it refuses to delete a non-empty directory without the marker. Generated output belongs under `build/` and is not committed.
