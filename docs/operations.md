@@ -121,4 +121,17 @@ For v11 `mode: "spectate"`, place the acceptance controller in Spectator explici
 
 ## Multiplayer v12
 
-v12 is not implemented yet. When implementation begins, acceptance must use at least two simultaneous clients and prove independent player-local state/input/HUD plus shared-camera audience behavior. ADR 0020 and `docs/architecture.md` define that future contract.
+Use `examples/portable-multiplayer-core` as the focused v12 acceptance pack. Acceptance must use at least two simultaneous clients and verify:
+
+- both participants are initialized before their first authored player rule;
+- A/D or equivalent held input changes each participant's own `player.state` without changing the other participant's value;
+- a held Jump increments the example's edge counter once until released, independently per participant;
+- `player.hud(...)` renders each participant's own player-local values while shared values remain readable;
+- one shared camera carrier applies to every eligible audience member (`position_lock` to non-spectators or `spectate` to spectators) without `limit=1`, player names/UUIDs, generated controller tags, or gamemode mutation;
+- disconnect/reconnect during the same active game preserves player-local scoreboard entries;
+- `/reload` resets player-local state for the new game instance;
+- `portable/cleanup` removes the complete 32-slot player-state bank, all eight fixed player-input objectives, the initialization marker, and the 32-slot HUD scratch bank, including entries belonging to offline players.
+
+The generated marker file records the concrete player-state/input objective mapping used by a build.
+
+The first v12 acceptance completed on `second` with two simultaneous test participants and the real render client; all checks above passed, including offline cleanup. Breakout and Pinball were then regenerated and replayed as v1-v11 compatibility regressions.

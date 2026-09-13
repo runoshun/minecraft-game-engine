@@ -33,7 +33,29 @@ export function compileActions(actions, lines, ctx) {
       }
       case "add": lines.push(operation(stateHolder(action.target), ctx.objective, "+=", action.value, ctx)); break;
       case "sub": lines.push(operation(stateHolder(action.target), ctx.objective, "-=", action.value, ctx)); break;
-      case "negate": ctx.usesNegate = true; lines.push(`scoreboard players operation ${stateHolder(action.target)} ${ctx.objective} *= #neg1 ${ctx.objective}`); break;
+      case "negate":
+        ctx.usesNegate = true;
+        lines.push(`scoreboard players operation ${stateHolder(action.target)} ${ctx.objective} *= #neg1 ${ctx.objective}`);
+        break;
+      case "player_set": {
+        const objective = ctx.playerStateObjective(action.target);
+        if (action.value.kind === "constant") lines.push(`scoreboard players set @s ${objective} ${action.value.raw}`);
+        else lines.push(operation("@s", objective, "=", action.value, ctx));
+        break;
+      }
+      case "player_add": lines.push(operation("@s", ctx.playerStateObjective(action.target), "+=", action.value, ctx)); break;
+      case "player_sub": lines.push(operation("@s", ctx.playerStateObjective(action.target), "-=", action.value, ctx)); break;
+      case "player_negate":
+        ctx.usesNegate = true;
+        lines.push(`scoreboard players operation @s ${ctx.playerStateObjective(action.target)} *= #neg1 ${ctx.objective}`);
+        break;
+      case "for_each_player": {
+        const fn = ctx.nextPlayerFunctionName(), body = [];
+        compileActions(action.actions, body, ctx);
+        ctx.functions.set(fn, body);
+        lines.push(`execute as @a run function ${ctx.namespace}:portable/${fn}`);
+        break;
+      }
       case "if": {
         if (action.then.length) {
           const fn = branchFunction(action.then, ctx);

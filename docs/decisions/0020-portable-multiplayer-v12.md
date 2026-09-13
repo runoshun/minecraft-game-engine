@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted design direction; implementation is planned and not yet present in portable v11. The retired Java/Fabric backend is not part of the v12 implementation target.
+Accepted and implemented in Portable IR v12. The retired Java/Fabric backend is not part of the v12 implementation target.
 
 ## Context
 
@@ -14,7 +14,7 @@ Minecraft's vanilla datapack model already provides a useful lowering target: se
 
 ## Decision
 
-Portable multiplayer v12 will be designed around four distinct concepts:
+Portable multiplayer v12 is implemented around four distinct concepts:
 
 1. **PlayerSet** — a declarative set/audience of game participants.
 2. **PlayerContext** — the current player inside a compiler-controlled player iteration/execution scope.
@@ -25,7 +25,7 @@ The initial v12 milestone is **one shared game instance with N participants**. M
 
 ### Player selection
 
-The portable core will not center its API on `game.player(name)` or `game.player(uuid)`. The default entry point is an opaque participant set:
+The portable core does not center its API on `game.player(name)` or `game.player(uuid)`. The default entry point is an opaque participant set:
 
 ```ts
 const players = game.players();
@@ -52,7 +52,7 @@ game.tick(() => {
 });
 ```
 
-The v12 IR represents this scope explicitly, conceptually as `ForEachPlayerAction(PlayerSet, actions)`. The vanilla backend lowers it to `execute as <participants> run function ...`, and player-local value references resolve against `@s` plus their generated player-local objective.
+The v12 IR represents this scope explicitly as `for_each_player` / `ForEachPlayerAction(PlayerSet, actions)`. The vanilla backend lowers it to `execute as <participants> run function ...`, and player-local value references resolve against `@s` plus their generated player-local objective.
 
 `PlayerContext` is lexical and compiler-checked:
 
@@ -69,7 +69,7 @@ The surface name `forEachPlayer` remains the intended v12 API unless implementat
 
 This intentionally avoids trying to infer whether a shared mutation is mathematically commutative. Deterministic reductions such as participant count, sum, min, max, or team aggregation should be added later as explicit IR primitives when required rather than depending on selector iteration order.
 
-Player-local values are backed by a bounded namespace-stable objective slot bank, not objective names derived from source variable names. The compiler assigns declared player-state values to slots in that bank. The implementation must define a finite compile-time slot count and reject a v12 program that exceeds it. Stable slot names let a newer build remove every objective the namespace could have owned even when player-state declarations were renamed or deleted between builds.
+Player-local values are backed by a bounded namespace-stable objective slot bank, not objective names derived from source variable names. The compiler assigns declared player-state values to slots in that bank. The implementation exposes 32 player-state slots and rejects a v12 program that exceeds that bound. Stable slot names let a newer build remove every objective the namespace could have owned even when player-state declarations were renamed or deleted between builds.
 
 The player-local lifecycle is:
 
@@ -84,7 +84,7 @@ Player-local state is therefore game-instance state, not durable persistence.
 
 ### Input and tick ordering
 
-The existing `first_player_*` binding vocabulary remains for v1-v11 compatibility. New multiplayer authoring uses player-scoped input, conceptually `player.input.left`, `player.input.jump`, `player.input.sneak`, and `player.input.hotbarSlot`.
+The existing `first_player_*` binding vocabulary remains for v1-v11 compatibility. New multiplayer authoring uses player-scoped input through `player.input.left`, `player.input.jump`, `player.input.sneak`, `player.input.hotbarSlot`, and the other supported held-input fields.
 
 Player input is sampled per participant into namespace-stable player-local input objectives. The initial v12 player-input vocabulary is the existing portable server-observable held input plus hotbar slot; v12 does not need a new generic event channel. Rising-edge behavior can be authored deterministically with `player.state(...)` previous-value state, as existing portable games do with shared state today. Dedicated edge helpers may be added later without changing the player-context model.
 
@@ -103,7 +103,7 @@ Player-local references are intentionally narrower than shared references.
 
 Shared state can continue to drive shared world presentation. Player-local state/input may be consumed by player-context rules and player-local presentation such as the current participant's actionbar HUD. It may not drive shared block/text/actor/world projection, the global sidebar, or shared camera coordinates in v12 because those resources have one server-global result and no meaningful single `@s` owner.
 
-The v12 player-local HUD surface is conceptually `player.hud(id, spec)` inside `PlayerContext`; it may contain shared and player-local scalar tokens and lowers to an actionbar command addressed to the current player. Existing shared portable HUD behavior remains versioned for older IR.
+The v12 player-local HUD surface is `player.hud(id, spec)` inside `PlayerContext`; it may contain shared and player-local scalar tokens and lowers to an actionbar command addressed to the current player. Existing shared portable HUD behavior remains versioned for older IR.
 
 The vanilla scoreboard sidebar remains shared/global. Independent per-player portable sidebars are not promised by v12.
 
@@ -151,10 +151,16 @@ Portable multiplayer must preserve the lifecycle guarantees established by v10/v
 - Camera, input, HUD, state, and lifecycle share one participant abstraction instead of each inventing its own controller-selection rule.
 - Multiple concurrent matches/sessions, player-private world scenes, per-player vanilla sidebars, distinct per-player cameras, and implicit shared-state reductions remain out of the initial v12 scope.
 
-## Remaining implementation choices
+## Implemented objective layout
 
-The semantic contract above is fixed. Implementation may still choose internal details that do not change it, including:
+The first v12 compiler fixes the internal bounded layout as follows:
 
-- the exact finite number of player-state objective slots exposed by the first v12 compiler;
-- concrete short objective-name encoding within Minecraft's naming limit;
-- whether player input objectives use the same slot-bank helper as player state or a separate fixed field layout.
+- 32 player-state objectives. Declarations are assigned deterministically by sorted state name to `mps<namespace-hash><2-digit-base36-slot>`;
+- one initialization-marker objective `mpz<namespace-hash>`;
+- eight fixed player-input objectives `mpi<namespace-hash><2-digit-base36-input-index>` in the stable order `hotbarSlot`, `forward`, `backward`, `left`, `right`, `jump`, `sneak`, `sprint`;
+- 32 per-player HUD scratch objectives `mph<namespace-hash><2-digit-base36-slot>`.
+
+All names stay within Minecraft's scoreboard-objective naming limit. Load/replacement and `portable/cleanup` remove the complete possible bank, not only objectives referenced by the current build. That is what makes declaration rename/removal and offline-player cleanup deterministic.
+## Validation
+
+The initial v12 implementation passed Node compiler regression tests, exact v1-v11 generated-output parity against commit `5a446ea`, and mod-free Minecraft 26.1 acceptance on `second`. Two simultaneously connected participants demonstrated independent player-local input/state and rising-edge behavior; reconnect preserved state within one active instance, `/reload` reset it, the real client rendered player-local actionbar values while sharing the fixed camera, and cleanup removed the complete player objective bank even with a previous participant offline. The existing Breakout and Pinball v10 packs were then regenerated and replayed successfully as compatibility regressions.

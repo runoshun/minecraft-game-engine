@@ -2,7 +2,7 @@ import { LIMITS, fail, has, isObject, requiredMember, requiredString, memberNumb
 
 export function parseValue(value, ctx, path) {
   if (typeof value === "number") return { kind: "constant", raw: scale(value, ctx.fixedPoint, path) };
-  if (!isObject(value)) fail(`${path} must be a number, { state: string }, or { input: string }`);
+  if (!isObject(value)) fail(`${path} must be a portable scalar value`);
   if (has(value, "state")) {
     if (typeof value.state !== "string") fail(`${path}.state must be a string`);
     if (!ctx.states.has(value.state)) fail(`${path} references unknown state ${value.state}`);
@@ -13,7 +13,19 @@ export function parseValue(value, ctx, path) {
     if (!ctx.inputs.has(value.input)) fail(`${path} references unknown input ${value.input}`);
     return { kind: "input", name: value.input };
   }
-  fail(`${path} must be a number, { state: string }, or { input: string }`);
+  if (has(value, "playerState")) {
+    if (!ctx.playerScope) fail(`${path} uses player-local state outside PlayerContext`);
+    if (typeof value.playerState !== "string") fail(`${path}.playerState must be a string`);
+    if (!ctx.playerStates.has(value.playerState)) fail(`${path} references unknown player state ${value.playerState}`);
+    return { kind: "player_state", name: value.playerState };
+  }
+  if (has(value, "playerInput")) {
+    if (!ctx.playerScope) fail(`${path} uses player-local input outside PlayerContext`);
+    if (typeof value.playerInput !== "string") fail(`${path}.playerInput must be a string`);
+    if (!ctx.playerInputs.has(value.playerInput)) fail(`${path} references undeclared player input ${value.playerInput}`);
+    return { kind: "player_input", name: value.playerInput };
+  }
+  fail(`${path} must be a number or portable state/input reference`);
 }
 
 export function parseCondition(value, ctx, path) {

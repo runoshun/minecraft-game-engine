@@ -2,7 +2,7 @@
 
 This is the reference game for portable IR v6 collision primitives. It compiles to a standalone Minecraft 26.1 datapack and exercises circle bumpers, static segment/capsule walls, rectangular trigger zones, and two-pose flippers without a server mod.
 
-Controls are **A / D** for the left/right flippers and **Space** to launch a ball. The generated game owns three lives, score, a fixed spectator camera, actionbar HUD, particles, sound, and deterministic cleanup.
+Controls are **A / D** for the left/right flippers and **Space** to launch a ball. The generated game owns three lives, score, a fixed position-lock camera, actionbar HUD, particles, sound, and deterministic cleanup.
 
 Compile it with:
 

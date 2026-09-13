@@ -2,6 +2,8 @@ import { LIMITS, fail, has, isObject, requiredArray, requiredMember, requiredObj
 import { parseCondition, parseValue } from "./parse-value.mjs";
 import { parseAabb, parseCapsule, parseCircle, validateCircleCapsule } from "./parse-shapes.mjs";
 
+function childContext(ctx, playerScope) { return { ...ctx, playerScope }; }
+
 export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }) {
   if (!Array.isArray(array)) fail(`${path} must be an array`);
   if (depth > LIMITS.depth) fail(`${path} exceeds max nesting depth ${LIMITS.depth}`);
@@ -12,10 +14,28 @@ export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }
     const a = array[i], p = `${path}[${i}]`;
     if (!isObject(a)) fail(`${p} must be an object`);
     const op = requiredString(a, "op", p);
+
     if (["set", "add", "sub", "negate"].includes(op)) {
+      if (ctx.playerScope) fail(`${p} shared state mutation is not allowed inside PlayerContext`);
       const target = requiredString(a, "target", p);
       if (!ctx.states.has(target)) fail(`${p} references unknown target state ${target}`);
       out.push(op === "negate" ? { op, target } : { op, target, value: parseValue(requiredMember(a, "value", p), ctx, `${p}.value`) });
+      continue;
+    }
+    if (["player_set", "player_add", "player_sub", "player_negate"].includes(op)) {
+      if (ctx.version < 12) fail(`${p}.op requires portable version 12`);
+      if (!ctx.playerScope) fail(`${p}.op is only valid inside PlayerContext`);
+      const target = requiredString(a, "target", p);
+      if (!ctx.playerStates.has(target)) fail(`${p} references unknown target player state ${target}`);
+      out.push(op === "player_negate" ? { op, target } : { op, target, value: parseValue(requiredMember(a, "value", p), ctx, `${p}.value`) });
+      continue;
+    }
+    if (op === "for_each_player") {
+      if (ctx.version < 12) fail(`${p}.op requires portable version 12`);
+      if (ctx.playerScope) fail(`${p} nested PlayerContext is not supported in portable v12`);
+      const players = requiredString(a, "players", p);
+      if (players !== "all_online") fail(`${p}.players must be all_online`);
+      out.push({ op, players, actions: parseActions(requiredArray(a, "actions", p), childContext(ctx, true), `${p}.actions`, depth + 1, counter) });
       continue;
     }
     if (op === "if") {

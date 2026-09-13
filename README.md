@@ -10,9 +10,9 @@ main.ts -> Node.js compiler -> Portable IR -> generated datapack -> Minecraft 26
 
 ## Status
 
-Early PoC targeting Minecraft Java Edition 26.1. Portable IR v1-v11 is implemented. Portable multiplayer v12 is designed in ADR 0020 but is not implemented yet.
+Early PoC targeting Minecraft Java Edition 26.1. Portable IR v1-v12 is implemented. v12 adds one-shared-game multiplayer with `PlayerSet`, lexical `PlayerContext`, player-local state/input, per-player actionbar HUD, and shared camera audiences.
 
-Current v11 capabilities include fixed-point state, held input and hotbar input, state-authored rising edges, block/text Display projection, bounded actor projection, world batches/fills, particles, sounds, actionbar HUD, one global vanilla sidebar, AABB/circle/capsule collision primitives, triggers, two-pose flippers, compile-time `repeat`, bounded ownership lifecycle, and `position_lock` / opt-in `spectate` camera modes.
+Current capabilities include fixed-point state, held input and hotbar input, state-authored rising edges, block/text Display projection, bounded actor projection, world batches/fills, particles, sounds, shared and per-player actionbar HUD, one global vanilla sidebar, AABB/circle/capsule collision primitives, triggers, two-pose flippers, compile-time `repeat`, bounded ownership lifecycle, `position_lock` / opt-in `spectate` camera modes, and v12 player-local execution. v1-v11 `first_player_*` input remains supported for compatibility.
 
 ## Requirements
 
@@ -67,6 +67,7 @@ portableDsl({ fixedPoint: 1000 }, game => {
 - `examples/portable-world-core` — bounded world projection.
 - `examples/portable-ui-core` — vanilla sidebar and input-edge recipe.
 - `examples/jrpg-demo` — retained portable game-loop example with dialogue, shop, and turn battle.
+- `examples/portable-multiplayer-core` — v12 player-local state/input/HUD and shared-camera acceptance example.
 
 Legacy host-runtime-only examples were removed when the Java/Fabric runtime was retired. Examples in the repository must compile through the current Node portable compiler.
 

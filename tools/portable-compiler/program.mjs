@@ -1,4 +1,4 @@
-import { CURRENT_VERSION, LIMITS, fail, has, isObject, requiredArray, requiredObject, finiteNumber, boundedInteger, validateValueName, scale, sortedKeys } from "./utils.mjs";
+import { CURRENT_VERSION, LIMITS, PLAYER_INPUT_NAMES, fail, has, isObject, requiredArray, requiredObject, finiteNumber, boundedInteger, validateValueName, scale, sortedKeys } from "./utils.mjs";
 import { parseActions } from "./parse-actions.mjs";
 import { parseVanillaScene } from "./parse-vanilla-scene.mjs";
 import { parseVanillaUi } from "./parse-vanilla-ui.mjs";
@@ -9,16 +9,28 @@ export function parseProgram(spec, api = "portable.define") {
   const fixedPoint = has(spec, "fixedPoint") ? boundedInteger(spec.fixedPoint, 1, 1000000, `${api}.fixedPoint`) : 1000;
 
   const rawState = requiredObject(spec, "state", api), initialState = {};
-  if (Object.keys(rawState).length === 0) fail(`${api}.state must define at least one value`);
   if (Object.keys(rawState).length > LIMITS.states) fail(`${api}.state exceeds max state count ${LIMITS.states}`);
   for (const name of sortedKeys(rawState)) {
     validateValueName(name, `${api}.state`);
     initialState[name] = scale(finiteNumber(rawState[name], `${api}.state.${name}`), fixedPoint, `${api}.state.${name}`);
   }
 
+  const initialPlayerState = {};
+  if (has(spec, "playerState")) {
+    if (version < 12) fail(`${api}.playerState requires portable version 12`);
+    const raw = requiredObject(spec, "playerState", api);
+    if (Object.keys(raw).length > LIMITS.playerStates) fail(`${api}.playerState exceeds max player-state count ${LIMITS.playerStates}`);
+    for (const name of sortedKeys(raw)) {
+      validateValueName(name, `${api}.playerState`);
+      initialPlayerState[name] = scale(finiteNumber(raw[name], `${api}.playerState.${name}`), fixedPoint, `${api}.playerState.${name}`);
+    }
+  }
+  if (Object.keys(initialState).length === 0 && Object.keys(initialPlayerState).length === 0) fail(`${api} must define at least one shared or player-local state value`);
+
   const initialInputs = {};
   if (has(spec, "inputs")) {
     if (version < 2) fail(`${api}.inputs requires portable version 2`);
+    if (version >= 12) fail(`${api}.inputs is v1-v11 compatibility only; use playerInputs in v12`);
     const raw = requiredObject(spec, "inputs", api);
     if (Object.keys(raw).length > LIMITS.inputs) fail(`${api}.inputs exceeds max input count ${LIMITS.inputs}`);
     for (const name of sortedKeys(raw)) {
@@ -28,19 +40,38 @@ export function parseProgram(spec, api = "portable.define") {
     }
   }
 
-  const ctx = { version, fixedPoint, states: new Set(Object.keys(initialState)), inputs: new Set(Object.keys(initialInputs)) };
-  let vanilla = { inputs: {}, projections: [], texts: [], actors: [], worldBatches: [], cameras: [], particles: [], sounds: [], huds: [], sidebars: [], ownership: null };
+  const playerInputs = new Set();
+  if (has(spec, "playerInputs")) {
+    if (version < 12) fail(`${api}.playerInputs requires portable version 12`);
+    const raw = requiredArray(spec, "playerInputs", api);
+    for (let i = 0; i < raw.length; i++) {
+      const name = raw[i];
+      if (typeof name !== "string" || !PLAYER_INPUT_NAMES.includes(name)) fail(`${api}.playerInputs[${i}] unsupported player input: ${name}`);
+      playerInputs.add(name);
+    }
+  }
+
+  const ctx = {
+    version, fixedPoint,
+    states: new Set(Object.keys(initialState)), inputs: new Set(Object.keys(initialInputs)),
+    playerStates: new Set(Object.keys(initialPlayerState)), playerInputs,
+    playerScope: false,
+  };
+  let vanilla = { inputs: {}, projections: [], texts: [], actors: [], worldBatches: [], cameras: [], particles: [], sounds: [], huds: [], playerHuds: [], sidebars: [], ownership: null };
   if (has(spec, "vanilla")) {
     if (version < 2) fail(`${api}.vanilla requires portable version 2`);
     const raw = requiredObject(spec, "vanilla", api);
     vanilla = { ...vanilla, ...parseVanillaScene(raw, ctx, api), ...parseVanillaUi(raw, ctx, api) };
   }
+  if (version >= 12 && Object.keys(vanilla.inputs).length) fail(`${api}.vanilla.inputs first_player_* bindings are v1-v11 compatibility only; use player.input.* in v12`);
+  if (version >= 12 && vanilla.huds.length) fail(`${api}.vanilla.huds is single-controller v1-v11 presentation; use player.hud(...) in v12`);
+
   const tickActions = parseActions(requiredArray(spec, "tick", api), ctx, `${api}.tick`);
   return {
-    version, fixedPoint, initialState, initialInputs,
+    version, fixedPoint, initialState, initialPlayerState, initialInputs, playerInputs,
     vanillaInputs: vanilla.inputs, projections: vanilla.projections, texts: vanilla.texts,
     actors: vanilla.actors, worldBatches: vanilla.worldBatches, cameras: vanilla.cameras,
-    particles: vanilla.particles, sounds: vanilla.sounds, huds: vanilla.huds,
+    particles: vanilla.particles, sounds: vanilla.sounds, huds: vanilla.huds, playerHuds: vanilla.playerHuds,
     sidebars: vanilla.sidebars, ownership: vanilla.ownership, tickActions,
     collisionDivisor: Math.max(1, Math.floor((fixedPoint + 99) / 100)),
   };

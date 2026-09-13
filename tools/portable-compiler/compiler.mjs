@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { compileActions } from "./compile-actions.mjs";
-import { CompileContext, inputHolder, ownerTag } from "./compile-context.mjs";
+import { CompileContext, inputHolder, ownerTag, playerInitObjective } from "./compile-context.mjs";
 import {
   cleanupLines, compileVanillaActorLoad, compileVanillaActorUpdates, compileVanillaCameraLoad,
   compileVanillaCameraLock, compileVanillaCameraUpdates, compileVanillaHuds, compileVanillaInputs,
@@ -12,6 +12,7 @@ import {
   ownershipForceloadCommand, prepareVanillaWorldBatches, validateOwnershipCoverage,
 } from "./compile-vanilla.mjs";
 import { NAMESPACE } from "./utils.mjs";
+import { compilePlayerHuds, compilePlayerLoad, compilePlayerTickPrelude, playerInputField } from "./compile-player.mjs";
 
 function write(file, content) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -25,6 +26,10 @@ function writeInputPredicates(program, outputRoot, namespace) {
   const fields = [];
   for (const source of Object.values(program.vanillaInputs)) {
     const field = inputField(source);
+    if (field && !fields.includes(field)) fields.push(field);
+  }
+  for (const name of program.playerInputs ?? []) {
+    const field = playerInputField(name);
     if (field && !fields.includes(field)) fields.push(field);
   }
   for (const field of fields) {
@@ -43,6 +48,7 @@ export function compileDatapack(program, namespace, outputRoot) {
   const ctx = new CompileContext(namespace, program), tick = [];
 
   compileVanillaInputs(program, tick, ctx);
+  compilePlayerTickPrelude(program, tick, ctx);
   compileActions(program.tickActions, tick, ctx);
   compileVanillaProjections(program, tick, ctx);
   compileVanillaTextUpdates(program, tick, ctx);
@@ -53,6 +59,7 @@ export function compileDatapack(program, namespace, outputRoot) {
   compileVanillaParticles(program, tick, ctx);
   compileVanillaSounds(program, tick, ctx);
   compileVanillaHuds(program, tick, ctx);
+  compilePlayerHuds(program, tick, ctx);
   compileVanillaSidebars(program, tick, ctx);
   if (!tick.length) tick.push("# no portable tick actions");
   if (program.ownership) tick.unshift(`execute unless score #ready ${ctx.objective} matches 1 run return 0`);
@@ -60,6 +67,7 @@ export function compileDatapack(program, namespace, outputRoot) {
   const load = [`scoreboard objectives add ${ctx.objective} dummy`];
   for (const [name, raw] of Object.entries(program.initialState)) load.push(`scoreboard players set #${name} ${ctx.objective} ${raw}`);
   for (const [name, raw] of Object.entries(program.initialInputs)) load.push(`scoreboard players set ${inputHolder(name)} ${ctx.objective} ${raw}`);
+  compilePlayerLoad(program, load, ctx);
   if (ctx.usesNegate) load.push(`scoreboard players set #neg1 ${ctx.objective} -1`);
   for (const [raw, holder] of ctx.constants.entries()) load.push(`scoreboard players set ${holder} ${ctx.objective} ${raw}`);
   compileVanillaWorldBatchLoadCalls(program, load, ctx);
@@ -101,12 +109,19 @@ export function compileDatapack(program, namespace, outputRoot) {
 
   let marker = `namespace=${namespace}\nobjective=${ctx.objective}\nportable_version=${program.version}\nfixed_point=${program.fixedPoint}\n`;
   for (const name of Object.keys(program.initialInputs)) marker += `input.${name}=${inputHolder(name)}\n`;
+  if (program.version >= 12) {
+    marker += `player.init=${playerInitObjective(namespace)}\n`;
+    for (const name of Object.keys(program.initialPlayerState).sort()) marker += `player.state.${name}=${ctx.playerStateObjective(name)}\n`;
+    for (const name of [...program.playerInputs].sort()) marker += `player.input.${name}=${ctx.playerInputObjective(name)}\n`;
+  }
   write(path.join(outputRoot, ".mcgame-portable-generated"), marker);
 
   return {
     namespace, objective: ctx.objective,
     stateCount: Object.keys(program.initialState).length,
     inputCount: Object.keys(program.initialInputs).length,
+    playerStateCount: Object.keys(program.initialPlayerState || {}).length,
+    playerInputCount: program.playerInputs?.size ?? 0,
     projectionCount: program.projections.length,
     textCount: program.texts.length,
     actorCount: program.actors.length,
@@ -115,6 +130,7 @@ export function compileDatapack(program, namespace, outputRoot) {
     particleCount: program.particles.length,
     soundCount: program.sounds.length,
     hudCount: program.huds.length,
+    playerHudCount: program.playerHuds?.length ?? 0,
     sidebarCount: program.sidebars.length,
     branchFunctionCount: ctx.nextBranch,
   };

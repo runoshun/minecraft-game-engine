@@ -3,9 +3,14 @@ export const PORTABLE_ID = /^[a-z][a-z0-9_]{0,23}$/;
 export const RESOURCE_ID = /^[a-z0-9_.-]+:[a-z0-9_./-]+$/;
 export const NAMESPACE = /^[a-z0-9_.-]+$/;
 
+export const PLAYER_INPUT_NAMES = Object.freeze([
+  "hotbarSlot", "forward", "backward", "left", "right", "jump", "sneak", "sprint",
+]);
+
 export const LIMITS = Object.freeze({
   states: 128,
   inputs: 32,
+  playerStates: 32,
   projections: 64,
   texts: 64,
   actors: 64,
@@ -15,6 +20,7 @@ export const LIMITS = Object.freeze({
   particles: 64,
   sounds: 64,
   huds: 1,
+  playerHuds: 1,
   hudTokens: 32,
   sidebars: 1,
   sidebarRows: 15,
@@ -23,7 +29,7 @@ export const LIMITS = Object.freeze({
   depth: 16,
 });
 
-export const CURRENT_VERSION = 11;
+export const CURRENT_VERSION = 12;
 
 export function fail(message) { throw new Error(message); }
 export function has(object, member) { return Object.prototype.hasOwnProperty.call(object, member); }

@@ -12,7 +12,7 @@ function uniqueIds(values, path) {
 }
 
 export function parseVanillaUi(vanilla, ctx, api) {
-  const out = { cameras: [], particles: [], sounds: [], huds: [], sidebars: [], ownership: null };
+  const out = { cameras: [], particles: [], sounds: [], huds: [], playerHuds: [], sidebars: [], ownership: null };
   if (has(vanilla, "cameras")) {
     if (ctx.version < 3) fail(`${api}.vanilla.cameras requires portable version 3`);
     const values = requiredArray(vanilla, "cameras", `${api}.vanilla`);
@@ -23,7 +23,13 @@ export function parseVanillaUi(vanilla, ctx, api) {
       if (pitch < -90 || pitch > 90) fail(`${p}.pitch must be between -90 and 90`);
       if (has(v, "mode") && ctx.version < 11) fail(`${p}.mode requires portable version 11`);
       if (!["position_lock", "spectate"].includes(mode)) fail(`${p}.mode must be position_lock or spectate`);
-      return { id: v.id, dimension: memberResource(v, "dimension", "minecraft:overworld", p), x: parseCoordinate(requiredMember(v, "x", p), ctx, `${p}.x`), y: parseCoordinate(requiredMember(v, "y", p), ctx, `${p}.y`), z: parseCoordinate(requiredMember(v, "z", p), ctx, `${p}.z`), yaw: memberNumber(v, "yaw", 0, p), pitch, mode };
+      let audience = null;
+      if (has(v, "audience")) {
+        if (ctx.version < 12) fail(`${p}.audience requires portable version 12`);
+        audience = requiredString(v, "audience", p);
+        if (audience !== "all_online") fail(`${p}.audience must be all_online`);
+      } else if (ctx.version >= 12) audience = "all_online";
+      return { id: v.id, dimension: memberResource(v, "dimension", "minecraft:overworld", p), x: parseCoordinate(requiredMember(v, "x", p), ctx, `${p}.x`), y: parseCoordinate(requiredMember(v, "y", p), ctx, `${p}.y`), z: parseCoordinate(requiredMember(v, "z", p), ctx, `${p}.z`), yaw: memberNumber(v, "yaw", 0, p), pitch, mode, audience };
     });
   }
   if (has(vanilla, "particles")) {
@@ -53,6 +59,18 @@ export function parseVanillaUi(vanilla, ctx, api) {
     if (ctx.version < 4) fail(`${api}.vanilla.huds requires portable version 4`);
     const values = requiredArray(vanilla, "huds", `${api}.vanilla`); if (values.length > LIMITS.huds) fail(`${api}.vanilla.huds exceeds max HUD count ${LIMITS.huds}`); uniqueIds(values, `${api}.vanilla.huds`);
     out.huds = values.map((v, i) => ({ id: v.id, tokens: parseTokens(requiredArray(v, "tokens", `${api}.vanilla.huds[${i}]`), ctx, `${api}.vanilla.huds[${i}].tokens`) }));
+  }
+  if (has(vanilla, "playerHuds")) {
+    if (ctx.version < 12) fail(`${api}.vanilla.playerHuds requires portable version 12`);
+    const values = requiredArray(vanilla, "playerHuds", `${api}.vanilla`);
+    if (values.length > LIMITS.playerHuds) fail(`${api}.vanilla.playerHuds exceeds max player HUD count ${LIMITS.playerHuds}`);
+    uniqueIds(values, `${api}.vanilla.playerHuds`);
+    const playerCtx = { ...ctx, playerScope: true };
+    out.playerHuds = values.map((v, i) => {
+      const p = `${api}.vanilla.playerHuds[${i}]`, audience = requiredString(v, "audience", p);
+      if (audience !== "all_online") fail(`${p}.audience must be all_online`);
+      return { id: v.id, audience, tokens: parseTokens(requiredArray(v, "tokens", p), playerCtx, `${p}.tokens`) };
+    });
   }
   if (has(vanilla, "ownership")) {
     if (ctx.version < 10) fail(`${api}.vanilla.ownership requires portable version 10`);

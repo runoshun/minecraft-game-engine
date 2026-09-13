@@ -4,6 +4,7 @@ import {
   sidebarObjectiveName, sidebarRowHolder, soundTag, stateHolder, textTag,
 } from "./compile-context.mjs";
 import { floatLiteral, floorDiv, format3, format6, numberLiteral, scale, snbtQuoted, storeScale } from "./utils.mjs";
+import { playerCleanupLines } from "./compile-player.mjs";
 
 const MAX_SIDEBAR_SCORE = 15;
 
@@ -21,6 +22,10 @@ export function inputField(source) {
 }
 
 export function controllerSelector(program) {
+  if (program.version >= 12) {
+    if (program.cameras.length && program.cameras[0].mode === "spectate") return "@a[gamemode=spectator]";
+    return "@a[gamemode=!spectator]";
+  }
   if (program.cameras.length && program.cameras[0].mode === "spectate") return "@a[gamemode=spectator,limit=1,sort=arbitrary]";
   return "@a[gamemode=!spectator,limit=1,sort=arbitrary]";
 }
@@ -351,7 +356,7 @@ function appendEntityCleanup(lines, program, dimension, tag, xCoord, zCoord) {
 }
 
 export function cleanupLines(program, ctx) {
-  const lines = [];
+  const lines = [...playerCleanupLines(program, ctx)];
   if (program.huds.length) lines.push(`execute as ${controllerSelector(program)} run title @s actionbar {"text":""}`);
   if (program.ownership) {
     lines.push(`schedule clear ${ctx.namespace}:portable/owned_init`);

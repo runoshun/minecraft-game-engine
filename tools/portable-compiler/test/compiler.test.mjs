@@ -86,8 +86,116 @@ test("extractor rejects live host dependencies", () => {
   assert.throws(() => extractPortableSpec("host.ts", js, root), /input\.players/);
 });
 
-test("v12 is rejected until the multiplayer implementation phase", () => {
-  assert.throws(() => extract(`portable.define({ version: 12, state: { x: 0 }, tick: [] });`), /must be between 1 and 11/);
+test("v12 player context lowers player-local state input HUD and camera audience", () => {
+  const { program, output, result } = compileSource(`
+    portableDsl({ fixedPoint: 1000, ownership: { minX: 0, minZ: 0, maxX: 16, maxZ: 16 } }, game => {
+      const round = game.state("round", 1);
+      const players = game.players();
+      game.camera("main", { x: 8, y: 80, z: 8, yaw: 0, pitch: 10, mode: "spectate", audience: players });
+      game.tick(() => {
+        game.forEachPlayer(players, player => {
+          const hp = player.state("hp", 20);
+          const jumpPrev = player.state("jumpPrev", 0);
+          game.when(player.input.left.eq(1), () => hp.sub(1));
+          game.when(player.input.jump.eq(1), () => hp.add(round));
+          game.when(player.input.hotbarSlot.eq(2), () => hp.add(1));
+          jumpPrev.set(player.input.jump);
+          player.hud("status", { text: ["HP ", hp, " R ", round] });
+        });
+      });
+    });
+  `, "portable_v12_multi");
+
+  assert.equal(program.version, 12);
+  assert.equal(result.playerStateCount, 2);
+  assert.equal(result.playerInputCount, 3);
+  assert.equal(result.playerHudCount, 1);
+  assert.deepEqual([...program.playerInputs].sort(), ["hotbarSlot", "jump", "left"]);
+
+  const load = read(output, "data/portable_v12_multi/function/portable/load.mcfunction");
+  const tick = read(output, "data/portable_v12_multi/function/portable/tick.mcfunction");
+  const init = read(output, "data/portable_v12_multi/function/portable/player_init.mcfunction");
+  const player = read(output, "data/portable_v12_multi/function/portable/player_000.mcfunction");
+  const cleanup = read(output, "data/portable_v12_multi/function/portable/cleanup.mcfunction");
+  const marker = read(output, ".mcgame-portable-generated");
+
+  assert.match(load, /scoreboard objectives remove mpz[0-9a-f]{8}/);
+  assert.match(load, /scoreboard objectives add mps[0-9a-f]{8}00 dummy/);
+  assert.match(load, /scoreboard objectives add mpi[0-9a-f]{8}03 dummy/);
+  assert.match(load, /scoreboard objectives add mph[0-9a-f]{8}00 dummy/);
+  assert.match(init, /scoreboard players set @s mps[0-9a-f]{8}00 20000/);
+  assert.match(init, /scoreboard players set @s mpz[0-9a-f]{8} 1/);
+  assert.match(tick, /data get entity @s SelectedItemSlot 1000/);
+
+  const initAt = tick.indexOf("unless score @s mpz");
+  const inputAt = tick.indexOf("predicate portable_v12_multi:portable/input/left");
+  const rulesAt = tick.indexOf("execute as @a run function portable_v12_multi:portable/player_000");
+  const cameraAt = tick.indexOf("execute as @a[gamemode=spectator]");
+  const hudAt = tick.indexOf("run title @s actionbar");
+  assert.ok(initAt >= 0 && inputAt > initAt && rulesAt > inputAt && cameraAt > rulesAt && hudAt > cameraAt);
+  assert.doesNotMatch(tick, /gamemode=spectator,limit=1/);
+  assert.match(player, /scoreboard players operation @s mps[0-9a-f]{8}01 = @s mpi[0-9a-f]{8}05/);
+  assert.match(cleanup, /title @a actionbar/);
+  assert.match(cleanup, /scoreboard objectives remove mps[0-9a-f]{8}0v/);
+  assert.match(cleanup, /scoreboard objectives remove mpi[0-9a-f]{8}07/);
+  assert.match(cleanup, /scoreboard objectives remove mph[0-9a-f]{8}0v/);
+  assert.match(marker, /portable_version=12/);
+  assert.match(marker, /player\.state\.hp=mps[0-9a-f]{8}00/);
+
+  const objectiveNames = [...load.matchAll(/scoreboard objectives (?:add|remove) (\S+)/g)].map(match => match[1]);
+  assert.ok(objectiveNames.every(name => name.length <= 16));
+});
+
+test("v12 rejects shared mutation and nested player contexts", () => {
+  assert.throws(() => extract(`
+    portableDsl(game => {
+      const shared = game.state("shared", 0);
+      const players = game.players();
+      game.tick(() => game.forEachPlayer(players, player => shared.add(1)));
+    });
+  `), /shared state mutation is not allowed inside PlayerContext/);
+
+  assert.throws(() => extract(`
+    portableDsl(game => {
+      game.state("shared", 0);
+      const players = game.players();
+      game.tick(() => game.forEachPlayer(players, player => game.forEachPlayer(players, other => {})));
+    });
+  `), /nested PlayerContext is not supported/);
+});
+
+test("v12 rejects escaped player-local references and oversized player-state banks", () => {
+  assert.throws(() => extract(`
+    portableDsl(game => {
+      game.state("shared", 0);
+      const players = game.players();
+      let escaped;
+      game.tick(() => {
+        game.forEachPlayer(players, player => { escaped = player.state("hp", 20); });
+        game.when(escaped.eq(20), () => {});
+      });
+    });
+  `), /escaped its PlayerContext/);
+
+  const playerState = Object.fromEntries(Array.from({ length: 33 }, (_, index) => [`s${index}`, 0]));
+  assert.throws(() => parseProgram({ version: 12, state: {}, playerState, tick: [] }), /exceeds max player-state count 32/);
+});
+
+test("v12 parser rejects escaped player writes and legacy shared input", () => {
+  assert.throws(() => extract(`
+    portable.define({
+      version: 12,
+      state: { shared: 0 },
+      playerState: { hp: 20 },
+      tick: [{ op: "for_each_player", players: "all_online", actions: [
+        { op: "add", target: "shared", value: 1 }
+      ] }]
+    });
+  `), /shared state mutation is not allowed inside PlayerContext/);
+
+  assert.throws(() => extract(`
+    portable.define({ version: 12, state: { shared: 0 }, inputs: { left: 0 }, tick: [] });
+  `), /inputs is v1-v11 compatibility only/);
 });
 
 test("representative checked-in examples compile deterministically", () => {
@@ -99,6 +207,7 @@ test("representative checked-in examples compile deterministically", () => {
     ["examples/portable-ui-core/datapack/data/portable_ui/mcgame/main.ts", "portable_ui", 9],
     ["examples/portable-world-core/datapack/data/portable_world/mcgame/main.ts", "portable_world", 10],
     ["examples/jrpg-demo/datapack/data/jrpg_demo/mcgame/main.ts", "jrpg_demo", 10],
+    ["examples/portable-multiplayer-core/datapack/data/portable_multiplayer/mcgame/main.ts", "portable_multiplayer", 12],
   ];
   for (const [relative, namespace, expectedVersion] of cases) {
     const source = fs.readFileSync(path.join(root, relative), "utf8");

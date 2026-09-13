@@ -28,7 +28,7 @@ The compiler accepts one TypeScript source, namespace, and output directory. Mod
 
 Portable IR is the versioned semantic contract between authoring and vanilla lowering. It contains deterministic fixed-point values, bounded actions, collision primitives, declarative presentation/world resources, input mappings, and lifecycle metadata. Arbitrary JavaScript callbacks are not an IR feature.
 
-IR versions 1 through 11 are implemented. ADR 0020 defines planned multiplayer v12.
+IR versions 1 through 12 are implemented. ADR 0020 defines the multiplayer v12 contract.
 
 ### Generated datapack
 
@@ -57,7 +57,7 @@ Minecraft executes generated mcfunctions and supplies vanilla-observable player 
 7. lower the IR to a standalone datapack;
 8. write `.mcgame-portable-generated` so later compiler runs may safely replace the generated directory.
 
-Live Minecraft host capabilities are unavailable during extraction. A source that calls runtime-only host state such as player enumeration cannot compile. The `vm` boundary is a build-tool containment measure and has not been audited as a hostile-code security boundary.
+Live Minecraft host capabilities are unavailable during extraction. A source that calls runtime-only host inspection APIs cannot compile; `game.players()` in v12 is a declarative `PlayerSet` constructor, not live player enumeration during compilation. The `vm` boundary is a build-tool containment measure and has not been audited as a hostile-code security boundary.
 
 Compiler assets live under `tools/portable-compiler/assets/`:
 
@@ -155,38 +155,42 @@ A generated pack contains at least:
 
 Generated content belongs under `build/` and is not committed.
 
-## Planned portable multiplayer v12
+## Portable multiplayer v12
 
-ADR 0020 is the accepted design contract; v12 is not implemented yet.
-
-The first milestone remains one shared game instance with N online participants:
+ADR 0020 is the implemented design contract. v12 provides one shared game instance with N online participants:
 
 - `game.players()` returns an opaque `PlayerSet` representing all online participants in the shared game;
 - `game.forEachPlayer(players, player => ...)` is a `game.tick(...)`-scoped compiler primitive lowered through `execute as`;
 - `PlayerContext` is lexical, player-local references may not escape it, and nested player contexts are initially rejected;
 - `game.state(...)` remains shared and read-only from player context; shared mutations from player context are rejected;
-- `player.state(...)` is independently mutable per participant and uses bounded namespace-stable scoreboard objective slots;
-- `player.input.*` samples held input and hotbar independently for each online participant before authored rules run;
+- `player.state(...)` is independently mutable per participant. The compiler exposes 32 player-state slots backed by namespace-stable scoreboard objectives and rejects larger programs;
+- `player.input.*` samples `hotbarSlot`, `forward`, `backward`, `left`, `right`, `jump`, `sneak`, and `sprint` independently for each online participant into eight fixed namespace-stable objectives before authored rules run;
 - missing player-local state is initialized before input/rules; disconnect preserves state for the active game instance; reload/replacement resets the instance; cleanup removes the full player-local objective bank, including offline entries;
-- player-local references may drive player-context logic and per-player actionbar HUD, but not shared block/text/actor/world projection, global sidebar, or shared camera coordinates;
+- player-local references may drive player-context logic and `player.hud(...)`. Per-player HUD numeric values use a 32-objective namespace-stable scratch bank; player-local values may not drive shared block/text/actor/world projection, global sidebar, or shared camera coordinates;
 - one shared camera carrier targets a `PlayerSet`; `spectate` applies only to audience members already in Spectator and `position_lock` to audience members not in Spectator; the compiler never owns gamemode;
 - multiple concurrent sessions, private world scenes, independent per-player vanilla sidebars, distinct per-player camera positions, and implicit cross-player reductions are deferred.
 
-v12 will be implemented only in the Node compiler; there is no compatibility backend to update.
+v12 exists only in the Node compiler/generated-datapack backend; there is no compatibility backend to update. Objective names use namespace-derived short hashes and fixed slot suffixes so the complete possible bank can be removed on reload/cleanup even after declarations are renamed or deleted.
 
 ## Current limitations
 
 - single-file TypeScript; no import/module resolution;
-- v11 remains single-controller-oriented;
+- v1-v11 remain single-controller-oriented for compatibility; v12 is the multiplayer model;
 - fixed-point arithmetic relies on Minecraft scoreboard 32-bit behavior; generated commands do not add generic overflow guards;
 - no runtime dynamic arrays/collections, arbitrary randomness/procedural topology, generic packet-event dispatch, clickable inventory/dialog UI, persistent game storage, or arbitrary Minecraft queries;
 - one server-global sidebar and one shared camera declaration;
 - bounded 2D logic collision only, not Minecraft hitbox queries or 3D/swept physics;
 - world projection is compile-time declared and persistent;
-- v12 multiplayer is planned, not implemented.
+- v12 currently has one shared game instance whose participant set is all online players; filtered teams/lobbies, simultaneous sessions, private world scenes, independent per-player vanilla sidebars, distinct per-player cameras, and cross-player reductions are not implemented.
 
 ## Validation baseline
 
-Portable v1-v11 has been exercised on mod-free Minecraft 26.1. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
+Portable v1-v12 compiler behavior is covered by the Node regression suite; generated v1-v11 gameplay has been exercised on mod-free Minecraft 26.1. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
 
 Node migration ADR 0021 additionally established byte-for-byte output parity with the retired Java compiler for representative v1, v9, v10, and v11 programs including Bounce, Pinball, Breakout, Presentation, UI, World, JRPG, and spectate-camera cases. Node compiler regression tests are now the maintained build-time acceptance suite.
+
+### v12 multiplayer validation
+
+Portable v12 was accepted on the mod-free `second` Minecraft 26.1 server with two simultaneous participants plus the real render client. `Test_v12a` holding Left changed only its own `meter` (`0 -> -10000`) while `Test_v12b` stayed `0`; then B holding Right changed only B (`0 -> 7000`) while A remained `-10000`. A held Jump for about 700 ms and its player-local rising-edge counter advanced only once (`0 -> 1000`), then advanced to `2000` only after release and a second press, while B remained `0`. Disconnect/reconnect in the same active instance preserved A's local values; `/reload` reset both participants to their declared initial values. The real 26.1 client remained position-locked to the shared camera and rendered its own actionbar (`METER -6  JUMP 0  ROUND 1`). Finally, cleanup was run with A offline: the player-state objective ceased to exist for both A and B and the ownership force-load returned to zero.
+
+After v12 landed, the v10 Breakout and Pinball reference packs were regenerated by the current compiler and re-tested on the same vanilla server. Breakout real A input moved `paddleX` from `0` to `-2240`; Space launched play, an actual brick collision changed `bricksLeft 40 -> 39` and `score 0 -> 1`, and a drain changed `lives 3 -> 2`. Pinball client A and D inputs hit deterministic active-flipper setups with mirrored responses (`score +5`, `ballVx +0.24` / `-0.24`), and real Space input launched normal play under the fixed camera. Both packs cleaned their objectives and force-loads back to zero.

@@ -5,7 +5,11 @@
 
 type PortableStateRef = { state: string };
 type PortableInputRef = { input: string };
+type PortablePlayerStateRef = { playerState: string };
+type PortablePlayerInputRef = { playerInput: PortablePlayerInputName };
+type PortablePlayerInputName = "hotbarSlot" | "forward" | "backward" | "left" | "right" | "jump" | "sneak" | "sprint";
 type PortableValue = number | PortableStateRef | PortableInputRef;
+type PortablePlayerValue = PortableValue | PortablePlayerStateRef | PortablePlayerInputRef;
 type PortableComparison = {
   op: "eq" | "ne" | "lt" | "lte" | "gt" | "gte";
   left: PortableValue;
@@ -90,6 +94,7 @@ type PortableVanillaCamera = {
   pitch?: number;
 };
 type PortableVanillaCameraV11 = PortableVanillaCamera & { mode?: "position_lock" | "spectate" };
+type PortableVanillaCameraV12 = PortableVanillaCameraV11 & { audience?: "all_online" };
 type PortableVanillaParticleEmitter = {
   id: string;
   dimension?: string;
@@ -116,6 +121,8 @@ type PortableVanillaSoundEmitter = {
 };
 type PortableHudToken = { text: string } | { value: PortableValue };
 type PortableVanillaHud = { id: string; tokens: PortableHudToken[] };
+type PortablePlayerHudToken = { text: string } | { value: PortablePlayerValue };
+type PortableVanillaPlayerHud = { id: string; audience: "all_online"; tokens: PortablePlayerHudToken[] };
 type PortableVanillaSidebarRow = { id: string; tokens: PortableHudToken[] };
 type PortableVanillaSidebar = { id: string; title: string; rows: PortableVanillaSidebarRow[] };
 type PortableVanillaOwnershipRegion = { dimension?: string; minX: number; minZ: number; maxX: number; maxZ: number };
@@ -223,7 +230,36 @@ type PortableProgramSpecV11 = {
   vanilla?: Omit<NonNullable<PortableProgramSpecV10["vanilla"]>, "cameras"> & { cameras?: PortableVanillaCameraV11[] };
   tick: PortableAction[];
 };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11;
+type PortablePlayerComparison = {
+  op: "eq" | "ne" | "lt" | "lte" | "gt" | "gte";
+  left: PortablePlayerValue;
+  right: PortablePlayerValue;
+};
+type PortablePlayerAabb = { x: PortablePlayerValue; y: PortablePlayerValue; width: number; height: number };
+type PortablePlayerCircle = { x: PortablePlayerValue; y: PortablePlayerValue; radius: number };
+type PortablePlayerPoint = { x: PortablePlayerValue; y: PortablePlayerValue };
+type PortablePlayerAction =
+  | { op: "player_set" | "player_add" | "player_sub"; target: string; value: PortablePlayerValue }
+  | { op: "player_negate"; target: string }
+  | { op: "if"; condition: PortablePlayerComparison; then: PortablePlayerAction[]; else?: PortablePlayerAction[] }
+  | { op: "if_aabb"; a: PortablePlayerAabb; b: PortablePlayerAabb; then: PortablePlayerAction[]; else?: PortablePlayerAction[] }
+  | { op: "if_circle"; a: PortablePlayerCircle; b: PortablePlayerCircle; then: PortablePlayerAction[]; else?: PortablePlayerAction[] }
+  | { op: "if_circle_capsule"; circle: PortablePlayerCircle; capsule: PortableCapsule; then: PortablePlayerAction[]; else?: PortablePlayerAction[] }
+  | { op: "if_trigger"; trigger: PortablePlayerAabb; point: PortablePlayerPoint; then: PortablePlayerAction[]; else?: PortablePlayerAction[] };
+type PortableForEachPlayerAction = { op: "for_each_player"; players: "all_online"; actions: PortablePlayerAction[] };
+type PortableProgramSpecV12 = {
+  version: 12;
+  fixedPoint?: number;
+  state: Record<string, number>;
+  playerState?: Record<string, number>;
+  playerInputs?: PortablePlayerInputName[];
+  vanilla?: Omit<NonNullable<PortableProgramSpecV10["vanilla"]>, "inputs" | "huds" | "cameras"> & {
+    cameras?: PortableVanillaCameraV12[];
+    playerHuds?: PortableVanillaPlayerHud[];
+  };
+  tick: Array<PortableAction | PortableForEachPlayerAction>;
+};
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -245,7 +281,16 @@ type PortableDslState = PortableDslComparable & {
   negate(): void;
 };
 type PortableDslInput = PortableDslComparable & { readonly name: string };
-type PortableDslValue = number | PortableDslState | PortableDslInput;
+type PortableDslPlayerState = PortableDslComparable & {
+  readonly name: string;
+  set(value: PortableDslValue): void;
+  add(value: PortableDslValue): void;
+  sub(value: PortableDslValue): void;
+  negate(): void;
+};
+type PortableDslPlayerInput = PortableDslComparable & { readonly name: PortablePlayerInputName };
+type PortableDslSharedValue = number | PortableDslState | PortableDslInput;
+type PortableDslValue = PortableDslSharedValue | PortableDslPlayerState | PortableDslPlayerInput;
 type PortableDslCondition = { readonly __portableDslCondition?: never };
 type PortableDslCoordinate = number | PortableDslState | { readonly __portableDslCoordinate?: never };
 type PortableDslInputBinding = { source: PortableVanillaInputSource };
@@ -269,6 +314,7 @@ type PortableDslTextSpec = {
   billboard?: "fixed" | "vertical" | "horizontal" | "center";
   when?: PortableDslCondition;
 };
+type PortableDslPlayerSet = { readonly __portableDslPlayerSet?: never };
 type PortableDslCameraSpec = {
   dimension?: string;
   x: PortableDslCoordinate;
@@ -277,6 +323,7 @@ type PortableDslCameraSpec = {
   yaw?: number;
   pitch?: number;
   mode?: "position_lock" | "spectate";
+  audience?: PortableDslPlayerSet;
 };
 type PortableDslActorSpec = {
   dimension?: string;
@@ -343,11 +390,28 @@ type PortableDslFlipperSpec = {
 };
 type PortableDslCollider = PortableDslBox | PortableDslCircle | PortableDslSegment | PortableDslCapsule | PortableDslFlipper;
 type PortableDslHudSpec = { text: string | Array<string | PortableDslState | PortableDslInput> };
+type PortableDslPlayerHudSpec = { text: string | Array<string | PortableDslState | PortableDslInput | PortableDslPlayerState | PortableDslPlayerInput> };
+type PortableDslPlayerContext = {
+  state(name: string, initial: number): PortableDslPlayerState;
+  readonly input: {
+    readonly hotbarSlot: PortableDslPlayerInput;
+    readonly forward: PortableDslPlayerInput;
+    readonly backward: PortableDslPlayerInput;
+    readonly left: PortableDslPlayerInput;
+    readonly right: PortableDslPlayerInput;
+    readonly jump: PortableDslPlayerInput;
+    readonly sneak: PortableDslPlayerInput;
+    readonly sprint: PortableDslPlayerInput;
+  };
+  hud(id: string, spec: PortableDslPlayerHudSpec): void;
+};
 type PortableDslSidebarRow = { id: string; text: string | Array<string | PortableDslState | PortableDslInput> };
 type PortableDslSidebarSpec = { title: string; rows: PortableDslSidebarRow[] };
 type PortableDsl = {
   state(name: string, initial: number): PortableDslState;
   input(name: string, initial?: number, binding?: PortableDslInputBinding): PortableDslInput;
+  players(): PortableDslPlayerSet;
+  forEachPlayer(players: PortableDslPlayerSet, callback: (player: PortableDslPlayerContext) => void): void;
   tick(callback: () => void): void;
   repeat<T>(count: number, callback: (index: number) => T): readonly T[];
   when(condition: PortableDslCondition, thenCallback: () => void, elseCallback?: () => void): void;

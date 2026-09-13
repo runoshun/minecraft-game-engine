@@ -49,6 +49,8 @@ export function main(argv = process.argv.slice(2)) {
   console.log(`  objective: ${result.objective}`);
   console.log(`  states: ${result.stateCount}`);
   console.log(`  inputs: ${result.inputCount}`);
+  if (result.playerStateCount) console.log(`  player states: ${result.playerStateCount}`);
+  if (result.playerInputCount) console.log(`  player inputs: ${result.playerInputCount}`);
   console.log(`  projections: ${result.projectionCount}`);
   console.log(`  texts: ${result.textCount}`);
   console.log(`  actors: ${result.actorCount}`);
@@ -57,6 +59,7 @@ export function main(argv = process.argv.slice(2)) {
   console.log(`  particles: ${result.particleCount}`);
   console.log(`  sounds: ${result.soundCount}`);
   console.log(`  huds: ${result.hudCount}`);
+  if (result.playerHudCount) console.log(`  player huds: ${result.playerHudCount}`);
   console.log(`  sidebars: ${result.sidebarCount}`);
   console.log(`  branch functions: ${result.branchFunctionCount}`);
   console.log(`  output: ${output}`);

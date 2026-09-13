@@ -7,6 +7,8 @@
   const CAPSULE = Symbol("mcgame.portableDsl.capsule");
   const TRIGGER = Symbol("mcgame.portableDsl.trigger");
   const FLIPPER = Symbol("mcgame.portableDsl.flipper");
+  const PLAYER_SET = Symbol("mcgame.portableDsl.playerSet");
+  const PLAYER_SCOPE = Symbol("mcgame.portableDsl.playerScope");
 
   function fail(message) {
     throw new Error("portableDsl: " + message);
@@ -69,6 +71,8 @@
     }
     const stateValues = Object.create(null);
     const inputValues = Object.create(null);
+    const playerStateValues = Object.create(null);
+    const playerInputs = new Set();
     const vanillaInputs = Object.create(null);
     const projections = [];
     const texts = [];
@@ -79,9 +83,14 @@
     const particles = [];
     const sounds = [];
     const huds = [];
+    const playerHuds = [];
     const sidebars = [];
     let tickActions = null;
     let actionSink = null;
+    let activePlayerScope = null;
+    let playerRootSink = null;
+    let nextPlayerScope = 0;
+    let usesPlayerApi = false;
 
     function assertUnique(name) {
       if (Object.prototype.hasOwnProperty.call(stateValues, name) || Object.prototype.hasOwnProperty.call(inputValues, name)) {
@@ -89,25 +98,40 @@
       }
     }
 
+    function isPlayerRef(value) {
+      return value && (value[REF] === "player_state" || value[REF] === "player_input");
+    }
+
     function unwrapValue(value) {
       if (typeof value === "number") return finiteNumber(value, "value");
       if (value && value[REF] === "state") return { state: value.name };
       if (value && value[REF] === "input") return { input: value.name };
-      fail("value must be a number, state, or input reference");
+      if (value && value[REF] === "player_state") {
+        if (activePlayerScope === null || value[PLAYER_SCOPE] !== activePlayerScope) fail("player state reference escaped its PlayerContext");
+        return { playerState: value.name };
+      }
+      if (value && value[REF] === "player_input") {
+        if (activePlayerScope === null || value[PLAYER_SCOPE] !== activePlayerScope) fail("player input reference escaped its PlayerContext");
+        return { playerInput: value.name };
+      }
+      fail("value must be a number or portable state/input reference");
     }
 
     function comparison(op, left, right) {
+      const scope = isPlayerRef(left) || isPlayerRef(right) ? activePlayerScope : null;
       return Object.freeze({
         [CONDITION]: true,
+        [PLAYER_SCOPE]: scope,
         op,
         left: unwrapValue(left),
         right: unwrapValue(right),
       });
     }
 
-    function comparable(kind, name) {
+    function comparable(kind, name, scope = null) {
       const ref = {
         [REF]: kind,
+        [PLAYER_SCOPE]: scope,
         name,
         eq(value) { return comparison("eq", ref, value); },
         ne(value) { return comparison("ne", ref, value); },
@@ -128,10 +152,11 @@
       assertUnique(name);
       stateValues[name] = finiteNumber(initial, "state " + name + " initial value");
       const ref = comparable("state", name);
-      ref.set = value => emit({ op: "set", target: name, value: unwrapValue(value) });
-      ref.add = value => emit({ op: "add", target: name, value: unwrapValue(value) });
-      ref.sub = value => emit({ op: "sub", target: name, value: unwrapValue(value) });
-      ref.negate = () => emit({ op: "negate", target: name });
+      const assertSharedWrite = () => { if (activePlayerScope !== null) fail("shared state mutation is not allowed inside PlayerContext"); };
+      ref.set = value => { assertSharedWrite(); emit({ op: "set", target: name, value: unwrapValue(value) }); };
+      ref.add = value => { assertSharedWrite(); emit({ op: "add", target: name, value: unwrapValue(value) }); };
+      ref.sub = value => { assertSharedWrite(); emit({ op: "sub", target: name, value: unwrapValue(value) }); };
+      ref.negate = () => { assertSharedWrite(); emit({ op: "negate", target: name }); };
       return Object.freeze(ref);
     }
 
@@ -162,6 +187,7 @@
 
     function serializedCondition(condition, label = "condition") {
       if (!condition || condition[CONDITION] !== true) fail(label + " must be created by eq/ne/lt/lte/gt/gte");
+      if (condition[PLAYER_SCOPE] !== null && condition[PLAYER_SCOPE] !== activePlayerScope) fail(label + " escaped its PlayerContext");
       return { op: condition.op, left: condition.left, right: condition.right };
     }
 
@@ -179,6 +205,80 @@
       if (tickActions !== null) fail("tick(...) may only be declared once");
       if (actionSink !== null) fail("tick(...) cannot be nested");
       tickActions = captureActions(callback, "tick");
+    }
+
+    function players() {
+      usesPlayerApi = true;
+      return Object.freeze({ [PLAYER_SET]: "all_online" });
+    }
+
+    function requirePlayerSet(value, label) {
+      if (!value || value[PLAYER_SET] !== "all_online") fail(label + " must be returned by players()");
+      return "all_online";
+    }
+
+    function makePlayerState(name, initial, scope) {
+      if (typeof name !== "string" || name.length === 0) fail("player state name must be a non-empty string");
+      const value = finiteNumber(initial, "player state " + name + " initial value");
+      if (Object.prototype.hasOwnProperty.call(playerStateValues, name) && playerStateValues[name] !== value) {
+        fail("player state " + name + " was declared with a different initial value");
+      }
+      playerStateValues[name] = value;
+      const ref = comparable("player_state", name, scope);
+      ref.set = next => emit({ op: "player_set", target: name, value: unwrapValue(next) });
+      ref.add = next => emit({ op: "player_add", target: name, value: unwrapValue(next) });
+      ref.sub = next => emit({ op: "player_sub", target: name, value: unwrapValue(next) });
+      ref.negate = () => emit({ op: "player_negate", target: name });
+      return Object.freeze(ref);
+    }
+
+    function playerInputRef(name, scope) {
+      playerInputs.add(name);
+      return Object.freeze(comparable("player_input", name, scope));
+    }
+
+    function playerHud(scope, id, spec) {
+      if (activePlayerScope !== scope) fail("player.hud(...) is only valid in its PlayerContext");
+      if (actionSink !== playerRootSink) fail("player.hud(...) must be declared directly in forEachPlayer(...), not inside a conditional branch");
+      if (playerHuds.length > 0) fail("only one player.hud(...) is currently supported");
+      if (typeof id !== "string" || id.length === 0) fail("player hud id must be a non-empty string");
+      if (spec == null || typeof spec !== "object") fail("player hud " + id + " spec must be an object");
+      const source = typeof spec.text === "string" ? [spec.text] : spec.text;
+      if (!Array.isArray(source) || source.length < 1 || source.length > 32) fail("player hud " + id + " text must be a string or an array with 1..32 tokens");
+      const tokens = source.map((token, index) => {
+        if (typeof token === "string") {
+          if (token.length > 128) fail("player hud " + id + " token " + index + " exceeds 128 characters");
+          return { text: token };
+        }
+        return { value: unwrapValue(token) };
+      });
+      playerHuds.push({ id, audience: "all_online", tokens });
+    }
+
+    function forEachPlayer(set, callback) {
+      if (actionSink === null) fail("forEachPlayer(...) is only valid inside tick(...)");
+      if (activePlayerScope !== null) fail("nested PlayerContext is not supported in portable v12");
+      requirePlayerSet(set, "forEachPlayer player set");
+      if (typeof callback !== "function") fail("forEachPlayer callback is required");
+      usesPlayerApi = true;
+      const scope = ++nextPlayerScope;
+      const input = {};
+      for (const name of ["hotbarSlot", "forward", "backward", "left", "right", "jump", "sneak", "sprint"]) {
+        Object.defineProperty(input, name, { enumerable: true, get() { return playerInputRef(name, scope); } });
+      }
+      const player = Object.freeze({
+        state(name, initial) {
+          if (activePlayerScope !== scope) fail("player.state(...) is only valid in its PlayerContext");
+          return makePlayerState(name, initial, scope);
+        },
+        input: Object.freeze(input),
+        hud(id, spec) { return playerHud(scope, id, spec); },
+      });
+      const previousSink = actionSink, previousScope = activePlayerScope, previousRoot = playerRootSink;
+      const captured = [];
+      actionSink = captured; activePlayerScope = scope; playerRootSink = captured;
+      try { callback(player); } finally { actionSink = previousSink; activePlayerScope = previousScope; playerRootSink = previousRoot; }
+      emit({ op: "for_each_player", players: "all_online", actions: captured });
     }
 
     function repeat(count, callback) {
@@ -207,8 +307,13 @@
 
     function normalizeBoxValue(value, label) {
       if (typeof value === "number") return finiteNumber(value, label);
-      if (value && (value[REF] === "state" || value[REF] === "input")) return unwrapValue(value);
-      fail(label + " must be a number, state, or input reference");
+      if (value && (value[REF] === "state" || value[REF] === "input" || value[REF] === "player_state" || value[REF] === "player_input")) return unwrapValue(value);
+      fail(label + " must be a number or portable state/input reference");
+    }
+
+    function valuePlayerScope(value) { return isPlayerRef(value) ? value[PLAYER_SCOPE] : null; }
+    function requireShapeScope(value, label) {
+      if (value && value[PLAYER_SCOPE] !== null && value[PLAYER_SCOPE] !== activePlayerScope) fail(label + " escaped its PlayerContext");
     }
 
     function box(id, spec) {
@@ -218,8 +323,10 @@
       const height = finiteNumber(spec.height, "box " + id + " height");
       if (width <= 0 || width > 1000) fail("box " + id + " width must be > 0 and <= 1000");
       if (height <= 0 || height > 1000) fail("box " + id + " height must be > 0 and <= 1000");
+      const scope = valuePlayerScope(spec.x) || valuePlayerScope(spec.y);
       return Object.freeze({
         [BOX]: true,
+        [PLAYER_SCOPE]: scope,
         id,
         x: normalizeBoxValue(spec.x, "box " + id + " x"),
         y: normalizeBoxValue(spec.y, "box " + id + " y"),
@@ -233,8 +340,10 @@
       if (spec == null || typeof spec !== "object") fail("circle " + id + " spec must be an object");
       const radius = finiteNumber(spec.radius, "circle " + id + " radius");
       if (radius <= 0 || radius > 1000) fail("circle " + id + " radius must be > 0 and <= 1000");
+      const scope = valuePlayerScope(spec.x) || valuePlayerScope(spec.y);
       return Object.freeze({
         [CIRCLE]: true,
+        [PLAYER_SCOPE]: scope,
         id,
         x: normalizeBoxValue(spec.x, "circle " + id + " x"),
         y: normalizeBoxValue(spec.y, "circle " + id + " y"),
@@ -244,11 +353,13 @@
 
     function serializeBox(value, label) {
       if (!value || value[BOX] !== true) fail(label + " must be created by box(...)");
+      requireShapeScope(value, label);
       return { x: value.x, y: value.y, width: value.width, height: value.height };
     }
 
     function serializeCircle(value, label) {
       if (!value || value[CIRCLE] !== true) fail(label + " must be created by circle(...)");
+      requireShapeScope(value, label);
       return { x: value.x, y: value.y, radius: value.radius };
     }
 
@@ -368,17 +479,23 @@
       if (!watched || (watched[CIRCLE] !== true && watched[BOX] !== true)) {
         fail("whenTriggered currently watches the center of a circle(...) or box(...)");
       }
+      const watchedShape = watched[CIRCLE] === true ? serializeCircle(watched, "whenTriggered watched") : serializeBox(watched, "whenTriggered watched");
       const action = {
         op: "if_trigger",
         trigger: serializeBox(triggerValue.zone, "whenTriggered trigger"),
-        point: { x: watched.x, y: watched.y },
+        point: { x: watchedShape.x, y: watchedShape.y },
         then: captureActions(thenCallback, "whenTriggered then"),
       };
       if (elseCallback !== undefined) action.else = captureActions(elseCallback, "whenTriggered else");
       emit(action);
     }
 
+    function assertSharedPresentation(label) {
+      if (activePlayerScope !== null) fail(label + " is shared presentation and cannot be declared inside PlayerContext");
+    }
+
     function block(id, spec) {
+      assertSharedPresentation("block(...)");
       if (typeof id !== "string" || id.length === 0) fail("block id must be a non-empty string");
       if (spec == null || typeof spec !== "object") fail("block " + id + " spec must be an object");
       if (typeof spec.block !== "string") fail("block " + id + " requires a block resource id");
@@ -397,6 +514,7 @@
     }
 
     function textProjection(id, spec) {
+      assertSharedPresentation("text(...)");
       if (typeof id !== "string" || id.length === 0) fail("text id must be a non-empty string");
       if (spec == null || typeof spec !== "object") fail("text " + id + " spec must be an object");
       let content;
@@ -436,6 +554,7 @@
     }
 
     function actorProjection(id, spec) {
+      assertSharedPresentation("actor(...)");
       if (typeof id !== "string" || id.length === 0) fail("actor id must be a non-empty string");
       if (spec == null || typeof spec !== "object") fail("actor " + id + " spec must be an object");
       const entityType = spec.entityType === undefined ? "minecraft:mannequin" : spec.entityType;
@@ -467,6 +586,7 @@
     }
 
     function worldBatch(id, spec) {
+      assertSharedPresentation("worldBatch(...)");
       if (typeof id !== "string" || id.length === 0) fail("worldBatch id must be a non-empty string");
       if (spec == null || typeof spec !== "object") fail("worldBatch " + id + " spec must be an object");
       if (!Array.isArray(spec.blocks) || spec.blocks.length < 1 || spec.blocks.length > 32768) {
@@ -486,6 +606,7 @@
     }
 
     function worldFill(id, spec) {
+      assertSharedPresentation("worldFill(...)");
       if (spec == null || typeof spec !== "object") fail("worldFill " + id + " spec must be an object");
       if (typeof spec.block !== "string" || spec.block.length === 0) fail("worldFill " + id + " block must be a resource id string");
       const fromX = finiteInteger(spec.fromX, "worldFill " + id + ".fromX", -30000000, 30000000);
@@ -509,6 +630,7 @@
     }
 
     function cameraProjection(id, spec) {
+      assertSharedPresentation("camera(...)");
       if (cameras.length > 0) fail("only one camera(...) is currently supported");
       if (typeof id !== "string" || id.length === 0) fail("camera id must be a non-empty string");
       if (spec == null || typeof spec !== "object") fail("camera " + id + " spec must be an object");
@@ -524,10 +646,12 @@
         pitch: finiteNumber(spec.pitch === undefined ? 0 : spec.pitch, "camera " + id + " pitch"),
       };
       if (mode === "spectate") camera.mode = mode;
+      if (spec.audience !== undefined) { camera.audience = requirePlayerSet(spec.audience, "camera " + id + " audience"); usesPlayerApi = true; }
       cameras.push(camera);
     }
 
     function particleEmitter(id, spec) {
+      assertSharedPresentation("particle(...)");
       if (typeof id !== "string" || id.length === 0) fail("particle id must be a non-empty string");
       if (spec == null || typeof spec !== "object") fail("particle " + id + " spec must be an object");
       if (typeof spec.particle !== "string") fail("particle " + id + " requires a particle resource id");
@@ -552,6 +676,7 @@
     }
 
     function soundEmitter(id, spec) {
+      assertSharedPresentation("sound(...)");
       if (typeof id !== "string" || id.length === 0) fail("sound id must be a non-empty string");
       if (spec == null || typeof spec !== "object") fail("sound " + id + " spec must be an object");
       if (typeof spec.sound !== "string") fail("sound " + id + " requires a sound resource id");
@@ -572,6 +697,7 @@
     }
 
     function hudProjection(id, spec) {
+      assertSharedPresentation("hud(...)");
       if (huds.length > 0) fail("only one hud(...) is currently supported");
       if (typeof id !== "string" || id.length === 0) fail("hud id must be a non-empty string");
       if (spec == null || typeof spec !== "object") fail("hud " + id + " spec must be an object");
@@ -591,6 +717,7 @@
     }
 
     function sidebarProjection(id, spec) {
+      assertSharedPresentation("sidebar(...)");
       if (sidebars.length > 0) fail("only one sidebar(...) is currently supported");
       if (typeof id !== "string" || id.length === 0) fail("sidebar id must be a non-empty string");
       if (spec == null || typeof spec !== "object") fail("sidebar " + id + " spec must be an object");
@@ -620,6 +747,8 @@
     const dsl = Object.freeze({
       state: makeState,
       input(name, initial = 0, binding) { return makeInput(name, initial, binding); },
+      players,
+      forEachPlayer,
       tick,
       repeat,
       when,
@@ -646,17 +775,27 @@
 
     build(dsl);
     if (tickActions === null) fail("tick(...) must be declared exactly once");
-    if (Object.keys(stateValues).length === 0) fail("at least one state(...) is required");
+    if (Object.keys(stateValues).length === 0 && Object.keys(playerStateValues).length === 0) fail("at least one shared or player-local state is required");
+
+    if (usesPlayerApi) {
+      if (Object.keys(inputValues).length > 0 || Object.keys(vanillaInputs).length > 0) fail("game.input(...) is v1-v11 compatibility only; use player.input.* in multiplayer v12");
+      if (huds.length > 0) fail("game.hud(...) is single-controller v1-v11 presentation; use player.hud(...) in multiplayer v12");
+      for (const camera of cameras) if (camera.audience === undefined) camera.audience = "all_online";
+    }
 
     const usesSpectateCamera = cameras.some(camera => camera.mode === "spectate");
     const spec = {
-      version: usesSpectateCamera ? 11 : (ownership === null ? 9 : 10),
+      version: usesPlayerApi ? 12 : (usesSpectateCamera ? 11 : (ownership === null ? 9 : 10)),
       fixedPoint,
       state: stateValues,
       tick: tickActions,
     };
     if (Object.keys(inputValues).length > 0) spec.inputs = inputValues;
-    if (ownership !== null || Object.keys(vanillaInputs).length > 0 || projections.length > 0 || texts.length > 0 || actorProjections.length > 0 || worldBatches.length > 0 || cameras.length > 0 || particles.length > 0 || sounds.length > 0 || huds.length > 0 || sidebars.length > 0) {
+    if (usesPlayerApi) {
+      spec.playerState = playerStateValues;
+      spec.playerInputs = Array.from(playerInputs);
+    }
+    if (ownership !== null || Object.keys(vanillaInputs).length > 0 || projections.length > 0 || texts.length > 0 || actorProjections.length > 0 || worldBatches.length > 0 || cameras.length > 0 || particles.length > 0 || sounds.length > 0 || huds.length > 0 || playerHuds.length > 0 || sidebars.length > 0) {
       spec.vanilla = {};
       if (ownership !== null) spec.vanilla.ownership = ownership;
       if (Object.keys(vanillaInputs).length > 0) spec.vanilla.inputs = vanillaInputs;
@@ -668,6 +807,7 @@
       if (particles.length > 0) spec.vanilla.particles = particles;
       if (sounds.length > 0) spec.vanilla.sounds = sounds;
       if (huds.length > 0) spec.vanilla.huds = huds;
+      if (playerHuds.length > 0) spec.vanilla.playerHuds = playerHuds;
       if (sidebars.length > 0) spec.vanilla.sidebars = sidebars;
     }
 
