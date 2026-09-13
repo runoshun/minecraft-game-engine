@@ -191,6 +191,12 @@ Minecraft 26.1 function macros are the intended internal lowering for dynamic gr
 
 The accepted v13 reference is a regenerated top-down procedural roguelike with runtime room/corridor generation on a 29 x 37 grid, deterministic seed replay, floor-to-floor regeneration, grid-authoritative movement collision, bounded enemy/loot slots, and incremental terrain projection. Generic arrays/maps/sets, BFS/A*, runtime-created actors, persistent saves, player-local grids/RNG, and multi-layer cell templates remain out of scope for v13.
 
+## Planned portable team PlayerSets v14
+
+ADR 0023 is accepted for implementation but is not yet current runtime behavior. The planned v14 membership slice keeps `game.players()` as all online players and adds `game.teamPlayers(name)` for externally managed vanilla scoreboard teams. Team-backed sets are intended to drive `forEachPlayer`, `forSinglePlayer`, player-local HUD audiences, and multiple disjoint camera audiences without compiler-owned player tags or fixed names/UUIDs.
+
+This milestone deliberately stops at membership/audience partitioning. Team/session-local shared state, grids/RNG, private world projection, team-local sidebars, reductions, and compiler-owned matchmaking remain future work. Until v14 implementation and the ADR 0023 two-real-client acceptance gate pass, v13 remains the latest implemented Portable IR version.
+
 ## Current limitations
 
 - single-file TypeScript; no import/module resolution;
