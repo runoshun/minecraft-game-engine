@@ -79,3 +79,5 @@ Tradeoffs:
 - state-controlled actor removal and moving projections remain subject to generated ownership/reload lifecycle requirements, so ADR 0013 gate 4 remains open.
 
 This decision extends ADR 0013 and ADR 0014. It covers the required bounded `render` / `actors` presentation semantics for retained examples; unused generic host features are explicitly out of scope for the vanilla-first API.
+
+ADR 0026 later promotes a bounded mannequin/actor presentation expansion to the post-v16 roadmap. That later priority does not change v7 semantics or imply unbounded/runtime-created actor collections.

@@ -111,6 +111,8 @@ V16 does not add:
 - reductions across players/sessions;
 - persistent saves across `/reload`.
 
+ADR 0026 subsequently orders the post-v16 backlog: reductions and persistence move ahead of arena/session infrastructure, while automatic arena allocation and related ownership automation remain lower priority as long as explicit footprints are an adequate workaround.
+
 ## Consequences
 
 - Two team-bound sessions can use the same local Grid and GridWorld declaration names and independently materialize them into distinct Minecraft terrain footprints.

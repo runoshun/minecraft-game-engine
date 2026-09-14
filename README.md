@@ -14,6 +14,8 @@ Early PoC targeting Minecraft Java Edition 26.1. Portable IR v1-v16 is implement
 
 Current capabilities include fixed-point state, held input and hotbar input, state-authored rising edges, block/text Display projection, bounded actor projection, world batches/fills, particles, sounds, shared and player-local actionbar HUD, one global vanilla sidebar, AABB/circle/capsule collision primitives, triggers, two-pose flippers, compile-time `repeat`, bounded ownership lifecycle, `position_lock` / opt-in `spectate` camera modes, v12 player-local execution, v13 bounded grids/RNG/grid-world projection, v14 external-team PlayerSet filtering with disjoint team HUD/camera audiences, v15 team-bound logical sessions with session-local scalar/Grid/RNG state, and v16 session-local GridWorld projection with compile-time footprint isolation. v1-v11 `first_player_*` input remains supported for compatibility.
 
+Post-v16 roadmap policy is recorded in ADR 0026. The planned capability order is bounded player/session reductions, persistent portable state, interactive selection UI, then richer mannequin/actor presentation. Arena allocation and related session infrastructure remain lower priority while explicit-coordinate/team-based workarounds are sufficient.
+
 ## Requirements
 
 - Node.js 22; `.mise.toml` pins the validated version.
@@ -71,6 +73,7 @@ portableDsl({ fixedPoint: 1000 }, game => {
 - `examples/portable-procedural-roguelike` — v13 runtime grid/RNG/grid-world procedural topology acceptance game.
 - `examples/portable-team-player-sets` — v14 external-team PlayerSet, partitioned HUD, and multi-camera acceptance example.
 - `examples/portable-session-local` — v15 two-session scalar/Grid/RNG isolation and session-HUD acceptance example.
+- `examples/portable-session-grid-world` — v16 two-session GridWorld projection and footprint-isolation acceptance example.
 
 Legacy host-runtime-only examples were removed when the Java/Fabric runtime was retired. Examples in the repository must compile through the current Node portable compiler.
 

@@ -28,7 +28,7 @@ The compiler accepts one TypeScript source, namespace, and output directory. Mod
 
 Portable IR is the versioned semantic contract between authoring and vanilla lowering. It contains deterministic fixed-point values, bounded actions, collision primitives, declarative presentation/world resources, input mappings, and lifecycle metadata. Arbitrary JavaScript callbacks are not an IR feature.
 
-IR versions 1 through 14 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, and ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14.
+IR versions 1 through 16 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14, ADR 0024 defines team-bound logical sessions in v15, and ADR 0025 defines session-local GridWorld projection in v16.
 
 ### Generated datapack
 
@@ -222,6 +222,23 @@ If either side is session-local, two GridWorld footprints may not overlap at the
 A session projection owns independent `ready`, `active`, and `cursor` state. After authored rules, each active session projection may advance one bounded `cellsPerTick` slice per tick, so one session does not consume another session's projection budget. The legacy global GridWorld scheduler is unchanged. `rebuild()` is a session-shared mutation: it is allowed at session scope and inside exact-cardinality `session.forSinglePlayer`, but rejected in multi-player `session.forEachPlayer`. `ready` is lexical and may not escape its SessionContext.
 
 V16 permits at most four GridWorld projections per session, sixteen session GridWorld projections in aggregate, and 16,384 aggregate projected session cells; `cellsPerTick` remains bounded to 1..256. Projected blocks are persistent world state: `/reload` deterministically resets/rebuilds them, while `portable/cleanup` removes generated objective/storage/force-load state but does not restore terrain.
+
+## Planned capability roadmap after v16
+
+ADR 0026 establishes a capability-first roadmap: prioritize portable semantics that current game source cannot reproduce safely with existing primitives before automation or infrastructure that already has a workable explicit fallback. This is planning policy, not an implemented API contract; each capability requires its own ADR and Portable IR version decision before implementation.
+
+The planned order is:
+
+1. **bounded player/session reductions** — deterministic count/sum/min/max/any/all-style aggregation over a `PlayerSet` without weakening the existing rule that multi-player `forEachPlayer` cannot arbitrarily mutate shared/session-shared state;
+2. **persistent portable state** — selected progression/state that survives `/reload` and pack replacement, with explicit schema, reset, migration, cleanup, and offline-player semantics;
+3. **interactive selection UI** — bounded vanilla-client choices for dialogue, shops, menus, and confirmations rather than forcing passive HUD text plus key-binding conventions;
+4. **mannequin/actor presentation expansion** — richer bounded character appearance such as mannequin appearance/profile or skin controls supported by vanilla, equipment, and pose/transform controls, while preserving compiler-owned lifecycle and declaration bounds. Item/model projections or attachment relationships require the same ownership discipline and are design-time candidates rather than current features.
+
+The existing v7 actor contract remains current until item 4 lands: actor carriers are mannequins with state-backed position/yaw/lifetime, with zombie/skeleton intents represented by mob heads. ADR 0015's richer-presentation items were non-goals for v7; ADR 0026 intentionally promotes mannequin/actor expression to planned work without introducing runtime-created or unbounded entity collections.
+
+Automatic arena allocation, per-session ownership/dynamic chunk leasing, dynamic matchmaking, session-local presentation declarations, per-player vanilla sidebars, and module/import support remain useful but lower priority because current prototypes have explicit workarounds. Client-private scene visibility is still a genuine missing isolation feature, but spatially separate footprints are sufficient for current acceptance games, so privacy work is also behind the four capability priorities unless a retained game makes it a blocker.
+
+After those priorities, additional capability gaps include 3D/swept collision, deliberately scoped Minecraft world/entity queries, pathfinding/topology helpers, and generic runtime collections where existing Grid/fixed-slot patterns prove insufficient.
 
 ## Current limitations
 
