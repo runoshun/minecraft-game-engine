@@ -757,6 +757,136 @@ test("v16 rejects session grid-world scope escapes unsafe rebuilds ownership vio
   }), /gridWorlds requires portable version 16/);
 });
 
+test("v17 reductions lower count sum min max any all for global and session state", () => {
+  const { program, output } = compileSource(`
+    portableDsl({ fixedPoint: 1000 }, game => {
+      const red = game.teamPlayers("v17_red");
+      const count = game.state("count", 0);
+      const sum = game.state("sum", 0);
+      const min = game.state("min", -1);
+      const max = game.state("max", -1);
+      const any = game.state("any", 0);
+      const all = game.state("all", 0);
+      game.tick(() => {
+        game.reduce.count(red, count);
+        game.reduce.sum(red, sum, player => player.state("score", 0));
+        game.reduce.min(red, min, -7, player => player.state("score", 0));
+        game.reduce.max(red, max, 9, player => player.state("score", 0));
+        game.reduce.any(red, any, player => player.state("ready", 0).eq(1));
+        game.reduce.all(red, all, player => player.state("ready", 0).eq(1));
+        game.session("red", red, session => {
+          const localCount = session.state("count", 0);
+          const localSum = session.state("sum", 0);
+          session.reduce.count(localCount);
+          session.reduce.sum(localSum, player => player.state("score", 0));
+        });
+      });
+    });
+  `, "portable_v17_reduce");
+
+  assert.equal(program.version, 17);
+  assert.deepEqual(Object.keys(program.initialPlayerState).sort(), ["ready", "score"]);
+  const globalReductions = program.tickActions.filter(action => action.op === "player_reduce");
+  assert.deepEqual(globalReductions.map(action => action.kind), ["count", "sum", "min", "max", "any", "all"]);
+  const sessionAction = program.tickActions.find(action => action.op === "for_session");
+  assert.deepEqual(sessionAction.actions.filter(action => action.op === "player_reduce").map(action => [action.kind, action.session]), [["count", "red"], ["sum", "red"]]);
+
+  const tick = read(output, "data/portable_v17_reduce/function/portable/tick.mcfunction");
+  assert.match(tick, /execute store result score #count .* if entity @a\[team=v17_red\]/);
+  assert.match(tick, /scoreboard players operation #count .* \*= #c\d+/);
+  assert.match(tick, /scoreboard players set #sum .* 0/);
+  assert.match(tick, /execute as @a\[team=v17_red\] run scoreboard players operation #sum .* \+= @s mps[0-9a-f]{8}\d\d/);
+  assert.match(tick, /scoreboard players set #min .* -7000/);
+  assert.match(tick, /scoreboard players operation #min .* < @s mps/);
+  assert.match(tick, /scoreboard players set #max .* 9000/);
+  assert.match(tick, /scoreboard players operation #max .* > @s mps/);
+  assert.match(tick, /scoreboard players set #any .* 0/);
+  assert.match(tick, /run scoreboard players set #any .* 1000/);
+  assert.match(tick, /scoreboard players set #all .* 1000/);
+  assert.match(tick, /run scoreboard players set #all .* 0/);
+  assert.match(tick, /#ss\d{4}/);
+});
+
+test("v17 reduction callbacks are read-only and parser enforces scope version and bounds", () => {
+  assert.throws(() => extract(`
+    portableDsl(game => {
+      const players = game.players();
+      const total = game.state("total", 0);
+      game.tick(() => game.reduce.sum(players, total, player => {
+        const score = player.state("score", 0);
+        score.add(1);
+        return score;
+      }));
+    });
+  `), /reduction selector callback is read-only/);
+
+  assert.throws(() => extract(`
+    portableDsl(game => {
+      const players = game.players();
+      const total = game.state("total", 0);
+      game.tick(() => game.forEachPlayer(players, () => game.reduce.count(players, total)));
+    });
+  `), /cannot be used inside PlayerContext/);
+
+  assert.throws(() => extract(`
+    portableDsl(game => {
+      const global = game.state("global", 0);
+      const red = game.teamPlayers("red");
+      game.tick(() => game.session("red", red, session => session.reduce.count(global)));
+    });
+  `), /target must be a state from the active session/);
+
+  assert.throws(() => parseProgram({
+    version: 16,
+    state: { count: 0 },
+    playerSets: [{ team: "red" }],
+    tick: [{ op: "player_reduce", kind: "count", players: { team: "red" }, target: "count" }],
+  }), /requires portable version 17/);
+
+  assert.throws(() => parseProgram({
+    version: 17,
+    state: { min: 0 },
+    playerState: { score: 0 },
+    playerSets: [{ team: "red" }],
+    tick: [{ op: "player_reduce", kind: "min", players: { team: "red" }, target: "min", value: { playerState: "score" } }],
+  }), /\.empty is required/);
+
+  assert.throws(() => parseProgram({
+    version: 17,
+    state: {},
+    playerSets: [{ team: "red" }, { team: "blue" }],
+    sessions: [{ id: "red", players: { team: "red" }, state: { count: 0 } }],
+    tick: [{ op: "for_session", session: "red", actions: [
+      { op: "player_reduce", kind: "count", players: { team: "blue" }, target: "count" },
+    ] }],
+  }), /PlayerSet must match session red/);
+
+  assert.throws(() => parseProgram({
+    version: 17,
+    state: { count: 0 },
+    tick: Array.from({ length: 65 }, () => ({ op: "player_reduce", kind: "count", players: "all_online", target: "count" })),
+  }), /exceeds max player reduction count 64/);
+});
+
+test("v17 acceptance example emits explicit empty reduction semantics", () => {
+  const relative = "examples/portable-player-reductions/datapack/data/portable_reductions/mcgame/main.ts";
+  const source = fs.readFileSync(path.join(root, relative), "utf8");
+  const program = parseProgram(extractPortableSpec(relative, transpileTypeScript(relative, source, root), root));
+  assert.equal(program.version, 17);
+  const output = fs.mkdtempSync(path.join(os.tmpdir(), "mcgame-v17-acceptance-"));
+  compileDatapack(program, "portable_reductions", output);
+  const markerText = read(output, ".mcgame-portable-generated");
+  const marker = Object.fromEntries(markerText.trim().split("\n").map(line => {
+    const index = line.indexOf("=");
+    return [line.slice(0, index), line.slice(index + 1)];
+  }));
+  const tick = read(output, "data/portable_reductions/function/portable/tick.mcfunction");
+  assert.ok(tick.includes(`scoreboard players set ${marker["session.party.state.minimum"]} ${marker.objective} -1000`));
+  assert.ok(tick.includes(`scoreboard players set ${marker["session.party.state.maximum"]} ${marker.objective} -1000`));
+  assert.ok(tick.includes(`scoreboard players set ${marker["session.party.state.anyReady"]} ${marker.objective} 0`));
+  assert.ok(tick.includes(`scoreboard players set ${marker["session.party.state.allReady"]} ${marker.objective} 1000`));
+});
+
 test("representative checked-in examples compile deterministically", () => {
   const cases = [
     ["examples/portable-bounce/datapack/data/portable_bounce/mcgame/main.ts", "portable_bounce", 1],
@@ -771,7 +901,7 @@ test("representative checked-in examples compile deterministically", () => {
     ["examples/portable-team-player-sets/datapack/data/portable_team_players/mcgame/main.ts", "portable_team_players", 14],
     ["examples/portable-session-local/datapack/data/portable_sessions/mcgame/main.ts", "portable_sessions", 15],
     ["examples/portable-session-grid-world/datapack/data/portable_session_world/mcgame/main.ts", "portable_session_world", 16],
-    ["examples/portable-session-local/datapack/data/portable_sessions/mcgame/main.ts", "portable_sessions", 15],
+    ["examples/portable-player-reductions/datapack/data/portable_reductions/mcgame/main.ts", "portable_reductions", 17],
   ];
   for (const [relative, namespace, expectedVersion] of cases) {
     const source = fs.readFileSync(path.join(root, relative), "utf8");

@@ -28,7 +28,7 @@ The compiler accepts one TypeScript source, namespace, and output directory. Mod
 
 Portable IR is the versioned semantic contract between authoring and vanilla lowering. It contains deterministic fixed-point values, bounded actions, collision primitives, declarative presentation/world resources, input mappings, and lifecycle metadata. Arbitrary JavaScript callbacks are not an IR feature.
 
-IR versions 1 through 16 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14, ADR 0024 defines team-bound logical sessions in v15, and ADR 0025 defines session-local GridWorld projection in v16.
+IR versions 1 through 17 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14, ADR 0024 defines team-bound logical sessions in v15, ADR 0025 defines session-local GridWorld projection in v16, and ADR 0027 defines bounded player/session reductions in v17.
 
 ### Generated datapack
 
@@ -223,14 +223,24 @@ A session projection owns independent `ready`, `active`, and `cursor` state. Aft
 
 V16 permits at most four GridWorld projections per session, sixteen session GridWorld projections in aggregate, and 16,384 aggregate projected session cells; `cellsPerTick` remains bounded to 1..256. Projected blocks are persistent world state: `/reload` deterministically resets/rebuilds them, while `portable/cleanup` removes generated objective/storage/force-load state but does not restore terrain.
 
+## Bounded player/session reductions v17
+
+ADR 0027 is the implemented and accepted v17 aggregation contract. V17 adds explicit deterministic `count`, `sum`, `min`, `max`, `any`, and `all` reductions over a `PlayerSet` without weakening the existing rule that arbitrary shared/session-shared mutation is rejected inside multi-player `forEachPlayer`. Global authoring uses `game.reduce.*(players, target, ...)`; inside a SessionContext, `session.reduce.*(target, ...)` implicitly uses that session's team PlayerSet and requires a target state from the same session.
+
+Reduction selector callbacks are read-only lexical PlayerContexts. They may read/declare player-local state, read sampled player input, and compare readable portable values, but they cannot emit mutations, HUD declarations, nested player iteration, or other actions. A PlayerSet referenced only by a reduction still participates in the v12 initialization/input prelude before authored reduction actions execute.
+
+All reduction results use normal fixed-point representation. Empty-set results are `count=0`, `sum=0`, `any=0`, and `all=1`; `min` and `max` require an explicit author-supplied empty value. A v17 program may contain at most 64 reduction actions. `sum` follows Minecraft signed 32-bit scoreboard arithmetic and does not add an overflow guard.
+
+V17 reductions introduce no new persistent resource type: they update existing shared/session state holders and reuse the existing player objective lifecycle. `/reload` resets active-instance state and player state before reductions recompute from current participants; `portable/cleanup` removes generated objectives while externally managed vanilla teams remain untouched.
+
 ## Planned capability roadmap after v16
 
 ADR 0026 establishes a capability-first roadmap: prioritize portable semantics that current game source cannot reproduce safely with existing primitives before automation or infrastructure that already has a workable explicit fallback. This is planning policy, not an implemented API contract; each capability requires its own ADR and Portable IR version decision before implementation.
 
-The planned order is:
+The roadmap order is:
 
-1. **bounded player/session reductions** — deterministic count/sum/min/max/any/all-style aggregation over a `PlayerSet` without weakening the existing rule that multi-player `forEachPlayer` cannot arbitrarily mutate shared/session-shared state;
-2. **persistent portable state** — selected progression/state that survives `/reload` and pack replacement, with explicit schema, reset, migration, cleanup, and offline-player semantics;
+1. **bounded player/session reductions** — completed by Portable v17 / ADR 0027;
+2. **persistent portable state** — next priority: selected progression/state that survives `/reload` and pack replacement, with explicit schema, reset, migration, cleanup, and offline-player semantics;
 3. **interactive selection UI** — bounded vanilla-client choices for dialogue, shops, menus, and confirmations rather than forcing passive HUD text plus key-binding conventions;
 4. **mannequin/actor presentation expansion** — richer bounded character appearance such as mannequin appearance/profile or skin controls supported by vanilla, equipment, and pose/transform controls, while preserving compiler-owned lifecycle and declaration bounds. Item/model projections or attachment relationships require the same ownership discipline and are design-time candidates rather than current features.
 
@@ -249,14 +259,24 @@ After those priorities, additional capability gaps include 3D/swept collision, d
 - one server-global sidebar; v14 permits up to eight camera declarations only for disjoint external-team audiences;
 - bounded 2D logic collision only, not Minecraft hitbox queries or 3D/swept physics;
 - v8 world projection is compile-time declared and persistent; v13 additionally provides bounded incremental runtime grid projection, also persistent;
-- v15 adds independent team-bound logical sessions; v16 adds explicit session-local Grid-to-world footprints inside one shared ownership rectangle. Automatic arena allocation, per-session ownership/private visibility scenes, dynamic matchmaking, independent per-player vanilla sidebars, persistent saves, and cross-player/session reductions are not implemented.
+- v15 adds independent team-bound logical sessions; v16 adds explicit session-local Grid-to-world footprints inside one shared ownership rectangle; v17 adds bounded cross-player/session reductions. Automatic arena allocation, per-session ownership/private visibility scenes, dynamic matchmaking, independent per-player vanilla sidebars, and persistent saves are not implemented.
 
 ## Validation baseline
 
-Portable v1-v16 compiler behavior is covered by the Node regression suite; generated milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
+Portable v1-v17 compiler behavior is covered by the Node regression suite; generated milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
 
 Node migration ADR 0021 additionally established byte-for-byte output parity with the retired Java compiler for representative v1, v9, v10, and v11 programs including Bounce, Pinball, Breakout, Presentation, UI, World, JRPG, and spectate-camera cases. Node compiler regression tests are now the maintained build-time acceptance suite.
 
+
+### v17 player/session reduction validation
+
+Portable v17 passed its mod-free Minecraft 26.1 acceptance on `second` using real clients `Camera` and `Camera2` as simultaneous members of externally managed team `v17_party`. The checked-in `examples/portable-player-reductions` pack stores identity-local `score` / `ready` values and recomputes one session's `count`, `sum`, `min`, `max`, `any`, and `all` every tick. With both clients initialized at zero, the aggregate reached `count=2000`, `sum=0`, `min=0`, `max=0`, `any=0`, and `all=0` at fixed point 1000.
+
+Real A/left input on Camera changed only Camera's score to `1000`, producing `sum=1000`, `min=0`, `max=1000`. Real D/right input on Camera2 then changed only Camera2's score to `2000`, producing `sum=3000`, `min=1000`, `max=2000`. Jump on only Camera produced `any=1000` / `all=0`; after Camera2 also jumped, both became `1000`. This validates player-local source isolation plus deterministic numeric and boolean reduction lowering.
+
+Removing both clients from `v17_party` while they remained online produced the defined empty-set values `count=0`, `sum=0`, `min=-1000`, `max=-1000`, `any=0`, `all=1000`, while the identity-local scores `1000` / `2000` and ready values `1000` / `1000` remained intact. Rejoining both clients immediately recomputed the previous non-empty aggregates from those retained values. `/reload` preserved external team membership but reset player-local active-instance values to zero, after which reductions recomputed `count=2000`, `sum=0`, `min=0`, `max=0`, `any=0`, `all=0`.
+
+`portable/cleanup` removed every generated scoreboard objective while `v17_party` still retained both members. Test teardown then removed the team and acceptance datapack; final server state had zero objectives and zero teams, with only the pre-existing disabled video packs remaining. The Node regression suite was 22/22 green, and all retained v1-v16 generated examples were byte-for-byte identical to pre-v17 commit `4c485fd`.
 
 ### v16 session GridWorld validation
 

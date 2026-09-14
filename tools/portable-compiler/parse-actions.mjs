@@ -74,6 +74,32 @@ export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }
       out.push({ op, players, actions: parseActions(requiredArray(a, "actions", p), childContext(ctx, "single"), `${p}.actions`, depth + 1, counter) });
       continue;
     }
+    if (op === "player_reduce") {
+      if (ctx.version < 17) fail(`${p}.op requires portable version 17`);
+      if (ctx.playerScope) fail(`${p}.op cannot be used inside PlayerContext`);
+      counter.reductions = (counter.reductions || 0) + 1;
+      if (counter.reductions > LIMITS.reductions) fail(`${path} exceeds max player reduction count ${LIMITS.reductions}`);
+      const kind = requiredString(a, "kind", p);
+      if (!["count", "sum", "min", "max", "any", "all"].includes(kind)) fail(`${p}.kind unsupported reduction: ${kind}`);
+      const players = parsePlayerSetRef(requiredMember(a, "players", p), ctx, `${p}.players`);
+      requireSessionPlayers(ctx, players, p);
+      const target = requiredString(a, "target", p);
+      const scoped = ctx.sessionScope ? { session: ctx.sessionScope } : {};
+      if (ctx.sessionScope) {
+        const session = currentSession(ctx, p);
+        if (!session.states.has(target)) fail(`${p}.target references unknown session state ${ctx.sessionScope}.${target}`);
+      } else if (!ctx.states.has(target)) fail(`${p}.target references unknown shared state ${target}`);
+      if (kind === "count") { out.push({ op, kind, players, ...scoped, target }); continue; }
+      const reductionCtx = childContext(ctx, "reduce");
+      if (kind === "any" || kind === "all") {
+        out.push({ op, kind, players, ...scoped, target, condition: parseCondition(requiredObject(a, "condition", p), reductionCtx, `${p}.condition`) });
+        continue;
+      }
+      const parsed = { op, kind, players, ...scoped, target, value: parseValue(requiredMember(a, "value", p), reductionCtx, `${p}.value`) };
+      if (kind === "min" || kind === "max") parsed.emptyRaw = scale(requiredMember(a, "empty", p), ctx.fixedPoint, `${p}.empty`);
+      out.push(parsed);
+      continue;
+    }
     if (["grid_fill", "grid_get", "grid_set", "grid_fill_rect"].includes(op)) {
       if (ctx.version < 13) fail(`${p}.op requires portable version 13`);
       if (ctx.playerScope === "multi") fail(`${p}.op is shared grid mutation and is not allowed inside multi-player PlayerContext`);

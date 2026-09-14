@@ -79,3 +79,7 @@ Client-private scene visibility remains a real capability gap when strict visual
 - Actor/mannequin presentation expansion is explicitly planned and should be treated as a gameplay-expression capability, not dismissed as cosmetic polish.
 - Arena allocation, per-session ownership, and matchmaking remain documented but are not prerequisites for the next capability milestones.
 - This ADR orders work only. Public APIs and IR version numbers are decided separately so implementation evidence can still change the detailed design.
+
+## Progress
+
+ADR 0027 completes Priority 1 with Portable IR v17 bounded player/session reductions. Persistent portable state is therefore the next roadmap priority.

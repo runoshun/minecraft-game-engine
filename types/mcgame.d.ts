@@ -420,7 +420,30 @@ type PortableProgramSpecV16 = {
   vanilla?: Omit<NonNullable<PortableProgramSpecV15["vanilla"]>, "playerHuds"> & { playerHuds?: PortableVanillaPlayerHudV16[] };
   tick: PortableV16Action[];
 };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14 | PortableProgramSpecV15 | PortableProgramSpecV16;
+type PortableV17Action =
+  | { op: "set" | "add" | "sub"; target: string; value: PortableV16Value }
+  | { op: "negate"; target: string }
+  | { op: "player_set" | "player_add" | "player_sub"; target: string; value: PortableV16Value }
+  | { op: "player_negate"; target: string }
+  | { op: "grid_fill"; grid: string; value: PortableV16Value }
+  | { op: "grid_get"; grid: string; x: PortableV16Value; z: PortableV16Value; target: string }
+  | { op: "grid_set"; grid: string; x: PortableV16Value; z: PortableV16Value; value: PortableV16Value }
+  | { op: "grid_fill_rect"; grid: string; x: PortableV16Value; z: PortableV16Value; width: PortableV16Value; height: PortableV16Value; value: PortableV16Value }
+  | { op: "rng_reset"; rng: string } | { op: "rng_int"; rng: string; target: string; min: number; max: number }
+  | { op: "grid_world_rebuild"; target: string }
+  | { op: "player_reduce"; kind: "count"; players: PortablePlayerSetRefV14; target: string }
+  | { op: "player_reduce"; kind: "sum"; players: PortablePlayerSetRefV14; target: string; value: PortableV16Value }
+  | { op: "player_reduce"; kind: "min" | "max"; players: PortablePlayerSetRefV14; target: string; empty: number; value: PortableV16Value }
+  | { op: "player_reduce"; kind: "any" | "all"; players: PortablePlayerSetRefV14; target: string; condition: PortableV16Comparison }
+  | { op: "if"; condition: PortableV16Comparison; then: PortableV17Action[]; else?: PortableV17Action[] }
+  | { op: "if_aabb"; a: PortableV16Aabb; b: PortableV16Aabb; then: PortableV17Action[]; else?: PortableV17Action[] }
+  | { op: "if_circle"; a: PortableV16Circle; b: PortableV16Circle; then: PortableV17Action[]; else?: PortableV17Action[] }
+  | { op: "if_circle_capsule"; circle: PortableV16Circle; capsule: PortableCapsule; then: PortableV17Action[]; else?: PortableV17Action[] }
+  | { op: "if_trigger"; trigger: PortableV16Aabb; point: PortableV16Point; then: PortableV17Action[]; else?: PortableV17Action[] }
+  | { op: "for_each_player" | "for_single_player"; players: PortablePlayerSetRefV14; actions: PortableV17Action[] }
+  | { op: "for_session"; session: string; actions: PortableV17Action[] };
+type PortableProgramSpecV17 = Omit<PortableProgramSpecV16, "version" | "tick"> & { version: 17; tick: PortableV17Action[] };
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14 | PortableProgramSpecV15 | PortableProgramSpecV16 | PortableProgramSpecV17;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -617,10 +640,27 @@ type PortableDslPlayerContext = {
   };
   hud(id: string, spec: PortableDslPlayerHudSpec): void;
 };
+type PortableDslGlobalReduction = {
+  count(players: PortableDslPlayerSet, target: PortableDslState): void;
+  sum(players: PortableDslPlayerSet, target: PortableDslState, select: (player: PortableDslPlayerContext) => PortableDslValue): void;
+  min(players: PortableDslPlayerSet, target: PortableDslState, empty: number, select: (player: PortableDslPlayerContext) => PortableDslValue): void;
+  max(players: PortableDslPlayerSet, target: PortableDslState, empty: number, select: (player: PortableDslPlayerContext) => PortableDslValue): void;
+  any(players: PortableDslPlayerSet, target: PortableDslState, test: (player: PortableDslPlayerContext) => PortableDslCondition): void;
+  all(players: PortableDslPlayerSet, target: PortableDslState, test: (player: PortableDslPlayerContext) => PortableDslCondition): void;
+};
+type PortableDslSessionReduction = {
+  count(target: PortableDslSessionState): void;
+  sum(target: PortableDslSessionState, select: (player: PortableDslPlayerContext) => PortableDslValue): void;
+  min(target: PortableDslSessionState, empty: number, select: (player: PortableDslPlayerContext) => PortableDslValue): void;
+  max(target: PortableDslSessionState, empty: number, select: (player: PortableDslPlayerContext) => PortableDslValue): void;
+  any(target: PortableDslSessionState, test: (player: PortableDslPlayerContext) => PortableDslCondition): void;
+  all(target: PortableDslSessionState, test: (player: PortableDslPlayerContext) => PortableDslCondition): void;
+};
 type PortableDslSessionContext = {
   readonly id: string;
   readonly players: PortableDslPlayerSet;
   state(name: string, initial: number): PortableDslSessionState;
+  readonly reduce: PortableDslSessionReduction;
   grid(id: string, spec: { width: number; height: number; initial?: number; outside?: number }): PortableDslSessionGrid;
   rng(id: string, spec: { seed: number }): PortableDslSessionRng;
   gridWorld(id: string, spec: PortableDslSessionGridWorldSpec): PortableDslGridWorld;
@@ -636,6 +676,7 @@ type PortableDsl = {
   teamPlayers(team: string): PortableDslPlayerSet;
   forEachPlayer(players: PortableDslPlayerSet, callback: (player: PortableDslPlayerContext) => void): void;
   forSinglePlayer(players: PortableDslPlayerSet, callback: (player: PortableDslPlayerContext) => void): void;
+  readonly reduce: PortableDslGlobalReduction;
   session(id: string, players: PortableDslPlayerSet, callback: (session: PortableDslSessionContext) => void): void;
   grid(id: string, spec: { width: number; height: number; initial?: number; outside?: number }): PortableDslGrid;
   rng(id: string, spec: { seed: number }): PortableDslRng;

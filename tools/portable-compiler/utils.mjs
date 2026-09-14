@@ -39,11 +39,12 @@ export const LIMITS = Object.freeze({
   sidebars: 1,
   sidebarRows: 15,
   ownershipChunks: 64,
+  reductions: 64,
   actions: 2048,
   depth: 16,
 });
 
-export const CURRENT_VERSION = 16;
+export const CURRENT_VERSION = 17;
 
 export function fail(message) { throw new Error(message); }
 export function has(object, member) { return Object.prototype.hasOwnProperty.call(object, member); }

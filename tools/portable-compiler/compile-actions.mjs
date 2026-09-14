@@ -73,6 +73,41 @@ export function compileActions(actions, lines, ctx) {
         lines.push(`execute if score #pc ${ctx.objective} matches 1 as ${playerSetSelector(action.players, ["limit=1", "sort=arbitrary"])} run function ${ctx.namespace}:portable/${fn}`);
         break;
       }
+      case "player_reduce": {
+        const target = actionStateHolder(action, ctx);
+        const selector = playerSetSelector(action.players);
+        if (action.kind === "count") {
+          lines.push(`execute store result score ${target} ${ctx.objective} if entity ${selector}`);
+          if (ctx.program.fixedPoint !== 1) lines.push(`scoreboard players operation ${target} ${ctx.objective} *= ${ctx.constantHolder(ctx.program.fixedPoint)} ${ctx.objective}`);
+          break;
+        }
+        if (action.kind === "sum") {
+          const source = score(action.value, ctx);
+          lines.push(`scoreboard players set ${target} ${ctx.objective} 0`);
+          lines.push(`execute as ${selector} run scoreboard players operation ${target} ${ctx.objective} += ${source.holder} ${source.objective}`);
+          break;
+        }
+        if (action.kind === "min" || action.kind === "max") {
+          const source = score(action.value, ctx);
+          lines.push(`scoreboard players set ${target} ${ctx.objective} ${action.emptyRaw}`);
+          lines.push(`execute as ${playerSetSelector(action.players, ["limit=1", "sort=arbitrary"])} run scoreboard players operation ${target} ${ctx.objective} = ${source.holder} ${source.objective}`);
+          lines.push(`execute as ${selector} run scoreboard players operation ${target} ${ctx.objective} ${action.kind === "min" ? "<" : ">"} ${source.holder} ${source.objective}`);
+          break;
+        }
+        const trueRaw = ctx.program.fixedPoint;
+        if (action.kind === "any") {
+          lines.push(`scoreboard players set ${target} ${ctx.objective} 0`);
+          lines.push(`execute as ${selector} ${condition(action.condition, true, ctx)} run scoreboard players set ${target} ${ctx.objective} ${trueRaw}`);
+          break;
+        }
+        if (action.kind === "all") {
+          lines.push(`scoreboard players set ${target} ${ctx.objective} ${trueRaw}`);
+          lines.push(`execute as ${selector} ${condition(action.condition, false, ctx)} run scoreboard players set ${target} ${ctx.objective} 0`);
+          break;
+        }
+        fail(`unsupported player reduction: ${action.kind}`);
+        break;
+      }
       case "if": {
         if (action.then.length) {
           const fn = branchFunction(action.then, ctx);

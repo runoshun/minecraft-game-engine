@@ -83,6 +83,7 @@
     let sessionGridCellCount = 0;
     let sessionGridWorldCount = 0;
     let sessionGridWorldCellCount = 0;
+    let reductionCount = 0;
     const grids = [];
     const rngs = [];
     const gridWorlds = [];
@@ -114,6 +115,7 @@
     let usesV14 = false;
     let usesV15 = false;
     let usesV16 = false;
+    let usesV17 = false;
 
     function assertUnique(name) {
       if (Object.prototype.hasOwnProperty.call(stateValues, name) || Object.prototype.hasOwnProperty.call(inputValues, name)) {
@@ -191,6 +193,7 @@
 
     function emit(action) {
       if (actionSink == null) fail("state mutations and when(...) are only valid inside tick(...)");
+      if (activePlayerMode === "reduce") fail("reduction selector callback is read-only");
       actionSink.push(action);
     }
 
@@ -374,6 +377,84 @@
       capturePlayerContext(set, callback, "single", "for_single_player", "forSinglePlayer");
     }
 
+    function captureReduction(set, target, kind, empty, callback, label) {
+      if (actionSink === null) fail(label + "(...) is only valid inside tick(...)");
+      if (activePlayerScope !== null) fail(label + "(...) cannot be used inside PlayerContext");
+      if (reductionCount >= 64) fail("portable v17 supports at most 64 player reductions");
+      const serializedSet = requirePlayerSet(set, label + " player set");
+      if (activeSessionScope !== null && playerSetKey(serializedSet) !== playerSetKey(activeSessionPlayers)) {
+        fail(label + " PlayerSet must match the active session");
+      }
+      if (activeSessionScope === null) {
+        if (!target || target[REF] !== "state") fail(label + " target must be a global game.state(...)");
+      } else if (!target || target[REF] !== "session_state" || target[SESSION_SCOPE] !== activeSessionScope || target.session !== activeSessionId) {
+        fail(label + " target must be a state from the active session");
+      }
+
+      const action = { op: "player_reduce", kind, players: serializedSet, target: target.name };
+      if (kind === "min" || kind === "max") action.empty = finiteNumber(empty, label + " empty value");
+
+      if (kind !== "count") {
+        if (typeof callback !== "function") fail(label + " selector callback is required");
+        usesPlayerApi = true;
+        const scope = ++nextPlayerScope;
+        const input = {};
+        for (const name of ["hotbarSlot", "forward", "backward", "left", "right", "jump", "sneak", "sprint"]) {
+          Object.defineProperty(input, name, { enumerable: true, get() { return playerInputRef(name, scope); } });
+        }
+        const player = Object.freeze({
+          state(name, initial) {
+            if (activePlayerScope !== scope) fail("player.state(...) is only valid in its PlayerContext");
+            return makePlayerState(name, initial, scope);
+          },
+          input: Object.freeze(input),
+          hud() { fail("player.hud(...) is not available inside a reduction selector callback"); },
+        });
+        const previousScope = activePlayerScope, previousMode = activePlayerMode;
+        activePlayerScope = scope; activePlayerMode = "reduce";
+        try {
+          const selected = callback(player);
+          if (kind === "any" || kind === "all") action.condition = serializedCondition(selected, label + " condition");
+          else action.value = unwrapValue(selected);
+        } finally {
+          activePlayerScope = previousScope; activePlayerMode = previousMode;
+        }
+      } else {
+        usesPlayerApi = true;
+      }
+
+      usesV17 = true;
+      reductionCount++;
+      emit(action);
+    }
+
+    const globalReduce = Object.freeze({
+      count(set, target) {
+        if (activeSessionScope !== null) fail("game.reduce.count(...) is global; use session.reduce.count(...) inside SessionContext");
+        captureReduction(set, target, "count", undefined, undefined, "game.reduce.count");
+      },
+      sum(set, target, callback) {
+        if (activeSessionScope !== null) fail("game.reduce.sum(...) is global; use session.reduce.sum(...) inside SessionContext");
+        captureReduction(set, target, "sum", undefined, callback, "game.reduce.sum");
+      },
+      min(set, target, empty, callback) {
+        if (activeSessionScope !== null) fail("game.reduce.min(...) is global; use session.reduce.min(...) inside SessionContext");
+        captureReduction(set, target, "min", empty, callback, "game.reduce.min");
+      },
+      max(set, target, empty, callback) {
+        if (activeSessionScope !== null) fail("game.reduce.max(...) is global; use session.reduce.max(...) inside SessionContext");
+        captureReduction(set, target, "max", empty, callback, "game.reduce.max");
+      },
+      any(set, target, callback) {
+        if (activeSessionScope !== null) fail("game.reduce.any(...) is global; use session.reduce.any(...) inside SessionContext");
+        captureReduction(set, target, "any", undefined, callback, "game.reduce.any");
+      },
+      all(set, target, callback) {
+        if (activeSessionScope !== null) fail("game.reduce.all(...) is global; use session.reduce.all(...) inside SessionContext");
+        captureReduction(set, target, "all", undefined, callback, "game.reduce.all");
+      },
+    });
+
     function sessionBlock(id, set, callback) {
       if (actionSink === null) fail("session(...) is only valid inside tick(...)");
       if (activeSessionScope !== null) fail("nested SessionContext is not supported");
@@ -510,10 +591,20 @@
         });
       }
 
+      const sessionReduce = Object.freeze({
+        count(target) { assertSessionActive("session.reduce.count(...)"); captureReduction(set, target, "count", undefined, undefined, "session.reduce.count"); },
+        sum(target, callback) { assertSessionActive("session.reduce.sum(...)"); captureReduction(set, target, "sum", undefined, callback, "session.reduce.sum"); },
+        min(target, empty, callback) { assertSessionActive("session.reduce.min(...)"); captureReduction(set, target, "min", empty, callback, "session.reduce.min"); },
+        max(target, empty, callback) { assertSessionActive("session.reduce.max(...)"); captureReduction(set, target, "max", empty, callback, "session.reduce.max"); },
+        any(target, callback) { assertSessionActive("session.reduce.any(...)"); captureReduction(set, target, "any", undefined, callback, "session.reduce.any"); },
+        all(target, callback) { assertSessionActive("session.reduce.all(...)"); captureReduction(set, target, "all", undefined, callback, "session.reduce.all"); },
+      });
+
       const sessionContext = Object.freeze({
         id,
         players: set,
         state: sessionState,
+        reduce: sessionReduce,
         grid: sessionGrid,
         rng: sessionRng,
         gridWorld: sessionGridWorld,
@@ -1102,6 +1193,7 @@
       teamPlayers,
       forEachPlayer,
       forSinglePlayer,
+      reduce: globalReduce,
       session: sessionBlock,
       grid: gridDeclaration,
       rng: rngDeclaration,
@@ -1146,7 +1238,7 @@
 
     const usesSpectateCamera = cameras.some(camera => camera.mode === "spectate");
     const spec = {
-      version: usesV16 ? 16 : (usesV15 ? 15 : (usesV14 ? 14 : (usesV13 ? 13 : (usesPlayerApi ? 12 : (usesSpectateCamera ? 11 : (ownership === null ? 9 : 10)))))),
+      version: usesV17 ? 17 : (usesV16 ? 16 : (usesV15 ? 15 : (usesV14 ? 14 : (usesV13 ? 13 : (usesPlayerApi ? 12 : (usesSpectateCamera ? 11 : (ownership === null ? 9 : 10))))))),
       fixedPoint,
       state: stateValues,
       tick: tickActions,
