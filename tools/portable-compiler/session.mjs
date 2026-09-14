@@ -4,6 +4,27 @@ import {
 } from "./utils.mjs";
 import { parsePlayerSetRef, playerSetKey } from "./player-set.mjs";
 
+function parseSessionPersistentState(value, version, fixedPoint, path) {
+  if (!has(value, "persistentState")) return {};
+  if (version < 18) fail(`${path}.persistentState requires portable version 18`);
+  const raw = requiredObject(value, "persistentState", path);
+  const out = {};
+  for (const name of sortedKeys(raw)) {
+    validateValueName(name, `${path}.persistentState`);
+    const p = `${path}.persistentState.${name}`;
+    const spec = raw[name];
+    if (!isObject(spec)) fail(`${p} must be an object`);
+    const onSchemaMismatch = has(spec, "onSchemaMismatch") ? spec.onSchemaMismatch : "reset";
+    if (onSchemaMismatch !== "reset" && onSchemaMismatch !== "preserve") fail(`${p}.onSchemaMismatch must be reset or preserve`);
+    out[name] = {
+      initialRaw: scale(finiteNumber(requiredMember(spec, "initial", p), `${p}.initial`), fixedPoint, `${p}.initial`),
+      schema: boundedInteger(has(spec, "schema") ? spec.schema : 1, 1, 2147483647, `${p}.schema`),
+      onSchemaMismatch,
+    };
+  }
+  return out;
+}
+
 function parseSessionGrids(value, fixedPoint, path) {
   if (!has(value, "grids")) return [];
   const values = requiredArray(value, "grids", path);
@@ -106,6 +127,8 @@ export function parseSessions(spec, version, fixedPoint, api, playerTeams) {
       validateValueName(name, `${p}.state`);
       initialState[name] = scale(finiteNumber(rawState[name], `${p}.state.${name}`), fixedPoint, `${p}.state.${name}`);
     }
+    const persistentState = parseSessionPersistentState(value, version, fixedPoint, p);
+    for (const name of Object.keys(persistentState)) if (Object.prototype.hasOwnProperty.call(initialState, name)) fail(`${p} state/persistentState name collision: ${name}`);
     const grids = parseSessionGrids(value, fixedPoint, p);
     const rngs = parseSessionRngs(value, p, grids.map(grid => grid.id));
     const gridWorlds = parseSessionGridWorlds(value, version, fixedPoint, p, grids, rngs.map(rng => rng.id));
@@ -116,7 +139,7 @@ export function parseSessions(spec, version, fixedPoint, api, playerTeams) {
       const grid = gridMap.get(projection.grid);
       return sum + grid.width * grid.height;
     }, 0);
-    return { id, players, initialState, grids, rngs, gridWorlds };
+    return { id, players, initialState, persistentState, grids, rngs, gridWorlds };
   });
   if (totalGridCells > LIMITS.sessionGridCellsTotal) {
     fail(`${api}.sessions exceed aggregate session grid cell count ${LIMITS.sessionGridCellsTotal}`);
@@ -134,6 +157,7 @@ export function sessionContextMap(sessions) {
   return new Map(sessions.map(session => [session.id, {
     ...session,
     states: new Set(Object.keys(session.initialState)),
+    persistentStates: new Set(Object.keys(session.persistentState || {})),
     grids: new Map(session.grids.map(grid => [grid.id, grid])),
     rngs: new Set(session.rngs.map(rng => rng.id)),
     gridWorlds: new Map(session.gridWorlds.map(projection => [projection.id, projection])),

@@ -41,6 +41,20 @@ export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }
       }
       continue;
     }
+    if (["persistent_set", "persistent_add", "persistent_sub", "persistent_negate"].includes(op)) {
+      if (ctx.version < 18) fail(`${p}.op requires portable version 18`);
+      if (ctx.playerScope === "multi") fail(`${p} persistent shared state mutation is not allowed inside PlayerContext`);
+      const target = requiredString(a, "target", p);
+      if (ctx.sessionScope) {
+        const session = currentSession(ctx, p);
+        if (!session.persistentStates.has(target)) fail(`${p} references unknown target session persistent state ${ctx.sessionScope}.${target}`);
+        out.push(op === "persistent_negate" ? { op, session: ctx.sessionScope, target } : { op, session: ctx.sessionScope, target, value: parseValue(requiredMember(a, "value", p), ctx, `${p}.value`) });
+      } else {
+        if (!ctx.persistentStates?.has(target)) fail(`${p} references unknown target persistent state ${target}`);
+        out.push(op === "persistent_negate" ? { op, target } : { op, target, value: parseValue(requiredMember(a, "value", p), ctx, `${p}.value`) });
+      }
+      continue;
+    }
     if (["player_set", "player_add", "player_sub", "player_negate"].includes(op)) {
       if (ctx.version < 12) fail(`${p}.op requires portable version 12`);
       if (!ctx.playerScope) fail(`${p}.op is only valid inside PlayerContext`);

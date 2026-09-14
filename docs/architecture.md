@@ -28,7 +28,7 @@ The compiler accepts one TypeScript source, namespace, and output directory. Mod
 
 Portable IR is the versioned semantic contract between authoring and vanilla lowering. It contains deterministic fixed-point values, bounded actions, collision primitives, declarative presentation/world resources, input mappings, and lifecycle metadata. Arbitrary JavaScript callbacks are not an IR feature.
 
-IR versions 1 through 17 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14, ADR 0024 defines team-bound logical sessions in v15, ADR 0025 defines session-local GridWorld projection in v16, and ADR 0027 defines bounded player/session reductions in v17.
+IR versions 1 through 18 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14, ADR 0024 defines team-bound logical sessions in v15, ADR 0025 defines session-local GridWorld projection in v16, ADR 0027 defines bounded player/session reductions in v17, and ADR 0028 defines bounded persistent scalar state in v18.
 
 ### Generated datapack
 
@@ -233,6 +233,16 @@ All reduction results use normal fixed-point representation. Empty-set results a
 
 V17 reductions introduce no new persistent resource type: they update existing shared/session state holders and reuse the existing player objective lifecycle. `/reload` resets active-instance state and player state before reductions recompute from current participants; `portable/cleanup` removes generated objectives while externally managed vanilla teams remain untouched.
 
+## Persistent scalar state v18
+
+ADR 0028 defines the implemented v18 persistence boundary. V18 adds `game.persistentState(name, initial, options?)` and `session.persistentState(...)` for global and session-shared fixed-point scalars that survive `/reload`, ordinary `portable/cleanup`, and same-namespace generated-pack replacement. Persistent values use a dedicated namespace-derived scoreboard objective and stable semantic-key holders rather than the active-instance objective. The complete program is bounded to 64 persistent scalar declarations.
+
+Each declaration has an integer `schema` (default `1`) and `onSchemaMismatch: "reset" | "preserve"` (default `"reset"`). Reset policy reinitializes that declaration when its stored schema differs; preserve policy keeps the numeric value and advances the stored schema marker. V18 does not run arbitrary migration callbacks. Newly introduced keys initialize from their declaration. Renaming a key creates a new persistent identity; historical holders remain until explicit purge.
+
+Lifecycle is intentionally split. `portable/cleanup` preserves persistent data while removing active-instance resources. `portable/reset_persistent` restores all currently declared persistent values/schema markers to declarations. `portable/purge_persistent` destructively removes the persistent objective and initialization metadata. Normal pack replacement should therefore run cleanup, replace the same namespace, and reload; purge is only for explicit data reset/final teardown.
+
+V18 persistence is global/session scalar persistence only. Player-persistent/offline-player identity, persistent Grid/RNG/collections, structural migration callbacks, and cross-namespace storage are deferred.
+
 ## Planned capability roadmap after v16
 
 ADR 0026 establishes a capability-first roadmap: prioritize portable semantics that current game source cannot reproduce safely with existing primitives before automation or infrastructure that already has a workable explicit fallback. This is planning policy, not an implemented API contract; each capability requires its own ADR and Portable IR version decision before implementation.
@@ -240,8 +250,8 @@ ADR 0026 establishes a capability-first roadmap: prioritize portable semantics t
 The roadmap order is:
 
 1. **bounded player/session reductions** — completed by Portable v17 / ADR 0027;
-2. **persistent portable state** — next priority: selected progression/state that survives `/reload` and pack replacement, with explicit schema, reset, migration, cleanup, and offline-player semantics;
-3. **interactive selection UI** — bounded vanilla-client choices for dialogue, shops, menus, and confirmations rather than forcing passive HUD text plus key-binding conventions;
+2. **persistent portable state** — completed for bounded global/session scalar state by Portable v18 / ADR 0028; player/offline persistence remains deferred;
+3. **interactive selection UI** — next priority — bounded vanilla-client choices for dialogue, shops, menus, and confirmations rather than forcing passive HUD text plus key-binding conventions;
 4. **mannequin/actor presentation expansion** — richer bounded character appearance such as mannequin appearance/profile or skin controls supported by vanilla, equipment, and pose/transform controls, while preserving compiler-owned lifecycle and declaration bounds. Item/model projections or attachment relationships require the same ownership discipline and are design-time candidates rather than current features.
 
 The existing v7 actor contract remains current until item 4 lands: actor carriers are mannequins with state-backed position/yaw/lifetime, with zombie/skeleton intents represented by mob heads. ADR 0015's richer-presentation items were non-goals for v7; ADR 0026 intentionally promotes mannequin/actor expression to planned work without introducing runtime-created or unbounded entity collections.
@@ -259,14 +269,22 @@ After those priorities, additional capability gaps include 3D/swept collision, d
 - one server-global sidebar; v14 permits up to eight camera declarations only for disjoint external-team audiences;
 - bounded 2D logic collision only, not Minecraft hitbox queries or 3D/swept physics;
 - v8 world projection is compile-time declared and persistent; v13 additionally provides bounded incremental runtime grid projection, also persistent;
-- v15 adds independent team-bound logical sessions; v16 adds explicit session-local Grid-to-world footprints inside one shared ownership rectangle; v17 adds bounded cross-player/session reductions. Automatic arena allocation, per-session ownership/private visibility scenes, dynamic matchmaking, independent per-player vanilla sidebars, and persistent saves are not implemented.
+- v15 adds independent team-bound logical sessions; v16 adds explicit session-local Grid-to-world footprints inside one shared ownership rectangle; v17 adds bounded cross-player/session reductions. Automatic arena allocation, per-session ownership/private visibility scenes, dynamic matchmaking, independent per-player vanilla sidebars, and player/offline persistent state and richer persistent collections are not implemented.
 
 ## Validation baseline
 
-Portable v1-v17 compiler behavior is covered by the Node regression suite; generated milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
+Portable v1-v18 compiler behavior is covered by the Node regression suite; generated milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
 
 Node migration ADR 0021 additionally established byte-for-byte output parity with the retired Java compiler for representative v1, v9, v10, and v11 programs including Bounce, Pinball, Breakout, Presentation, UI, World, JRPG, and spectate-camera cases. Node compiler regression tests are now the maintained build-time acceptance suite.
 
+
+### v18 persistent scalar validation
+
+Portable v18 passed focused mod-free Minecraft 26.1 acceptance on `second` using real client `Camera` in externally managed team `v18_party`. The checked-in `examples/portable-persistent-state` pack began with global `campaign=10`, global preserve-policy `legacy=5`, and session `wins=3`. Real A/left changed campaign to `11` and legacy to `15`; real D/right changed wins to `4`. `/reload` preserved all three persistent values and the external team membership while active-instance player/runtime objectives followed the normal reload lifecycle.
+
+Normal `portable/cleanup` removed active-instance objectives but deliberately left the one persistent objective and values `11 / 15 / 4`. Same-namespace replacement with the same schema preserved those values. A schema-2 replacement with new defaults `campaign=100`, `legacy=500`, `wins=200` then proved both policies: campaign and wins reset to `100 / 200`, while legacy preserved `15`; all schema markers advanced to 2. `portable/reset_persistent` restored the current declaration defaults `100 / 500 / 200`. A subsequent cleanup again left only persistent data, and `portable/purge_persistent` removed the persistence objective and initialization marker. Final teardown removed the temporary team and pack and left zero objectives and zero teams.
+
+The Node regression suite was 25/25 green. Retained v1-v17 generated examples were byte-for-byte identical to pre-v18 commit `a262bf1`.
 
 ### v17 player/session reduction validation
 

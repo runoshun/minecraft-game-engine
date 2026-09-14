@@ -74,6 +74,8 @@
       if (typeof ownership.dimension !== "string" || ownership.dimension.length === 0) fail("ownership.dimension must be a resource id string");
     }
     const stateValues = Object.create(null);
+    const persistentStateValues = Object.create(null);
+    let persistentStateCount = 0;
     const inputValues = Object.create(null);
     const playerStateValues = Object.create(null);
     const playerInputs = new Set();
@@ -116,10 +118,11 @@
     let usesV15 = false;
     let usesV16 = false;
     let usesV17 = false;
+    let usesV18 = false;
 
     function assertUnique(name) {
-      if (Object.prototype.hasOwnProperty.call(stateValues, name) || Object.prototype.hasOwnProperty.call(inputValues, name)) {
-        fail("duplicate state/input name: " + name);
+      if (Object.prototype.hasOwnProperty.call(stateValues, name) || Object.prototype.hasOwnProperty.call(persistentStateValues, name) || Object.prototype.hasOwnProperty.call(inputValues, name)) {
+        fail("duplicate state/input/persistent-state name: " + name);
       }
     }
 
@@ -128,13 +131,18 @@
     }
 
     function isSessionRef(value) {
-      return value && (value[REF] === "session_state" || (value[REF] === "grid_world_ready" && value.session !== null));
+      return value && (value[REF] === "session_state" || value[REF] === "session_persistent_state" || (value[REF] === "grid_world_ready" && value.session !== null));
     }
 
     function unwrapValue(value) {
       if (typeof value === "number") return finiteNumber(value, "value");
       if (value && value[REF] === "state") return { state: value.name };
       if (value && value[REF] === "input") return { input: value.name };
+      if (value && value[REF] === "persistent_state") return { persistentState: value.name };
+      if (value && value[REF] === "session_persistent_state") {
+        if (activeSessionScope === null || value[SESSION_SCOPE] !== activeSessionScope || value.session !== activeSessionId) fail("session persistent state reference escaped its SessionContext");
+        return { sessionPersistentState: { session: value.session, state: value.name } };
+      }
       if (value && value[REF] === "session_state") {
         if (activeSessionScope === null || value[SESSION_SCOPE] !== activeSessionScope || value.session !== activeSessionId) {
           fail("session state reference escaped its SessionContext");
@@ -210,6 +218,35 @@
       ref.add = value => { assertSharedWrite(); emit({ op: "add", target: name, value: unwrapValue(value) }); };
       ref.sub = value => { assertSharedWrite(); emit({ op: "sub", target: name, value: unwrapValue(value) }); };
       ref.negate = () => { assertSharedWrite(); emit({ op: "negate", target: name }); };
+      return Object.freeze(ref);
+    }
+
+    function normalizePersistentSpec(initial, options, label) {
+      const value = finiteNumber(initial, label + " initial value");
+      if (options === undefined) options = {};
+      if (options == null || typeof options !== "object") fail(label + " options must be an object");
+      const schema = finiteInteger(options.schema === undefined ? 1 : options.schema, label + " schema", 1, 2147483647);
+      const onSchemaMismatch = options.onSchemaMismatch === undefined ? "reset" : options.onSchemaMismatch;
+      if (onSchemaMismatch !== "reset" && onSchemaMismatch !== "preserve") fail(label + " onSchemaMismatch must be reset or preserve");
+      return { initial: value, schema, onSchemaMismatch };
+    }
+
+    function makePersistentState(name, initial, options) {
+      if (activeSessionScope !== null) fail("game.persistentState(...) is global; use session.persistentState(...) inside SessionContext");
+      if (typeof name !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,31}$/.test(name)) fail("persistent state name must match [A-Za-z][A-Za-z0-9_]{0,31}");
+      assertUnique(name);
+      if (persistentStateCount >= 64) fail("portable v18 supports at most 64 persistent states total");
+      persistentStateValues[name] = normalizePersistentSpec(initial, options, "persistent state " + name);
+      persistentStateCount++; usesV18 = true;
+      const ref = comparable("persistent_state", name);
+      const assertSharedWrite = () => {
+        if (activeSessionScope !== null) fail("global persistent state mutation is not allowed inside SessionContext");
+        if (activePlayerMode === "multi") fail("persistent shared state mutation is not allowed inside PlayerContext");
+      };
+      ref.set = value => { assertSharedWrite(); emit({ op: "persistent_set", target: name, value: unwrapValue(value) }); };
+      ref.add = value => { assertSharedWrite(); emit({ op: "persistent_add", target: name, value: unwrapValue(value) }); };
+      ref.sub = value => { assertSharedWrite(); emit({ op: "persistent_sub", target: name, value: unwrapValue(value) }); };
+      ref.negate = () => { assertSharedWrite(); emit({ op: "persistent_negate", target: name }); };
       return Object.freeze(ref);
     }
 
@@ -474,7 +511,7 @@
       sessionTeams.add(setKey);
       const scope = ++nextSessionScope;
       const declarationIds = new Set();
-      const declaration = { id, players: serializedSet, state: Object.create(null), grids: [], rngs: [], gridWorlds: [] };
+      const declaration = { id, players: serializedSet, state: Object.create(null), persistentState: Object.create(null), grids: [], rngs: [], gridWorlds: [] };
       sessions.push(declaration);
 
       function assertSessionActive(label) {
@@ -493,6 +530,7 @@
         assertSessionActive("session.state(...)");
         if (typeof name !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,31}$/.test(name)) fail("session state name must match [A-Za-z][A-Za-z0-9_]{0,31}");
         const value = finiteNumber(initial, "session state " + name + " initial value");
+        if (Object.prototype.hasOwnProperty.call(declaration.persistentState, name)) fail("duplicate session state/persistent-state name: " + name);
         if (!Object.prototype.hasOwnProperty.call(declaration.state, name) && Object.keys(declaration.state).length >= 64) fail("portable v15 supports at most 64 states per session");
         if (Object.prototype.hasOwnProperty.call(declaration.state, name) && declaration.state[name] !== value) fail("session state " + name + " was declared with a different initial value");
         declaration.state[name] = value;
@@ -501,6 +539,20 @@
         ref.add = next => { assertSessionSharedMutation("session state add"); emit({ op: "add", target: name, value: unwrapValue(next) }); };
         ref.sub = next => { assertSessionSharedMutation("session state sub"); emit({ op: "sub", target: name, value: unwrapValue(next) }); };
         ref.negate = () => { assertSessionSharedMutation("session state negate"); emit({ op: "negate", target: name }); };
+        return Object.freeze(ref);
+      }
+      function sessionPersistentState(name, initial, options) {
+        assertSessionActive("session.persistentState(...)");
+        if (typeof name !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,31}$/.test(name)) fail("session persistent state name must match [A-Za-z][A-Za-z0-9_]{0,31}");
+        if (Object.prototype.hasOwnProperty.call(declaration.state, name) || Object.prototype.hasOwnProperty.call(declaration.persistentState, name)) fail("duplicate session state/persistent-state name: " + name);
+        if (persistentStateCount >= 64) fail("portable v18 supports at most 64 persistent states total");
+        declaration.persistentState[name] = normalizePersistentSpec(initial, options, "session persistent state " + name);
+        persistentStateCount++; usesV18 = true;
+        const ref = comparable("session_persistent_state", name, null, scope, id);
+        ref.set = next => { assertSessionSharedMutation("session persistent state set"); emit({ op: "persistent_set", target: name, value: unwrapValue(next) }); };
+        ref.add = next => { assertSessionSharedMutation("session persistent state add"); emit({ op: "persistent_add", target: name, value: unwrapValue(next) }); };
+        ref.sub = next => { assertSessionSharedMutation("session persistent state sub"); emit({ op: "persistent_sub", target: name, value: unwrapValue(next) }); };
+        ref.negate = () => { assertSessionSharedMutation("session persistent state negate"); emit({ op: "persistent_negate", target: name }); };
         return Object.freeze(ref);
       }
       function sessionGrid(gridId, spec) {
@@ -604,6 +656,7 @@
         id,
         players: set,
         state: sessionState,
+        persistentState: sessionPersistentState,
         reduce: sessionReduce,
         grid: sessionGrid,
         rng: sessionRng,
@@ -647,7 +700,7 @@
 
     function normalizeBoxValue(value, label) {
       if (typeof value === "number") return finiteNumber(value, label);
-      if (value && (value[REF] === "state" || value[REF] === "input" || value[REF] === "session_state" || value[REF] === "player_state" || value[REF] === "player_input")) return unwrapValue(value);
+      if (value && (value[REF] === "state" || value[REF] === "persistent_state" || value[REF] === "input" || value[REF] === "session_state" || value[REF] === "session_persistent_state" || value[REF] === "player_state" || value[REF] === "player_input")) return unwrapValue(value);
       fail(label + " must be a number or portable state/input reference");
     }
 
@@ -969,7 +1022,7 @@
             if (token.length > 128) fail("text " + id + " token " + index + " exceeds 128 characters");
             return { text: token };
           }
-          if (token && (token[REF] === "state" || token[REF] === "input")) return { value: unwrapValue(token) };
+          if (token && (token[REF] === "state" || token[REF] === "persistent_state" || token[REF] === "input")) return { value: unwrapValue(token) };
           fail("text " + id + " token " + index + " must be a string, state, or input reference");
         });
       } else {
@@ -1152,7 +1205,7 @@
           if (token.length > 128) fail("hud " + id + " text token " + index + " exceeds 128 characters");
           return { text: token };
         }
-        if (token && (token[REF] === "state" || token[REF] === "input")) return { value: unwrapValue(token) };
+        if (token && (token[REF] === "state" || token[REF] === "persistent_state" || token[REF] === "input")) return { value: unwrapValue(token) };
         fail("hud " + id + " token " + index + " must be a string, state, or input reference");
       });
       huds.push({ id, tokens });
@@ -1178,7 +1231,7 @@
             if (token.length > 128) fail("sidebar " + id + " row " + row.id + " token " + tokenIndex + " exceeds 128 characters");
             return { text: token };
           }
-          if (token && (token[REF] === "state" || token[REF] === "input")) return { value: unwrapValue(token) };
+          if (token && (token[REF] === "state" || token[REF] === "persistent_state" || token[REF] === "input")) return { value: unwrapValue(token) };
           fail("sidebar " + id + " row " + row.id + " token " + tokenIndex + " must be a string, state, or input reference");
         });
         return { id: row.id, tokens };
@@ -1188,6 +1241,7 @@
 
     const dsl = Object.freeze({
       state: makeState,
+      persistentState: makePersistentState,
       input(name, initial = 0, binding) { return makeInput(name, initial, binding); },
       players,
       teamPlayers,
@@ -1224,7 +1278,7 @@
 
     build(dsl);
     if (tickActions === null) fail("tick(...) must be declared exactly once");
-    if (Object.keys(stateValues).length === 0 && Object.keys(playerStateValues).length === 0 && grids.length === 0 && sessions.length === 0) fail("at least one shared state, player-local state, grid, or session is required");
+    if (Object.keys(stateValues).length === 0 && Object.keys(persistentStateValues).length === 0 && Object.keys(playerStateValues).length === 0 && grids.length === 0 && sessions.length === 0) fail("at least one shared state, player-local state, grid, or session is required");
 
     if (usesPlayerApi) {
       if (Object.keys(inputValues).length > 0 || Object.keys(vanillaInputs).length > 0) fail("game.input(...) is v1-v11 compatibility only; use player.input.* in multiplayer v12");
@@ -1238,17 +1292,19 @@
 
     const usesSpectateCamera = cameras.some(camera => camera.mode === "spectate");
     const spec = {
-      version: usesV17 ? 17 : (usesV16 ? 16 : (usesV15 ? 15 : (usesV14 ? 14 : (usesV13 ? 13 : (usesPlayerApi ? 12 : (usesSpectateCamera ? 11 : (ownership === null ? 9 : 10))))))),
+      version: usesV18 ? 18 : (usesV17 ? 17 : (usesV16 ? 16 : (usesV15 ? 15 : (usesV14 ? 14 : (usesV13 ? 13 : (usesPlayerApi ? 12 : (usesSpectateCamera ? 11 : (ownership === null ? 9 : 10)))))))),
       fixedPoint,
       state: stateValues,
       tick: tickActions,
     };
+    if (Object.keys(persistentStateValues).length > 0) spec.persistentState = persistentStateValues;
     if (Object.keys(inputValues).length > 0) spec.inputs = inputValues;
     if (playerTeams.size > 0) spec.playerSets = Array.from(playerTeams).sort().map(team => ({ team }));
     if (sessions.length > 0) spec.sessions = sessions.map(session => {
-      if (session.gridWorlds.length > 0) return session;
-      const { gridWorlds: _gridWorlds, ...legacySession } = session;
-      return legacySession;
+      let value = session;
+      if (session.gridWorlds.length === 0) { const { gridWorlds: _gridWorlds, ...rest } = value; value = rest; }
+      if (Object.keys(session.persistentState).length === 0) { const { persistentState: _persistentState, ...rest } = value; value = rest; }
+      return value;
     });
     if (grids.length > 0) spec.grids = grids;
     if (rngs.length > 0) spec.rngs = rngs;

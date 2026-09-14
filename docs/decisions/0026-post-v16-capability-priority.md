@@ -82,4 +82,4 @@ Client-private scene visibility remains a real capability gap when strict visual
 
 ## Progress
 
-ADR 0027 completes Priority 1 with Portable IR v17 bounded player/session reductions. Persistent portable state is therefore the next roadmap priority.
+ADR 0027 completes Priority 1 with Portable IR v17 bounded player/session reductions. ADR 0028 completes the bounded global/session scalar portion of Priority 2 in Portable IR v18. Player/offline persistence remains deferred; interactive selection UI is the next roadmap priority.

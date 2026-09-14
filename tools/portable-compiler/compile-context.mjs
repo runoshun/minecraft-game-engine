@@ -5,6 +5,8 @@ export const PLAYER_HUD_TEMP_COUNT = LIMITS.hudTokens;
 
 function slot(index) { return index.toString(36).padStart(2, "0"); }
 export function objectiveName(namespace) { return `mcg${hashHex8(namespace)}`; }
+export function persistentObjectiveName(namespace) { return `mcp${hashHex8(namespace)}`; }
+export function persistentStorage(namespace) { return `${namespace}:portable_persistent`; }
 export function sidebarObjectiveName(namespace) { return `mcgu${hashHex8(namespace)}`; }
 export function ownerTag(namespace) { return `mcg_o_${hashBase36(namespace)}`; }
 export function projectionTag(namespace, id) { return `mcg_v_${hashBase36(namespace)}_${id}`; }
@@ -50,10 +52,23 @@ export class CompileContext {
     this.namespace = namespace;
     this.program = program;
     this.objective = objectiveName(namespace);
+    this.persistentObjective = persistentObjectiveName(namespace);
     this.functions = new Map();
     this.constants = new Map();
     this.textValues = new Map();
     this.sidebarValues = new Map();
+    this.persistentStateHolders = new Map();
+    this.persistentSchemaHolders = new Map();
+    const persistentHashes = new Map();
+    const registerPersistent = (key, label) => {
+      const hash = hashHex8(key);
+      const previous = persistentHashes.get(hash);
+      if (previous && previous !== key) fail(`persistent state hash collision between ${previous} and ${key}`);
+      persistentHashes.set(hash, key);
+      this.persistentStateHolders.set(key, `#p${hash}`);
+      this.persistentSchemaHolders.set(key, `#v${hash}`);
+    };
+    Object.keys(program.persistentState || {}).sort().forEach(name => registerPersistent(`global:${name}`, `global persistent state ${name}`));
     this.playerStateObjectives = new Map();
     Object.keys(program.initialPlayerState || {}).sort().forEach((name, index) => this.playerStateObjectives.set(name, playerStateObjective(namespace, index)));
     this.gridObjectives = new Map();
@@ -64,6 +79,7 @@ export class CompileContext {
     this.sessionGridObjectives = new Map();
     this.sessionRngHolders = new Map();
     [...(program.sessions || [])].sort((a, b) => a.id.localeCompare(b.id)).forEach((session, sessionIndex) => {
+      Object.keys(session.persistentState || {}).sort().forEach(name => registerPersistent(`session:${session.id}:${name}`, `session persistent state ${session.id}.${name}`));
       Object.keys(session.initialState).sort().forEach((name, stateIndex) => {
         this.sessionStateHolders.set(`${session.id}:${name}`, `#ss${slot(sessionIndex)}${slot(stateIndex)}`);
       });
@@ -119,6 +135,18 @@ export class CompileContext {
     if (!holder) fail(`unknown RNG holder: ${id}`);
     return holder;
   }
+  persistentStateHolder(name, session = null) {
+    const key = session ? `session:${session}:${name}` : `global:${name}`;
+    const holder = this.persistentStateHolders.get(key);
+    if (!holder) fail(`unknown ${session ? `session ${session} ` : ""}persistent state holder: ${name}`);
+    return holder;
+  }
+  persistentSchemaHolder(name, session = null) {
+    const key = session ? `session:${session}:${name}` : `global:${name}`;
+    const holder = this.persistentSchemaHolders.get(key);
+    if (!holder) fail(`unknown ${session ? `session ${session} ` : ""}persistent schema holder: ${name}`);
+    return holder;
+  }
   sessionStateHolder(session, name) {
     const holder = this.sessionStateHolders.get(`${session}:${name}`);
     if (!holder) fail(`unknown session state holder: ${session}.${name}`);
@@ -156,6 +184,7 @@ export class CompileContext {
   score(value) {
     switch (value.kind) {
       case "state": return { holder: stateHolder(value.name), objective: this.objective };
+      case "persistent_state": return { holder: this.persistentStateHolder(value.name, value.session ?? null), objective: this.persistentObjective };
       case "session_state": return { holder: this.sessionStateHolder(value.session, value.name), objective: this.objective };
       case "input": return { holder: inputHolder(value.name), objective: this.objective };
       case "player_state": return { holder: "@s", objective: this.playerStateObjective(value.name) };

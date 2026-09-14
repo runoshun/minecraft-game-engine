@@ -12,6 +12,9 @@ function operation(targetHolder, targetObjective, operator, value, ctx) {
 function actionStateHolder(action, ctx) {
   return action.session ? ctx.sessionStateHolder(action.session, action.target) : stateHolder(action.target);
 }
+function persistentTarget(action, ctx) {
+  return { holder: ctx.persistentStateHolder(action.target, action.session ?? null), objective: ctx.persistentObjective };
+}
 
 export function condition(test, positive, ctx) {
   const left = score(test.left, ctx), right = score(test.right, ctx);
@@ -43,6 +46,20 @@ export function compileActions(actions, lines, ctx) {
         ctx.usesNegate = true;
         lines.push(`scoreboard players operation ${actionStateHolder(action, ctx)} ${ctx.objective} *= #neg1 ${ctx.objective}`);
         break;
+      case "persistent_set": {
+        const target = persistentTarget(action, ctx);
+        if (action.value.kind === "constant") lines.push(`scoreboard players set ${target.holder} ${target.objective} ${action.value.raw}`);
+        else lines.push(operation(target.holder, target.objective, "=", action.value, ctx));
+        break;
+      }
+      case "persistent_add": { const target = persistentTarget(action, ctx); lines.push(operation(target.holder, target.objective, "+=", action.value, ctx)); break; }
+      case "persistent_sub": { const target = persistentTarget(action, ctx); lines.push(operation(target.holder, target.objective, "-=", action.value, ctx)); break; }
+      case "persistent_negate": {
+        ctx.usesNegate = true;
+        const target = persistentTarget(action, ctx);
+        lines.push(`scoreboard players operation ${target.holder} ${target.objective} *= #neg1 ${ctx.objective}`);
+        break;
+      }
       case "player_set": {
         const objective = ctx.playerStateObjective(action.target);
         if (action.value.kind === "constant") lines.push(`scoreboard players set @s ${objective} ${action.value.raw}`);

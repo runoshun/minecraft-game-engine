@@ -8,10 +8,26 @@ export function parseValue(value, ctx, path) {
     if (!ctx.states.has(value.state)) fail(`${path} references unknown state ${value.state}`);
     return { kind: "state", name: value.state };
   }
+  if (has(value, "persistentState")) {
+    if (ctx.version < 18) fail(`${path}.persistentState requires portable version 18`);
+    if (typeof value.persistentState !== "string") fail(`${path}.persistentState must be a string`);
+    if (!ctx.persistentStates?.has(value.persistentState)) fail(`${path} references unknown persistent state ${value.persistentState}`);
+    return { kind: "persistent_state", name: value.persistentState };
+  }
   if (has(value, "input")) {
     if (typeof value.input !== "string") fail(`${path}.input must be a string`);
     if (!ctx.inputs.has(value.input)) fail(`${path} references unknown input ${value.input}`);
     return { kind: "input", name: value.input };
+  }
+  if (has(value, "sessionPersistentState")) {
+    if (ctx.version < 18) fail(`${path}.sessionPersistentState requires portable version 18`);
+    if (!isObject(value.sessionPersistentState)) fail(`${path}.sessionPersistentState must be an object`);
+    const session = requiredString(value.sessionPersistentState, "session", `${path}.sessionPersistentState`);
+    const name = requiredString(value.sessionPersistentState, "state", `${path}.sessionPersistentState`);
+    if (!ctx.sessionScope || ctx.sessionScope !== session) fail(`${path} uses session persistent state outside its SessionContext`);
+    const declaration = ctx.sessions?.get(session);
+    if (!declaration || !declaration.persistentStates.has(name)) fail(`${path} references unknown session persistent state ${session}.${name}`);
+    return { kind: "persistent_state", session, name };
   }
   if (has(value, "sessionState")) {
     if (ctx.version < 15) fail(`${path}.sessionState requires portable version 15`);

@@ -210,3 +210,18 @@ For boolean aggregation, set only one participant ready and verify `any=1` / `al
 Run `/reload` while the external team still exists. Player-local active-instance state must reset through the normal v12 objective-bank lifecycle, external membership must survive, and the reductions must recompute from the reset players. In the accepted run the post-reload aggregate was `count=2`, `sum=0`, `min=0`, `max=0`, `any=0`, `all=0`.
 
 For teardown, run `portable_reductions:portable/cleanup` before removing the team or datapack. Verify all generated objectives are gone while the external team still reports both members. Only then remove the temporary team, delete the acceptance pack, and reload. No terrain teardown is required because v17 reductions introduce no world mutation. The accepted run finished with zero objectives and zero teams.
+
+## Persistent scalar v18 acceptance and lifecycle
+
+ADR 0028 defines v18 persistence. Use `examples/portable-persistent-state` on mod-free Minecraft 26.1 `second` for focused validation.
+
+Persistent lifecycle differs deliberately from ordinary generated resources:
+
+- `portable/cleanup` must leave the namespace persistent objective and metadata marker intact;
+- same-namespace generated-pack replacement should run ordinary cleanup first, replace the pack, then reload/load without purging persistence;
+- `portable/reset_persistent` restores current declaration defaults/schema markers but keeps persistence infrastructure;
+- `portable/purge_persistent` is destructive teardown and removes the persistent objective plus initialization marker; run it only when persistence should be discarded.
+
+Acceptance must mutate at least one global and one session persistent scalar through real client input, verify values survive `/reload` and normal cleanup/reload, then replace the pack under the same namespace and prove same-schema values survive. Build a schema-changing replacement to prove both `onSchemaMismatch: "reset"` and `"preserve"`. Finally verify `reset_persistent`, destructive purge, and complete test teardown. Player/offline persistence is not part of v18 and must not be inferred from this gate.
+
+The accepted reference run used real client `Camera` in `v18_party`. Starting values `campaign=10`, `legacy=5`, `wins=3` became `11 / 15 / 4` after real A and D inputs. `/reload`, normal cleanup, and same-schema replacement all preserved those values. A schema-2 replacement with defaults `100 / 500 / 200` yielded `100 / 15 / 200`, proving reset/preserve/reset behavior. `reset_persistent` then yielded `100 / 500 / 200`. Cleanup left only the persistent objective while the team still retained Camera; purge removed persistence, and final teardown left zero objectives and zero teams. The Node suite was 25/25 green and retained v1-v17 output parity against `a262bf1` was byte-identical.

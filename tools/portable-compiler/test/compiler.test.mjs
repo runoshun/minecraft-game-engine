@@ -887,6 +887,86 @@ test("v17 acceptance example emits explicit empty reduction semantics", () => {
   assert.ok(tick.includes(`scoreboard players set ${marker["session.party.state.allReady"]} ${marker.objective} 1000`));
 });
 
+
+test("v18 persistent global and session state lower to separate preserved objective", () => {
+  const { program, output, result } = compileSource(`
+    portableDsl(game => {
+      const party = game.teamPlayers("persist");
+      const campaign = game.persistentState("campaign", 10, { schema: 2, onSchemaMismatch: "reset" });
+      const legacy = game.persistentState("legacy", 5, { schema: 3, onSchemaMismatch: "preserve" });
+      game.tick(() => {
+        campaign.add(legacy);
+        game.session("party", party, session => {
+          const wins = session.persistentState("wins", 3, { schema: 4 });
+          wins.set(campaign);
+          game.when(wins.gt(0), () => wins.negate());
+        });
+      });
+    });
+  `, "portable_v18_persistent");
+  assert.equal(program.version, 18);
+  assert.equal(result.persistentStateCount, 3);
+  const markerText = read(output, ".mcgame-portable-generated");
+  const markerMap = Object.fromEntries(markerText.trim().split("\n").map(line => { const i = line.indexOf("="); return [line.slice(0, i), line.slice(i + 1)]; }));
+  assert.match(markerMap["persistent.objective"], /^mcp[0-9a-f]{8}$/);
+  assert.match(markerMap["persistent.state.campaign"], /^#p[0-9a-f]{8};schema=2;on_mismatch=reset$/);
+  assert.match(markerMap["persistent.state.legacy"], /^#p[0-9a-f]{8};schema=3;on_mismatch=preserve$/);
+  assert.match(markerMap["session.party.persistent.wins"], /^#p[0-9a-f]{8};schema=4;on_mismatch=reset$/);
+  const load = read(output, "data/portable_v18_persistent/function/portable/load.mcfunction");
+  const tick = read(output, "data/portable_v18_persistent/function/portable/tick.mcfunction");
+  const cleanup = read(output, "data/portable_v18_persistent/function/portable/cleanup.mcfunction");
+  const reset = read(output, "data/portable_v18_persistent/function/portable/reset_persistent.mcfunction");
+  const purge = read(output, "data/portable_v18_persistent/function/portable/purge_persistent.mcfunction");
+  assert.match(load, /portable_persistent \{objective_ready:1b\}/);
+  assert.match(load, /matches 2 run scoreboard players set .* 10000/);
+  assert.doesNotMatch(load, /matches 3 run scoreboard players set .* 5000/);
+  assert.match(tick, /mcpe?[0-9a-f]{8}|mcp[0-9a-f]{8}/);
+  assert.doesNotMatch(cleanup, /mcpe?[0-9a-f]{8}|mcp[0-9a-f]{8}|portable_persistent/);
+  assert.match(reset, /10000/);
+  assert.match(reset, /5000/);
+  assert.match(reset, /3000/);
+  assert.match(purge, /scoreboard objectives remove mcp[0-9a-f]{8}/);
+  assert.match(purge, /data remove storage portable_v18_persistent:portable_persistent objective_ready/);
+});
+
+test("v18 persistent state enforces version scope bounds and collision rules", () => {
+  assert.throws(() => parseProgram({ version: 17, state: {}, persistentState: { x: { initial: 0 } }, tick: [] }), /persistentState requires portable version 18/);
+  assert.throws(() => extract(`
+    portableDsl(game => {
+      const party = game.teamPlayers("persist");
+      let escaped;
+      game.tick(() => {
+        game.session("party", party, session => { escaped = session.persistentState("wins", 0); });
+        game.when(escaped.eq(0), () => {});
+      });
+    });
+  `), /session persistent state reference escaped its SessionContext/);
+  assert.throws(() => extract(`
+    portableDsl(game => {
+      const party = game.teamPlayers("persist");
+      game.tick(() => game.session("party", party, session => {
+        const wins = session.persistentState("wins", 0);
+        session.forEachPlayer(() => wins.add(1));
+      }));
+    });
+  `), /session-shared mutation.*multi-player PlayerContext/);
+  assert.throws(() => extract(`portableDsl(game => { game.state("same", 0); game.persistentState("same", 0); game.tick(() => {}); });`), /duplicate state\/input\/persistent-state name/);
+  assert.throws(() => extract(`portableDsl(game => { ${Array.from({length:65},(_,i)=>`game.persistentState("p${i}", 0);`).join("\n")} game.tick(() => {}); });`), /at most 64 persistent states/);
+  assert.throws(() => extract(`portableDsl(game => { game.persistentState("x", 0, { schema: 0 }); game.tick(() => {}); });`), /schema.*between 1 and 2147483647/);
+});
+
+test("v18 acceptance example compiles with persistence lifecycle functions", () => {
+  const relative = "examples/portable-persistent-state/datapack/data/portable_persistent/mcgame/main.ts";
+  const source = fs.readFileSync(path.join(root, relative), "utf8");
+  const program = parseProgram(extractPortableSpec(relative, transpileTypeScript(relative, source, root), root));
+  assert.equal(program.version, 18);
+  const output = fs.mkdtempSync(path.join(os.tmpdir(), "mcgame-v18-persistent-"));
+  const result = compileDatapack(program, "portable_persistent", output);
+  assert.equal(result.persistentStateCount, 3);
+  assert.ok(fs.existsSync(path.join(output, "data/portable_persistent/function/portable/reset_persistent.mcfunction")));
+  assert.ok(fs.existsSync(path.join(output, "data/portable_persistent/function/portable/purge_persistent.mcfunction")));
+});
+
 test("representative checked-in examples compile deterministically", () => {
   const cases = [
     ["examples/portable-bounce/datapack/data/portable_bounce/mcgame/main.ts", "portable_bounce", 1],
@@ -902,6 +982,7 @@ test("representative checked-in examples compile deterministically", () => {
     ["examples/portable-session-local/datapack/data/portable_sessions/mcgame/main.ts", "portable_sessions", 15],
     ["examples/portable-session-grid-world/datapack/data/portable_session_world/mcgame/main.ts", "portable_session_world", 16],
     ["examples/portable-player-reductions/datapack/data/portable_reductions/mcgame/main.ts", "portable_reductions", 17],
+    ["examples/portable-persistent-state/datapack/data/portable_persistent/mcgame/main.ts", "portable_persistent", 18],
   ];
   for (const [relative, namespace, expectedVersion] of cases) {
     const source = fs.readFileSync(path.join(root, relative), "utf8");

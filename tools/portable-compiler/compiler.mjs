@@ -14,6 +14,7 @@ import {
 import { NAMESPACE } from "./utils.mjs";
 import { compilePlayerHuds, compilePlayerLoad, compilePlayerTickPrelude, playerInputField } from "./compile-player.mjs";
 import { compileGridLoad, compileGridWorldServices, gridCleanupLines } from "./compile-grid.mjs";
+import { compilePersistentLoad, persistentPurgeLines, persistentResetLines } from "./compile-persistent.mjs";
 
 function write(file, content) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -67,6 +68,7 @@ export function compileDatapack(program, namespace, outputRoot) {
   if (program.ownership) tick.unshift(`execute unless score #ready ${ctx.objective} matches 1 run return 0`);
 
   const load = [`scoreboard objectives add ${ctx.objective} dummy`];
+  compilePersistentLoad(program, load, ctx);
   for (const [name, raw] of Object.entries(program.initialState)) load.push(`scoreboard players set #${name} ${ctx.objective} ${raw}`);
   if (program.version >= 15) {
     for (const session of [...program.sessions].sort((a, b) => a.id.localeCompare(b.id))) {
@@ -104,6 +106,10 @@ export function compileDatapack(program, namespace, outputRoot) {
     compileVanillaSoundLoad(program, load, ctx);
   }
   compileVanillaSidebarLoad(program, load, ctx);
+  if (Object.keys(program.persistentState || {}).length || (program.sessions || []).some(session => Object.keys(session.persistentState || {}).length)) {
+    ctx.functions.set("reset_persistent", persistentResetLines(program, ctx));
+    ctx.functions.set("purge_persistent", persistentPurgeLines(program, ctx));
+  }
 
   const pack = { pack: { description: `Generated Minecraft Game Engine portable program: ${namespace}`, min_format: [101, 1], max_format: [101, 1] } };
   write(path.join(outputRoot, "pack.mcmeta"), prettyJson(pack));
@@ -118,6 +124,10 @@ export function compileDatapack(program, namespace, outputRoot) {
   for (const [name, body] of ctx.functions.entries()) write(path.join(functionRoot, `${name}.mcfunction`), `${body.join("\n")}\n`);
 
   let marker = `namespace=${namespace}\nobjective=${ctx.objective}\nportable_version=${program.version}\nfixed_point=${program.fixedPoint}\n`;
+  if (program.version >= 18 && (Object.keys(program.persistentState || {}).length || (program.sessions || []).some(session => Object.keys(session.persistentState || {}).length))) {
+    marker += `persistent.objective=${ctx.persistentObjective}\n`;
+    for (const [name, spec] of Object.entries(program.persistentState || {}).sort(([a], [b]) => a.localeCompare(b))) marker += `persistent.state.${name}=${ctx.persistentStateHolder(name)};schema=${spec.schema};on_mismatch=${spec.onSchemaMismatch}\n`;
+  }
   for (const name of Object.keys(program.initialInputs)) marker += `input.${name}=${inputHolder(name)}\n`;
   if (program.version >= 12) {
     marker += `player.init=${playerInitObjective(namespace)}\n`;
@@ -133,6 +143,7 @@ export function compileDatapack(program, namespace, outputRoot) {
     for (const session of [...program.sessions].sort((a, b) => a.id.localeCompare(b.id))) {
       marker += `session.${session.id}.team=${session.players.team}\n`;
       for (const name of Object.keys(session.initialState).sort()) marker += `session.${session.id}.state.${name}=${ctx.sessionStateHolder(session.id, name)}\n`;
+      for (const [name, spec] of Object.entries(session.persistentState || {}).sort(([a], [b]) => a.localeCompare(b))) marker += `session.${session.id}.persistent.${name}=${ctx.persistentStateHolder(name, session.id)};schema=${spec.schema};on_mismatch=${spec.onSchemaMismatch}\n`;
       for (const value of [...session.grids].sort((a, b) => a.id.localeCompare(b.id))) marker += `session.${session.id}.grid.${value.id}=${ctx.sessionGridObjective(session.id, value.id)}\n`;
       for (const value of [...session.rngs].sort((a, b) => a.id.localeCompare(b.id))) marker += `session.${session.id}.rng.${value.id}=${ctx.sessionRngHolder(session.id, value.id)}\n`;
       for (const value of [...(session.gridWorlds || [])].sort((a, b) => a.id.localeCompare(b.id))) marker += `session.${session.id}.gridWorld.${value.id}.ready=${ctx.gridWorldReadyHolder(value.id, session.id)}\n`;
@@ -143,6 +154,7 @@ export function compileDatapack(program, namespace, outputRoot) {
   return {
     namespace, objective: ctx.objective,
     stateCount: Object.keys(program.initialState).length,
+    persistentStateCount: Object.keys(program.persistentState || {}).length + (program.sessions || []).reduce((sum, session) => sum + Object.keys(session.persistentState || {}).length, 0),
     inputCount: Object.keys(program.initialInputs).length,
     playerStateCount: Object.keys(program.initialPlayerState || {}).length,
     playerInputCount: program.playerInputs?.size ?? 0,

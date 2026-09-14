@@ -48,6 +48,7 @@ export function main(argv = process.argv.slice(2)) {
   console.log(`  namespace: ${result.namespace}`);
   console.log(`  objective: ${result.objective}`);
   console.log(`  states: ${result.stateCount}`);
+  if (result.persistentStateCount) console.log(`  persistent states: ${result.persistentStateCount}`);
   console.log(`  inputs: ${result.inputCount}`);
   if (result.playerStateCount) console.log(`  player states: ${result.playerStateCount}`);
   if (result.playerInputCount) console.log(`  player inputs: ${result.playerInputCount}`);

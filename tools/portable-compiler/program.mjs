@@ -6,6 +6,27 @@ import { parseGrids, parseRngs } from "./parse-runtime.mjs";
 import { parsePlayerSetDeclarations } from "./player-set.mjs";
 import { parseSessions, sessionContextMap } from "./session.mjs";
 
+function parsePersistentState(spec, version, fixedPoint, api) {
+  if (!has(spec, "persistentState")) return {};
+  if (version < 18) fail(`${api}.persistentState requires portable version 18`);
+  const raw = requiredObject(spec, "persistentState", api);
+  const out = {};
+  for (const name of sortedKeys(raw)) {
+    validateValueName(name, `${api}.persistentState`);
+    const p = `${api}.persistentState.${name}`;
+    const value = raw[name];
+    if (!isObject(value)) fail(`${p} must be an object`);
+    const onSchemaMismatch = has(value, "onSchemaMismatch") ? value.onSchemaMismatch : "reset";
+    if (onSchemaMismatch !== "reset" && onSchemaMismatch !== "preserve") fail(`${p}.onSchemaMismatch must be reset or preserve`);
+    out[name] = {
+      initialRaw: scale(finiteNumber(value.initial, `${p}.initial`), fixedPoint, `${p}.initial`),
+      schema: boundedInteger(has(value, "schema") ? value.schema : 1, 1, 2147483647, `${p}.schema`),
+      onSchemaMismatch,
+    };
+  }
+  return out;
+}
+
 function validateSessionGridWorldFootprints(grids, sessions, globalGridWorlds, ownership, api) {
   const globalGrids = new Map(grids.map(grid => [grid.id, grid]));
   const footprints = [];
@@ -54,8 +75,12 @@ export function parseProgram(spec, api = "portable.define") {
     initialState[name] = scale(finiteNumber(rawState[name], `${api}.state.${name}`), fixedPoint, `${api}.state.${name}`);
   }
 
+  const persistentState = parsePersistentState(spec, version, fixedPoint, api);
+  for (const name of Object.keys(persistentState)) if (Object.prototype.hasOwnProperty.call(initialState, name)) fail(`${api} state/persistentState name collision: ${name}`);
   const playerTeams = parsePlayerSetDeclarations(spec, version, api);
   const sessions = parseSessions(spec, version, fixedPoint, api, playerTeams);
+  const persistentCount = Object.keys(persistentState).length + sessions.reduce((sum, session) => sum + Object.keys(session.persistentState || {}).length, 0);
+  if (persistentCount > LIMITS.persistentStates) fail(`${api} exceeds max persistent-state count ${LIMITS.persistentStates}`);
 
   const initialPlayerState = {};
   if (has(spec, "playerState")) {
@@ -69,7 +94,7 @@ export function parseProgram(spec, api = "portable.define") {
   }
   const grids = parseGrids(spec, version, fixedPoint, api);
   const rngs = parseRngs(spec, version, api);
-  if (Object.keys(initialState).length === 0 && Object.keys(initialPlayerState).length === 0 && grids.length === 0 && sessions.length === 0) {
+  if (Object.keys(initialState).length === 0 && Object.keys(persistentState).length === 0 && Object.keys(initialPlayerState).length === 0 && grids.length === 0 && sessions.length === 0) {
     fail(`${api} must define at least one shared state, player-local state, grid, or session`);
   }
 
@@ -81,7 +106,7 @@ export function parseProgram(spec, api = "portable.define") {
     if (Object.keys(raw).length > LIMITS.inputs) fail(`${api}.inputs exceeds max input count ${LIMITS.inputs}`);
     for (const name of sortedKeys(raw)) {
       validateValueName(name, `${api}.inputs`);
-      if (has(initialState, name)) fail(`${api}.inputs name collides with state: ${name}`);
+      if (has(initialState, name) || has(persistentState, name)) fail(`${api}.inputs name collides with state/persistentState: ${name}`);
       initialInputs[name] = scale(finiteNumber(raw[name], `${api}.inputs.${name}`), fixedPoint, `${api}.inputs.${name}`);
     }
   }
@@ -99,7 +124,7 @@ export function parseProgram(spec, api = "portable.define") {
 
   const ctx = {
     version, fixedPoint,
-    states: new Set(Object.keys(initialState)), inputs: new Set(Object.keys(initialInputs)),
+    states: new Set(Object.keys(initialState)), persistentStates: new Set(Object.keys(persistentState)), inputs: new Set(Object.keys(initialInputs)),
     playerStates: new Set(Object.keys(initialPlayerState)), playerInputs, playerTeams,
     sessions: sessionContextMap(sessions), sessionScope: null,
     grids: new Map(grids.map(grid => [grid.id, grid])),
@@ -120,7 +145,7 @@ export function parseProgram(spec, api = "portable.define") {
 
   const tickActions = parseActions(requiredArray(spec, "tick", api), ctx, `${api}.tick`);
   return {
-    version, fixedPoint, initialState, initialPlayerState, initialInputs, playerInputs, playerTeams, sessions, grids, rngs,
+    version, fixedPoint, initialState, persistentState, initialPlayerState, initialInputs, playerInputs, playerTeams, sessions, grids, rngs,
     vanillaInputs: vanilla.inputs, projections: vanilla.projections, texts: vanilla.texts,
     actors: vanilla.actors, worldBatches: vanilla.worldBatches, gridWorlds: vanilla.gridWorlds, cameras: vanilla.cameras,
     particles: vanilla.particles, sounds: vanilla.sounds, huds: vanilla.huds, playerHuds: vanilla.playerHuds,
