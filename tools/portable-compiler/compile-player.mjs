@@ -1,6 +1,7 @@
 import { PLAYER_INPUT_NAMES } from "./utils.mjs";
 import { fullPlayerObjectiveBank, playerInitObjective } from "./compile-context.mjs";
 import { playerSetKey } from "./player-set.mjs";
+import { selectionPlayerInitLines } from "./compile-selection.mjs";
 
 export function playerInputField(name) {
   if (name === "hotbarSlot") return null;
@@ -69,6 +70,7 @@ export function compilePlayerLoad(program, lines, ctx) {
   for (const name of Object.keys(program.initialPlayerState).sort()) {
     init.push(`scoreboard players set @s ${ctx.playerStateObjective(name)} ${program.initialPlayerState[name]}`);
   }
+  init.push(...selectionPlayerInitLines(program, ctx));
   init.push(`scoreboard players set @s ${initObjective} 1`);
   ctx.functions.set("player_init", init);
 }

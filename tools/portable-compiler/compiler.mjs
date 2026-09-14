@@ -15,6 +15,7 @@ import { NAMESPACE } from "./utils.mjs";
 import { compilePlayerHuds, compilePlayerLoad, compilePlayerTickPrelude, playerInputField } from "./compile-player.mjs";
 import { compileGridLoad, compileGridWorldServices, gridCleanupLines } from "./compile-grid.mjs";
 import { compilePersistentLoad, hasPersistentData, persistentPurgeLines, persistentResetLines } from "./compile-persistent.mjs";
+import { compileSelectionLoad, selectionCleanupLines, selectionDialogJson } from "./compile-selection.mjs";
 
 function write(file, content) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -23,6 +24,13 @@ function write(file, content) {
 
 function prettyJson(value) { return `${JSON.stringify(value, null, 2)}\n`; }
 function functionTag(value) { return prettyJson({ values: [value] }); }
+
+function writeSelectionDialogs(program, outputRoot, namespace, ctx) {
+  if (program.version < 20) return;
+  for (const selection of program.selections) {
+    write(path.join(outputRoot, "data", namespace, "dialog", "portable", "selection", `${selection.id}.json`), prettyJson(selectionDialogJson(selection, ctx)));
+  }
+}
 
 function writeInputPredicates(program, outputRoot, namespace) {
   const fields = [];
@@ -78,6 +86,7 @@ export function compileDatapack(program, namespace, outputRoot) {
     }
   }
   for (const [name, raw] of Object.entries(program.initialInputs)) load.push(`scoreboard players set ${inputHolder(name)} ${ctx.objective} ${raw}`);
+  compileSelectionLoad(program, load, ctx);
   compilePlayerLoad(program, load, ctx);
   compileGridLoad(program, load, ctx);
   if (ctx.usesNegate) load.push(`scoreboard players set #neg1 ${ctx.objective} -1`);
@@ -116,11 +125,12 @@ export function compileDatapack(program, namespace, outputRoot) {
   write(path.join(outputRoot, "data", "minecraft", "tags", "function", "load.json"), functionTag(`${namespace}:portable/load`));
   write(path.join(outputRoot, "data", "minecraft", "tags", "function", "tick.json"), functionTag(`${namespace}:portable/tick`));
   writeInputPredicates(program, outputRoot, namespace);
+  writeSelectionDialogs(program, outputRoot, namespace, ctx);
 
   const functionRoot = path.join(outputRoot, "data", namespace, "function", "portable");
   write(path.join(functionRoot, "load.mcfunction"), `${load.join("\n")}\n`);
   write(path.join(functionRoot, "tick.mcfunction"), `${tick.join("\n")}\n`);
-  write(path.join(functionRoot, "cleanup.mcfunction"), `${[...gridCleanupLines(program, ctx), ...cleanupLines(program, ctx)].join("\n")}\n`);
+  write(path.join(functionRoot, "cleanup.mcfunction"), `${[...gridCleanupLines(program, ctx), ...selectionCleanupLines(program, ctx), ...cleanupLines(program, ctx)].join("\n")}\n`);
   for (const [name, body] of ctx.functions.entries()) write(path.join(functionRoot, `${name}.mcfunction`), `${body.join("\n")}\n`);
 
   let marker = `namespace=${namespace}\nobjective=${ctx.objective}\nportable_version=${program.version}\nfixed_point=${program.fixedPoint}\n`;
@@ -130,6 +140,9 @@ export function compileDatapack(program, namespace, outputRoot) {
   }
   if (program.version >= 19) {
     for (const grid of [...(program.persistentGrids || [])].sort((a, b) => a.id.localeCompare(b.id))) marker += `persistent.grid.${grid.id}=grids.${ctx.persistentGridKey(grid.id)};size=${grid.width}x${grid.height};schema=${grid.schema};on_mismatch=${grid.onSchemaMismatch}\n`;
+  }
+  if (program.version >= 20) {
+    for (const selection of [...program.selections].sort((a, b) => a.id.localeCompare(b.id))) marker += `selection.${selection.id}=${ctx.selectionObjective(selection.id)}\n`;
   }
   for (const name of Object.keys(program.initialInputs)) marker += `input.${name}=${inputHolder(name)}\n`;
   if (program.version >= 12) {
@@ -161,6 +174,7 @@ export function compileDatapack(program, namespace, outputRoot) {
     persistentStateCount: Object.keys(program.persistentState || {}).length + (program.sessions || []).reduce((sum, session) => sum + Object.keys(session.persistentState || {}).length, 0),
     persistentGridCount: (program.persistentGrids || []).length + (program.sessions || []).reduce((sum, session) => sum + (session.persistentGrids || []).length, 0),
     persistentGridCellCount: (program.persistentGrids || []).reduce((sum, grid) => sum + grid.width * grid.height, 0) + (program.sessions || []).reduce((sum, session) => sum + (session.persistentGrids || []).reduce((inner, grid) => inner + grid.width * grid.height, 0), 0),
+    selectionCount: program.selections?.length ?? 0,
     inputCount: Object.keys(program.initialInputs).length,
     playerStateCount: Object.keys(program.initialPlayerState || {}).length,
     playerInputCount: program.playerInputs?.size ?? 0,

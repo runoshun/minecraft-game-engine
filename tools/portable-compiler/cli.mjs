@@ -51,6 +51,7 @@ export function main(argv = process.argv.slice(2)) {
   if (result.persistentStateCount) console.log(`  persistent states: ${result.persistentStateCount}`);
   if (result.persistentGridCount) console.log(`  persistent grids: ${result.persistentGridCount}`);
   if (result.persistentGridCellCount) console.log(`  persistent grid cells: ${result.persistentGridCellCount}`);
+  if (result.selectionCount) console.log(`  selections: ${result.selectionCount}`);
   console.log(`  inputs: ${result.inputCount}`);
   if (result.playerStateCount) console.log(`  player states: ${result.playerStateCount}`);
   if (result.playerInputCount) console.log(`  player inputs: ${result.playerInputCount}`);

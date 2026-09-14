@@ -14,6 +14,7 @@
   const PERSISTENT_GRID = Symbol("mcgame.portableDsl.persistentGrid");
   const RNG = Symbol("mcgame.portableDsl.rng");
   const GRID_WORLD = Symbol("mcgame.portableDsl.gridWorld");
+  const SELECTION = Symbol("mcgame.portableDsl.selection");
 
   function fail(message) {
     throw new Error("portableDsl: " + message);
@@ -106,6 +107,8 @@
     const huds = [];
     const playerHuds = [];
     const sidebars = [];
+    const selections = [];
+    const selectionIds = new Set();
     let tickActions = null;
     let actionSink = null;
     let activePlayerScope = null;
@@ -124,6 +127,7 @@
     let usesV17 = false;
     let usesV18 = false;
     let usesV19 = false;
+    let usesV20 = false;
 
     function assertUnique(name) {
       if (Object.prototype.hasOwnProperty.call(stateValues, name) || Object.prototype.hasOwnProperty.call(persistentStateValues, name) || Object.prototype.hasOwnProperty.call(inputValues, name)) {
@@ -132,7 +136,7 @@
     }
 
     function isPlayerRef(value) {
-      return value && (value[REF] === "player_state" || value[REF] === "player_input");
+      return value && (value[REF] === "player_state" || value[REF] === "player_input" || value[REF] === "player_selection");
     }
 
     function isSessionRef(value) {
@@ -161,6 +165,10 @@
       if (value && value[REF] === "player_input") {
         if (activePlayerScope === null || value[PLAYER_SCOPE] !== activePlayerScope) fail("player input reference escaped its PlayerContext");
         return { playerInput: value.name };
+      }
+      if (value && value[REF] === "player_selection") {
+        if (activePlayerScope === null || value[PLAYER_SCOPE] !== activePlayerScope) fail("player selection reference escaped its PlayerContext");
+        return { playerSelection: value.name };
       }
       if (value && value[REF] === "grid_world_ready") {
         if (value.session !== null) {
@@ -318,6 +326,45 @@
       return Object.freeze({ [PLAYER_SET]: Object.freeze({ team }) });
     }
 
+    function selectionDeclaration(id, spec) {
+      if (actionSink !== null || activePlayerScope !== null || activeSessionScope !== null) fail("selection(...) must be declared outside tick/session/player scope");
+      if (typeof id !== "string" || !/^[a-z][a-z0-9_]{0,23}$/.test(id)) fail("selection id must match [a-z][a-z0-9_]{0,23}");
+      if (selectionIds.has(id)) fail("duplicate selection id: " + id);
+      if (selections.length >= 8) fail("portable v20 supports at most 8 selections");
+      if (spec == null || typeof spec !== "object") fail("selection " + id + " spec must be an object");
+      if (typeof spec.title !== "string" || spec.title.length < 1 || spec.title.length > 128) fail("selection " + id + " title must contain 1..128 characters");
+      const body = spec.body === undefined ? "" : spec.body;
+      if (typeof body !== "string" || body.length > 1024) fail("selection " + id + " body must contain 0..1024 characters");
+      const columns = finiteInteger(spec.columns === undefined ? 1 : spec.columns, "selection " + id + " columns", 1, 4);
+      if (!Array.isArray(spec.options) || spec.options.length < 1 || spec.options.length > 16) fail("selection " + id + " options must contain 1..16 entries");
+      const rawValues = new Set([0, -2147483648]);
+      function resultValue(value, label) {
+        const logical = finiteNumber(value, label);
+        const raw = Math.round(logical * fixedPoint);
+        if (raw < -2147483648 || raw > 2147483647) fail(label + " exceeds signed 32-bit fixed-point range");
+        if (rawValues.has(raw)) fail(label + " resolves to reserved or duplicate raw result " + raw);
+        rawValues.add(raw);
+        return logical;
+      }
+      const options = spec.options.map((option, index) => {
+        if (option == null || typeof option !== "object") fail("selection " + id + " option " + index + " must be an object");
+        if (typeof option.label !== "string" || option.label.length < 1 || option.label.length > 128) fail("selection " + id + " option " + index + " label must contain 1..128 characters");
+        const tooltip = option.tooltip === undefined ? null : option.tooltip;
+        if (tooltip !== null && (typeof tooltip !== "string" || tooltip.length > 256)) fail("selection " + id + " option " + index + " tooltip must contain 0..256 characters");
+        return { label: option.label, tooltip, value: resultValue(option.value, "selection " + id + " option " + index + " value") };
+      });
+      const cancelSpec = spec.cancel === undefined ? { label: "Cancel", value: -1 } : spec.cancel;
+      if (cancelSpec == null || typeof cancelSpec !== "object") fail("selection " + id + " cancel must be an object");
+      const cancelLabel = cancelSpec.label === undefined ? "Cancel" : cancelSpec.label;
+      if (typeof cancelLabel !== "string" || cancelLabel.length < 1 || cancelLabel.length > 128) fail("selection " + id + " cancel label must contain 1..128 characters");
+      const cancel = { label: cancelLabel, value: resultValue(cancelSpec.value === undefined ? -1 : cancelSpec.value, "selection " + id + " cancel value") };
+      selectionIds.add(id);
+      selections.push({ id, title: spec.title, body, columns, options, cancel });
+      usesV20 = true;
+      usesPlayerApi = true;
+      return Object.freeze({ [SELECTION]: true, id });
+    }
+
     function requirePlayerSet(value, label) {
       if (!value) fail(label + " must be returned by players() or teamPlayers()");
       const set = value[PLAYER_SET];
@@ -357,6 +404,15 @@
     function playerInputRef(name, scope) {
       playerInputs.add(name);
       return Object.freeze(comparable("player_input", name, scope));
+    }
+
+    function playerSelectionRef(scope, selection) {
+      if (activePlayerScope !== scope) fail("player.selection(...) is only valid in its PlayerContext");
+      if (!selection || selection[SELECTION] !== true || !selectionIds.has(selection.id)) fail("player.selection(...) requires a value returned by game.selection(...)");
+      const ref = comparable("player_selection", selection.id, scope);
+      ref.open = () => emit({ op: "selection_open", selection: selection.id });
+      ref.clear = () => emit({ op: "selection_clear", selection: selection.id });
+      return Object.freeze(ref);
     }
 
     function playerHud(scope, set, id, spec) {
@@ -400,6 +456,7 @@
           return makePlayerState(name, initial, scope);
         },
         input: Object.freeze(input),
+        selection(value) { return playerSelectionRef(scope, value); },
         hud(id, spec) { return playerHud(scope, serializedSet, id, spec); },
       });
       const previousSink = actionSink, previousScope = activePlayerScope, previousMode = activePlayerMode, previousRoot = playerRootSink;
@@ -450,6 +507,7 @@
             return makePlayerState(name, initial, scope);
           },
           input: Object.freeze(input),
+          selection(value) { return playerSelectionRef(scope, value); },
           hud() { fail("player.hud(...) is not available inside a reduction selector callback"); },
         });
         const previousScope = activePlayerScope, previousMode = activePlayerMode;
@@ -1319,6 +1377,7 @@
       input(name, initial = 0, binding) { return makeInput(name, initial, binding); },
       players,
       teamPlayers,
+      selection: selectionDeclaration,
       forEachPlayer,
       forSinglePlayer,
       reduce: globalReduce,
@@ -1353,7 +1412,7 @@
 
     build(dsl);
     if (tickActions === null) fail("tick(...) must be declared exactly once");
-    if (Object.keys(stateValues).length === 0 && Object.keys(persistentStateValues).length === 0 && Object.keys(playerStateValues).length === 0 && grids.length === 0 && persistentGrids.length === 0 && sessions.length === 0) fail("at least one shared state, player-local state, grid, or session is required");
+    if (Object.keys(stateValues).length === 0 && Object.keys(persistentStateValues).length === 0 && Object.keys(playerStateValues).length === 0 && grids.length === 0 && persistentGrids.length === 0 && sessions.length === 0 && selections.length === 0) fail("at least one shared state, player-local state, grid, session, or selection is required");
 
     if (usesPlayerApi) {
       if (Object.keys(inputValues).length > 0 || Object.keys(vanillaInputs).length > 0) fail("game.input(...) is v1-v11 compatibility only; use player.input.* in multiplayer v12");
@@ -1367,13 +1426,14 @@
 
     const usesSpectateCamera = cameras.some(camera => camera.mode === "spectate");
     const spec = {
-      version: usesV19 ? 19 : (usesV18 ? 18 : (usesV17 ? 17 : (usesV16 ? 16 : (usesV15 ? 15 : (usesV14 ? 14 : (usesV13 ? 13 : (usesPlayerApi ? 12 : (usesSpectateCamera ? 11 : (ownership === null ? 9 : 10))))))))),
+      version: usesV20 ? 20 : (usesV19 ? 19 : (usesV18 ? 18 : (usesV17 ? 17 : (usesV16 ? 16 : (usesV15 ? 15 : (usesV14 ? 14 : (usesV13 ? 13 : (usesPlayerApi ? 12 : (usesSpectateCamera ? 11 : (ownership === null ? 9 : 10)))))))))),
       fixedPoint,
       state: stateValues,
       tick: tickActions,
     };
     if (Object.keys(persistentStateValues).length > 0) spec.persistentState = persistentStateValues;
     if (persistentGrids.length > 0) spec.persistentGrids = persistentGrids;
+    if (selections.length > 0) spec.selections = selections;
     if (Object.keys(inputValues).length > 0) spec.inputs = inputValues;
     if (playerTeams.size > 0) spec.playerSets = Array.from(playerTeams).sort().map(team => ({ team }));
     if (sessions.length > 0) spec.sessions = sessions.map(session => {

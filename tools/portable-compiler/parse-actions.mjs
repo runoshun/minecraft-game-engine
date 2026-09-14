@@ -114,6 +114,14 @@ export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }
       out.push(parsed);
       continue;
     }
+    if (op === "selection_open" || op === "selection_clear") {
+      if (ctx.version < 20) fail(`${p}.op requires portable version 20`);
+      if (!ctx.playerScope || ctx.playerScope === "reduce") fail(`${p}.op is only valid in mutable PlayerContext`);
+      const selection = requiredString(a, "selection", p);
+      if (!ctx.selections?.has(selection)) fail(`${p}.selection references unknown selection ${selection}`);
+      out.push({ op, selection });
+      continue;
+    }
     if (["persistent_grid_fill", "persistent_grid_get", "persistent_grid_set", "persistent_grid_fill_rect"].includes(op)) {
       if (ctx.version < 19) fail(`${p}.op requires portable version 19`);
       if (ctx.playerScope === "multi") fail(`${p}.op is persistent shared grid mutation and is not allowed inside multi-player PlayerContext`);

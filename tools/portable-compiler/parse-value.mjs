@@ -51,6 +51,13 @@ export function parseValue(value, ctx, path) {
     if (!ctx.playerInputs.has(value.playerInput)) fail(`${path} references undeclared player input ${value.playerInput}`);
     return { kind: "player_input", name: value.playerInput };
   }
+  if (has(value, "playerSelection")) {
+    if (ctx.version < 20) fail(`${path}.playerSelection requires portable version 20`);
+    if (!ctx.playerScope) fail(`${path} uses player selection outside PlayerContext`);
+    if (typeof value.playerSelection !== "string") fail(`${path}.playerSelection must be a string`);
+    if (!ctx.selections?.has(value.playerSelection)) fail(`${path} references unknown selection ${value.playerSelection}`);
+    return { kind: "player_selection", name: value.playerSelection };
+  }
   if (has(value, "gridWorldReady")) {
     if (ctx.version < 13) fail(`${path}.gridWorldReady requires portable version 13`);
     if (typeof value.gridWorldReady !== "string") fail(`${path}.gridWorldReady must be a string`);

@@ -81,7 +81,7 @@ For `mc-mcp` deployment from the development container, prefer file-sharing URL 
 3. publish/share that archive through the devcontainer file-sharing capability;
 4. immediately pass the short-lived HTTPS URL to `mc-mcp` using its archive deployment path and replace the target pack directory;
 5. compare the downloader-reported SHA-256 with the local archive hash when validating transfer;
-6. reload and inspect datapack state.
+6. reload and inspect datapack state for ordinary reloadable resources. If the generated pack adds/removes/changes v20 dialog registry resources, restart the server/world after file replacement instead of relying on `/reload` to bootstrap those registry entries.
 
 Mint a fresh shared URL for every deployment; shared URLs are short-lived. Base64 is a fallback only when URL transfer is unavailable.
 
@@ -244,3 +244,21 @@ When using `second`, keep a real client connected while interpreting automatic l
 For teardown, first prove ordinary cleanup leaves persistent storage and external team membership intact. Then run `purge_persistent`, remove the temporary datapack and `v19_party`, reload, and verify no generated objectives/teams/persistent v19 storage remain.
 
 The accepted reference run used real client `Camera` in `v19_party`. Real A/left produced raw `world[1,1]=7000`; real D/right produced raw `stash[0,0]=9000`; authored reads returned `7000 / 9000`, with the out-of-bounds value `-1000`. `/reload`, cleanup/reload, and same-schema replacement preserved both arrays. Cleanup removed all nine active-instance objectives while storage and team membership remained. A schema-2 replacement with defaults `world=100` reset and `stash=500` preserve yielded world cells all `100000` and stash `[9000,5000,5000,5000]`; `reset_persistent` then yielded world all `100000` and stash all `500000`. Purge reduced namespace persistence storage to `{}`. Final teardown left zero objectives, zero teams, empty v19 storage, and only vanilla enabled. The Node suite was 28/28 green, and 14 retained v1-v18 generated examples were byte-identical to pre-v19 commit `d55cbbf`.
+
+## Interactive selection UI v20 acceptance and registry lifecycle
+
+ADR 0030 defines v20 selection semantics. Use `examples/portable-selection-ui` on mod-free Minecraft 26.1 `second` with real client `Camera` in externally managed team `v20_party`.
+
+V20 adds a deployment caveat that does not apply to ordinary function/predicate-only packs: generated dialogs are entries in the `minecraft:dialog` registry. If a pack with new/changed/removed generated dialog resources is copied into an already-running world, `/reload` alone is not the deterministic registry bootstrap. The accepted run intentionally tried that and function parsing failed because `portable_selection_ui:portable/selection/shop` was absent from the current registry. Place the pack first, then restart the server/world. For replacement/removal, run the old pack's `portable/cleanup`, replace/remove files, and restart. Once the registry entry set has been bootstrapped at server startup, ordinary `/reload` remains a valid active-instance lifecycle test and succeeded in the accepted run.
+
+Acceptance steps are:
+
+- verify the generated `data/<namespace>/dialog/portable/selection/*.json` resource exists and the complete compiler-owned trigger bank is deterministic;
+- connect the real client/team and confirm the native dialog renders, rather than accepting command parse as sufficient evidence;
+- keep an authored level-triggered `choice.open()` active for multiple ticks and confirm the pending score remains raw `0` and the UI remains actionable;
+- use one real-client sequence to reopen with Jump and choose an option with the native dialog mouse/button path; verify the declared fixed-point result reaches authored player-local state and the selection rearms;
+- use another real-client sequence to reopen and press Escape; verify the cancel result reaches authored state;
+- run `/reload` after registry bootstrap and verify player/selection active-instance state resets while external team membership survives;
+- run `portable/cleanup` while a selection is pending and verify the dialog closes, the complete selection objective bank is removed, and the external team remains.
+
+The accepted reference run rendered `Portable Shop` with Potion=`1`, Sword=`2`, and Cancel=`-1`. Real Jump followed by a Potion mouse click produced `lastChoice=1000`, `menuEnabled=0`, and the idle selection sentinel. A second real Jump followed by Escape produced `lastChoice=-1000`. After `/reload`, `lastChoice=0`, `menuEnabled=1000`, and the selection reached pending raw `0`; the team still contained Camera. Cleanup removed every generated objective and left that team intact. Teardown removed the team and pack and restarted the server, leaving zero objectives, zero teams, and only vanilla enabled. The Node suite was 31/31 green, and 15 retained v1-v19 generated examples were byte-identical to pre-v20 commit `a2d324c`.

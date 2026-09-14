@@ -28,11 +28,11 @@ The compiler accepts one TypeScript source, namespace, and output directory. Mod
 
 Portable IR is the versioned semantic contract between authoring and vanilla lowering. It contains deterministic fixed-point values, bounded actions, collision primitives, declarative presentation/world resources, input mappings, and lifecycle metadata. Arbitrary JavaScript callbacks are not an IR feature.
 
-IR versions 1 through 19 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14, ADR 0024 defines team-bound logical sessions in v15, ADR 0025 defines session-local GridWorld projection in v16, ADR 0027 defines bounded player/session reductions in v17, ADR 0028 defines bounded persistent scalar state in v18, and ADR 0029 defines bounded persistent Grid state in v19.
+IR versions 1 through 20 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14, ADR 0024 defines team-bound logical sessions in v15, ADR 0025 defines session-local GridWorld projection in v16, ADR 0027 defines bounded player/session reductions in v17, ADR 0028 defines bounded persistent scalar state in v18, ADR 0029 defines bounded persistent Grid state in v19, and ADR 0030 defines bounded native-dialog selection UI in v20.
 
 ### Generated datapack
 
-The generated directory is the deployment artifact. It owns namespace-derived scoreboards, functions, predicates, generated entities, optional ownership-region force-loads, HUD/sidebar resources, compiler-private persistent storage/objectives when declared, and `portable/cleanup` / persistence lifecycle functions.
+The generated directory is the deployment artifact. It owns namespace-derived scoreboards, functions, predicates, generated entities, optional ownership-region force-loads, HUD/sidebar resources, v20 dialog registry resources and selection trigger objectives when declared, compiler-private persistent storage/objectives when declared, and `portable/cleanup` / persistence lifecycle functions.
 
 The target Minecraft server needs no compiler, Node.js, TypeScript, Java, Fabric, or mod.
 
@@ -150,7 +150,8 @@ A generated pack contains at least:
     ├── minecraft/tags/function/{load,tick}.json
     └── <namespace>/
         ├── function/portable/*.mcfunction
-        └── predicate/portable/input/*.json   # when held input is used
+        ├── predicate/portable/input/*.json   # when held input is used
+        └── dialog/portable/selection/*.json  # when v20 selection UI is declared
 ```
 
 Generated content belongs under `build/` and is not committed.
@@ -255,6 +256,20 @@ Persistent Grid schema policy matches v18 scalars for same-shape data: reset-pol
 
 V19 does not expose arbitrary storage, runtime-created collections, persistent player/offline identity, persistent RNG, migration callbacks, or direct persistent-Grid-to-GridWorld projection. Ordinary v18 persistent scalars remain the preferred representation for small counters/flags; ordinary scoreboard-backed Grid remains the preferred high-frequency runtime scratch topology.
 
+## Interactive selection UI v20
+
+ADR 0030 defines the implemented v20 interactive UI boundary. `game.selection(id, spec)` declares one static bounded choice surface and `player.selection(selection)` returns a lexical player-local comparable handle with `open()` and `clear()`. Selection declarations contain a static title, optional static body, 1..16 labeled option values, optional cancel label/value, and 1..4 columns. Programs may declare at most eight selections. Dynamic text/form inputs and arbitrary dialog JSON are not part of v20.
+
+The player-local selection result uses normal portable fixed-point values but reserves compiler-private raw states: `-2147483648` means idle/rearmed and raw `0` means pending. Option and cancel values must therefore be distinct non-zero values after fixed-point scaling and may not equal the idle sentinel. `open()` only transitions idle to pending, so an authored level-triggered `open()` may safely run every tick without replacing an already-open dialog. A resolved non-zero result remains readable until `clear()` rearms the handle. Opening one selection also rearms any other pending selection for that player because Minecraft exposes one current dialog screen.
+
+Lowering uses Minecraft's native `minecraft:multi_action` dialog registry. Each selection receives a stable namespace-derived `trigger` objective selected from a complete eight-slot bank sorted by selection id. Generated buttons execute only a compiler-authored permission-0 `trigger <objective> set <raw-result>` action; portable source cannot supply command strings, objective names, registry ids, or arbitrary click actions. The generated resource is `data/<namespace>/dialog/portable/selection/<id>.json`, and PlayerContext lowering performs `scoreboard players enable` plus `dialog show @s ...` only on idle-to-pending transition.
+
+Selection resources are active-instance compiler ownership. Player initialization/reload rearms every selection, and `portable/cleanup` clears a visible dialog only for players whose generated selection is pending before removing the complete eight-objective bank. External teams and gamemode remain outside compiler ownership.
+
+Minecraft 26.1 treats dialog definitions as registry bootstrap data. Focused acceptance proved that copying a new v20 dialog pack into an already-running world and using only `/reload` does not make the new dialog id available while functions are parsed. Installation, replacement, or removal that changes generated dialog resources must therefore run cleanup where applicable, replace/remove files, then restart the server/world. Once a pack's dialog registry entries were bootstrapped at server start, ordinary `/reload` succeeded and reset v20 active-instance state as specified.
+
+V20 does not expose text/number/boolean form controls, dynamic dialog text, arbitrary click events/commands, inventory/container GUI ownership, quick-action or pause-screen registration, runtime-created menu graphs, custom packets, or persistent selection state.
+
 ## Planned capability roadmap after v16
 
 ADR 0026 establishes a capability-first roadmap: prioritize portable semantics that current game source cannot reproduce safely with existing primitives before automation or infrastructure that already has a workable explicit fallback. This is planning policy, not an implemented API contract; each capability requires its own ADR and Portable IR version decision before implementation.
@@ -263,8 +278,8 @@ The roadmap order is:
 
 1. **bounded player/session reductions** — completed by Portable v17 / ADR 0027;
 2. **persistent portable state** — completed for bounded global/session scalar state by Portable v18 / ADR 0028 and bounded persistent Grid state by Portable v19 / ADR 0029; player/offline persistence remains deferred;
-3. **interactive selection UI** — next priority — bounded vanilla-client choices for dialogue, shops, menus, and confirmations rather than forcing passive HUD text plus key-binding conventions;
-4. **mannequin/actor presentation expansion** — richer bounded character appearance such as mannequin appearance/profile or skin controls supported by vanilla, equipment, and pose/transform controls, while preserving compiler-owned lifecycle and declaration bounds. Item/model projections or attachment relationships require the same ownership discipline and are design-time candidates rather than current features.
+3. **interactive selection UI** — completed by Portable v20 / ADR 0030 with bounded native-dialog option/cancel choices and compiler-owned trigger results;
+4. **mannequin/actor presentation expansion** — next priority — richer bounded character appearance such as mannequin appearance/profile or skin controls supported by vanilla, equipment, and pose/transform controls, while preserving compiler-owned lifecycle and declaration bounds. Item/model projections or attachment relationships require the same ownership discipline and are design-time candidates rather than current features.
 
 The existing v7 actor contract remains current until item 4 lands: actor carriers are mannequins with state-backed position/yaw/lifetime, with zombie/skeleton intents represented by mob heads. ADR 0015's richer-presentation items were non-goals for v7; ADR 0026 intentionally promotes mannequin/actor expression to planned work without introducing runtime-created or unbounded entity collections.
 
@@ -277,18 +292,28 @@ After those priorities, additional capability gaps include 3D/swept collision, d
 - single-file TypeScript; no import/module resolution;
 - v1-v11 remain single-controller-oriented for compatibility; v12 is the multiplayer model;
 - fixed-point arithmetic relies on Minecraft scoreboard 32-bit behavior; generated commands do not add generic overflow guards;
-- no runtime generic arrays/collections, arbitrary packet-event dispatch, clickable inventory/dialog UI, arbitrary NBT/storage API, or arbitrary Minecraft queries; v13 provides bounded Grid/RNG topology and v19 provides bounded persistent Grid storage, but neither is a generic collection/query surface;
+- no runtime generic arrays/collections, arbitrary packet-event dispatch, arbitrary inventory/form/dialog API, arbitrary NBT/storage API, or arbitrary Minecraft queries; v20 provides bounded static native-dialog selection choices, while text inputs, dynamic forms, arbitrary clicks/commands, and inventory GUI ownership remain unsupported;
 - one server-global sidebar; v14 permits up to eight camera declarations only for disjoint external-team audiences;
 - bounded 2D logic collision only, not Minecraft hitbox queries or 3D/swept physics;
 - v8 world projection is compile-time declared and persistent; v13 additionally provides bounded incremental runtime grid projection, also persistent;
-- v15 adds independent team-bound logical sessions; v16 adds explicit session-local Grid-to-world footprints inside one shared ownership rectangle; v17 adds bounded cross-player/session reductions; v18 adds persistent scalars and v19 adds persistent Grids. Automatic arena allocation, per-session ownership/private visibility scenes, dynamic matchmaking, independent per-player vanilla sidebars, player/offline persistent state, and richer generic persistent collections are not implemented.
+- v15 adds independent team-bound logical sessions; v16 adds explicit session-local Grid-to-world footprints inside one shared ownership rectangle; v17 adds bounded cross-player/session reductions; v18 adds persistent scalars, v19 adds persistent Grids, and v20 adds player-local native-dialog selection. Automatic arena allocation, per-session ownership/private visibility scenes, dynamic matchmaking, independent per-player vanilla sidebars, player/offline persistent state, richer generic persistent collections, and rich form/inventory UI are not implemented.
 
 ## Validation baseline
 
-Portable v1-v19 compiler behavior is covered by the Node regression suite; generated milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
+Portable v1-v20 compiler behavior is covered by the Node regression suite; generated milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
 
 Node migration ADR 0021 additionally established byte-for-byte output parity with the retired Java compiler for representative v1, v9, v10, and v11 programs including Bounce, Pinball, Breakout, Presentation, UI, World, JRPG, and spectate-camera cases. Node compiler regression tests are now the maintained build-time acceptance suite.
 
+
+### v20 interactive selection UI validation
+
+Portable v20 passed focused mod-free Minecraft 26.1 acceptance on `second` using real client `Camera` in externally managed team `v20_party`. The checked-in `examples/portable-selection-ui` pack generated one native `Portable Shop` multi-action dialog with Potion=`1`, Sword=`2`, and Cancel=`-1`, while intentionally calling `choice.open()` every tick while enabled. The rendered client showed the generated title, body, two option buttons, Cancel button, and tooltips. A pending selection remained raw `0` across multiple ticks despite repeated authored `open()`, proving the idle-to-pending guard kept the screen actionable.
+
+In one real-client sequence, Jump opened the menu and a mouse click chose Potion, producing trigger raw `1000`, authored `lastChoice=1000`, `menuEnabled=0`, and the rearmed idle sentinel. A second sequence used Jump then Escape and produced `lastChoice=-1000`. These paths use a compiler-owned trigger objective and native dialog controls; no held-key convention selected the option itself.
+
+Initial reload-only installation intentionally exposed the Minecraft 26.1 registry boundary: the new pack files were present, but function loading reported the dialog id missing from `minecraft:dialog`. Restarting the server with the pack present bootstrapped the registry and loaded cleanly. A later ordinary `/reload` of that already-bootstrapped pack succeeded with no problems, preserved `v20_party`, reset `lastChoice=0` and `menuEnabled=1000`, and reopened the selection to pending raw `0`. `portable/cleanup` removed all generated objectives and the pending dialog while preserving external team membership. Final removal used cleanup, pack deletion, and server restart; the server ended with zero objectives, zero teams, and only vanilla enabled.
+
+The Node regression suite was 31/31 green. Fifteen retained v1-v19 examples were recompiled against both v20 and pre-v20 commit `a2d324c`, with byte-for-byte identical generated output.
 
 ### v19 persistent Grid validation
 

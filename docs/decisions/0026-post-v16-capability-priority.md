@@ -82,4 +82,4 @@ Client-private scene visibility remains a real capability gap when strict visual
 
 ## Progress
 
-ADR 0027 completes Priority 1 with Portable IR v17 bounded player/session reductions. ADR 0028 adds bounded global/session scalar persistence in Portable IR v18, and ADR 0029 extends Priority 2 with bounded global/session persistent Grid state in Portable IR v19 without exposing raw storage. Player/offline persistence remains deferred; interactive selection UI is the next roadmap priority.
+ADR 0027 completes Priority 1 with Portable IR v17 bounded player/session reductions. ADR 0028 adds bounded global/session scalar persistence in Portable IR v18, and ADR 0029 extends Priority 2 with bounded global/session persistent Grid state in Portable IR v19 without exposing raw storage. ADR 0030 completes Priority 3 in Portable IR v20 with bounded native-dialog selection UI backed by compiler-owned trigger results. Player/offline persistence remains deferred; mannequin/actor presentation expansion is the next roadmap priority.
