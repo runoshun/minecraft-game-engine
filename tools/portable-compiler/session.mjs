@@ -2,6 +2,7 @@ import {
   LIMITS, fail, has, isObject, requiredArray, requiredMember, requiredObject,
   boundedInteger, finiteNumber, memberResource, portableId, scale, sortedKeys, validateValueName,
 } from "./utils.mjs";
+import { parsePersistentGridValues } from "./parse-runtime.mjs";
 import { parsePlayerSetRef, playerSetKey } from "./player-set.mjs";
 
 function parseSessionPersistentState(value, version, fixedPoint, path) {
@@ -130,8 +131,13 @@ export function parseSessions(spec, version, fixedPoint, api, playerTeams) {
     const persistentState = parseSessionPersistentState(value, version, fixedPoint, p);
     for (const name of Object.keys(persistentState)) if (Object.prototype.hasOwnProperty.call(initialState, name)) fail(`${p} state/persistentState name collision: ${name}`);
     const grids = parseSessionGrids(value, fixedPoint, p);
-    const rngs = parseSessionRngs(value, p, grids.map(grid => grid.id));
-    const gridWorlds = parseSessionGridWorlds(value, version, fixedPoint, p, grids, rngs.map(rng => rng.id));
+    const persistentGrids = has(value, "persistentGrids") ? parsePersistentGridValues(requiredArray(value, "persistentGrids", p), fixedPoint, `${p}.persistentGrids`) : [];
+    if (persistentGrids.length && version < 19) fail(`${p}.persistentGrids requires portable version 19`);
+    const persistentGridIds = persistentGrids.map(grid => grid.id);
+    const gridIds = grids.map(grid => grid.id);
+    for (const id of persistentGridIds) if (gridIds.includes(id)) fail(`${p}.persistentGrids id collides with another session declaration: ${id}`);
+    const rngs = parseSessionRngs(value, p, [...gridIds, ...persistentGridIds]);
+    const gridWorlds = parseSessionGridWorlds(value, version, fixedPoint, p, grids, [...persistentGridIds, ...rngs.map(rng => rng.id)]);
     const gridMap = new Map(grids.map(grid => [grid.id, grid]));
     totalGridCells += grids.reduce((sum, grid) => sum + grid.width * grid.height, 0);
     totalGridWorlds += gridWorlds.length;
@@ -139,7 +145,7 @@ export function parseSessions(spec, version, fixedPoint, api, playerTeams) {
       const grid = gridMap.get(projection.grid);
       return sum + grid.width * grid.height;
     }, 0);
-    return { id, players, initialState, persistentState, grids, rngs, gridWorlds };
+    return { id, players, initialState, persistentState, grids, persistentGrids, rngs, gridWorlds };
   });
   if (totalGridCells > LIMITS.sessionGridCellsTotal) {
     fail(`${api}.sessions exceed aggregate session grid cell count ${LIMITS.sessionGridCellsTotal}`);
@@ -159,6 +165,7 @@ export function sessionContextMap(sessions) {
     states: new Set(Object.keys(session.initialState)),
     persistentStates: new Set(Object.keys(session.persistentState || {})),
     grids: new Map(session.grids.map(grid => [grid.id, grid])),
+    persistentGrids: new Map((session.persistentGrids || []).map(grid => [grid.id, grid])),
     rngs: new Set(session.rngs.map(rng => rng.id)),
     gridWorlds: new Map(session.gridWorlds.map(projection => [projection.id, projection])),
   }]));

@@ -28,11 +28,11 @@ The compiler accepts one TypeScript source, namespace, and output directory. Mod
 
 Portable IR is the versioned semantic contract between authoring and vanilla lowering. It contains deterministic fixed-point values, bounded actions, collision primitives, declarative presentation/world resources, input mappings, and lifecycle metadata. Arbitrary JavaScript callbacks are not an IR feature.
 
-IR versions 1 through 18 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14, ADR 0024 defines team-bound logical sessions in v15, ADR 0025 defines session-local GridWorld projection in v16, ADR 0027 defines bounded player/session reductions in v17, and ADR 0028 defines bounded persistent scalar state in v18.
+IR versions 1 through 19 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14, ADR 0024 defines team-bound logical sessions in v15, ADR 0025 defines session-local GridWorld projection in v16, ADR 0027 defines bounded player/session reductions in v17, ADR 0028 defines bounded persistent scalar state in v18, and ADR 0029 defines bounded persistent Grid state in v19.
 
 ### Generated datapack
 
-The generated directory is the deployment artifact. It owns namespace-derived scoreboards, functions, predicates, generated entities, optional ownership-region force-loads, HUD/sidebar resources, and `portable/cleanup`.
+The generated directory is the deployment artifact. It owns namespace-derived scoreboards, functions, predicates, generated entities, optional ownership-region force-loads, HUD/sidebar resources, compiler-private persistent storage/objectives when declared, and `portable/cleanup` / persistence lifecycle functions.
 
 The target Minecraft server needs no compiler, Node.js, TypeScript, Java, Fabric, or mod.
 
@@ -241,7 +241,19 @@ Each declaration has an integer `schema` (default `1`) and `onSchemaMismatch: "r
 
 Lifecycle is intentionally split. `portable/cleanup` preserves persistent data while removing active-instance resources. `portable/reset_persistent` restores all currently declared persistent values/schema markers to declarations. `portable/purge_persistent` destructively removes the persistent objective and initialization metadata. Normal pack replacement should therefore run cleanup, replace the same namespace, and reload; purge is only for explicit data reset/final teardown.
 
-V18 persistence is global/session scalar persistence only. Player-persistent/offline-player identity, persistent Grid/RNG/collections, structural migration callbacks, and cross-namespace storage are deferred.
+V18 itself remains global/session scalar persistence only. Portable v19 adds bounded persistent Grid collections as described below. Player-persistent/offline-player identity, persistent RNG/generic collections, structural migration callbacks, and cross-namespace storage remain deferred.
+
+## Persistent Grid state v19
+
+ADR 0029 defines the v19 bounded persistent-collection boundary. V19 adds `game.persistentGrid(id, spec)` and `session.persistentGrid(...)` with the same `fill/get/set/fillRect` operational semantics as ordinary Grid plus `schema` and `onSchemaMismatch` persistence policy. Persistent Grids use normal portable fixed-point values; runtime X/Z are integer cell coordinates, out-of-bounds reads return `outside`, out-of-bounds writes are ignored, and rectangle writes clip to declared bounds.
+
+Persistent Grid cells live in compiler-private namespace command storage as bounded integer arrays rather than one scoreboard holder per cell. Stable semantic identity is derived from global/session scope plus Grid id; function macros provide dynamic indexed element access internally. Raw command-storage paths and NBT operations are not exposed through Portable IR or `portableDsl`. The compiler may use ordinary scoreboard scratch values while evaluating coordinates and transferring the selected cell, but the complete persistent collection is not mirrored into scoreboard state.
+
+V19 permits at most 8 persistent Grids, 2,048 cells per Grid, dimensions up to 64 x 64 subject to that per-Grid limit, and 16,384 persistent cells in aggregate. Global/session mutation follows the same shared-state cardinality rules as ordinary Grid: multi-player `forEachPlayer` mutation is rejected, while exact-cardinality `forSinglePlayer` may mutate deterministically.
+
+Persistent Grid schema policy matches v18 scalars for same-shape data: reset-policy schema mismatch restores all cells to the current `initial` value; preserve policy keeps cells and advances the schema. Width/height mismatch is structural and always resets the Grid to its current declaration regardless of schema policy. `portable/cleanup` preserves persistent Grid storage, `portable/reset_persistent` restores currently declared scalar/Grid defaults, and `portable/purge_persistent` destructively removes namespace persistent Grid storage plus scalar persistence infrastructure when present.
+
+V19 does not expose arbitrary storage, runtime-created collections, persistent player/offline identity, persistent RNG, migration callbacks, or direct persistent-Grid-to-GridWorld projection. Ordinary v18 persistent scalars remain the preferred representation for small counters/flags; ordinary scoreboard-backed Grid remains the preferred high-frequency runtime scratch topology.
 
 ## Planned capability roadmap after v16
 
@@ -250,7 +262,7 @@ ADR 0026 establishes a capability-first roadmap: prioritize portable semantics t
 The roadmap order is:
 
 1. **bounded player/session reductions** — completed by Portable v17 / ADR 0027;
-2. **persistent portable state** — completed for bounded global/session scalar state by Portable v18 / ADR 0028; player/offline persistence remains deferred;
+2. **persistent portable state** — completed for bounded global/session scalar state by Portable v18 / ADR 0028 and bounded persistent Grid state by Portable v19 / ADR 0029; player/offline persistence remains deferred;
 3. **interactive selection UI** — next priority — bounded vanilla-client choices for dialogue, shops, menus, and confirmations rather than forcing passive HUD text plus key-binding conventions;
 4. **mannequin/actor presentation expansion** — richer bounded character appearance such as mannequin appearance/profile or skin controls supported by vanilla, equipment, and pose/transform controls, while preserving compiler-owned lifecycle and declaration bounds. Item/model projections or attachment relationships require the same ownership discipline and are design-time candidates rather than current features.
 
@@ -265,18 +277,26 @@ After those priorities, additional capability gaps include 3D/swept collision, d
 - single-file TypeScript; no import/module resolution;
 - v1-v11 remain single-controller-oriented for compatibility; v12 is the multiplayer model;
 - fixed-point arithmetic relies on Minecraft scoreboard 32-bit behavior; generated commands do not add generic overflow guards;
-- no runtime generic arrays/collections, arbitrary packet-event dispatch, clickable inventory/dialog UI, persistent game storage, or arbitrary Minecraft queries; v13 provides bounded grid/RNG topology primitives but not generic collections or pathfinding;
+- no runtime generic arrays/collections, arbitrary packet-event dispatch, clickable inventory/dialog UI, arbitrary NBT/storage API, or arbitrary Minecraft queries; v13 provides bounded Grid/RNG topology and v19 provides bounded persistent Grid storage, but neither is a generic collection/query surface;
 - one server-global sidebar; v14 permits up to eight camera declarations only for disjoint external-team audiences;
 - bounded 2D logic collision only, not Minecraft hitbox queries or 3D/swept physics;
 - v8 world projection is compile-time declared and persistent; v13 additionally provides bounded incremental runtime grid projection, also persistent;
-- v15 adds independent team-bound logical sessions; v16 adds explicit session-local Grid-to-world footprints inside one shared ownership rectangle; v17 adds bounded cross-player/session reductions. Automatic arena allocation, per-session ownership/private visibility scenes, dynamic matchmaking, independent per-player vanilla sidebars, and player/offline persistent state and richer persistent collections are not implemented.
+- v15 adds independent team-bound logical sessions; v16 adds explicit session-local Grid-to-world footprints inside one shared ownership rectangle; v17 adds bounded cross-player/session reductions; v18 adds persistent scalars and v19 adds persistent Grids. Automatic arena allocation, per-session ownership/private visibility scenes, dynamic matchmaking, independent per-player vanilla sidebars, player/offline persistent state, and richer generic persistent collections are not implemented.
 
 ## Validation baseline
 
-Portable v1-v18 compiler behavior is covered by the Node regression suite; generated milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
+Portable v1-v19 compiler behavior is covered by the Node regression suite; generated milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
 
 Node migration ADR 0021 additionally established byte-for-byte output parity with the retired Java compiler for representative v1, v9, v10, and v11 programs including Bounce, Pinball, Breakout, Presentation, UI, World, JRPG, and spectate-camera cases. Node compiler regression tests are now the maintained build-time acceptance suite.
 
+
+### v19 persistent Grid validation
+
+Portable v19 passed focused mod-free Minecraft 26.1 acceptance on `second` using real client `Camera` in externally managed team `v19_party`. The checked-in `examples/portable-persistent-grid` pack began with global reset-policy Grid `world` as twelve logical zero cells and session preserve-policy Grid `stash` as four logical `5` cells. Real A/left wrote `world[1,1]=7`; real D/right wrote `stash[0,0]=9`. Authored `get` operations then exposed raw fixed-point values `worldCell=7000`, `stashCell=9000`, and out-of-bounds `worldOutside=-1000`, while command storage showed the corresponding arrays with only those cells changed.
+
+With the real client connected and the server ticking, `/reload`, ordinary cleanup/reload, and same-namespace same-schema replacement all preserved the Grid cells and external team membership. Cleanup removed all nine generated active-instance objectives while leaving persistent storage intact. A same-shape schema-2 replacement with new defaults `world=100` / reset and `stash=500` / preserve reset all world cells to raw `100000`, preserved stash as `[9000,5000,5000,5000]`, and advanced both schema markers. `reset_persistent` produced twelve `100000` world cells plus four `500000` stash cells; `purge_persistent` then removed the Grid storage.
+
+Final teardown removed the acceptance pack and external team and left zero objectives, zero teams, empty v19 namespace persistence storage, and only vanilla enabled. The Node regression suite was 28/28 green. Fourteen retained v1-v18 checked-in examples were recompiled against both v19 and pre-v19 commit `d55cbbf`, with byte-for-byte identical generated output.
 
 ### v18 persistent scalar validation
 

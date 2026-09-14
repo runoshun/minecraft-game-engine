@@ -49,6 +49,8 @@ export function main(argv = process.argv.slice(2)) {
   console.log(`  objective: ${result.objective}`);
   console.log(`  states: ${result.stateCount}`);
   if (result.persistentStateCount) console.log(`  persistent states: ${result.persistentStateCount}`);
+  if (result.persistentGridCount) console.log(`  persistent grids: ${result.persistentGridCount}`);
+  if (result.persistentGridCellCount) console.log(`  persistent grid cells: ${result.persistentGridCellCount}`);
   console.log(`  inputs: ${result.inputCount}`);
   if (result.playerStateCount) console.log(`  player states: ${result.playerStateCount}`);
   if (result.playerInputCount) console.log(`  player inputs: ${result.playerInputCount}`);

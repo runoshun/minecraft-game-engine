@@ -14,7 +14,7 @@ import {
 import { NAMESPACE } from "./utils.mjs";
 import { compilePlayerHuds, compilePlayerLoad, compilePlayerTickPrelude, playerInputField } from "./compile-player.mjs";
 import { compileGridLoad, compileGridWorldServices, gridCleanupLines } from "./compile-grid.mjs";
-import { compilePersistentLoad, persistentPurgeLines, persistentResetLines } from "./compile-persistent.mjs";
+import { compilePersistentLoad, hasPersistentData, persistentPurgeLines, persistentResetLines } from "./compile-persistent.mjs";
 
 function write(file, content) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -106,7 +106,7 @@ export function compileDatapack(program, namespace, outputRoot) {
     compileVanillaSoundLoad(program, load, ctx);
   }
   compileVanillaSidebarLoad(program, load, ctx);
-  if (Object.keys(program.persistentState || {}).length || (program.sessions || []).some(session => Object.keys(session.persistentState || {}).length)) {
+  if (hasPersistentData(program)) {
     ctx.functions.set("reset_persistent", persistentResetLines(program, ctx));
     ctx.functions.set("purge_persistent", persistentPurgeLines(program, ctx));
   }
@@ -128,6 +128,9 @@ export function compileDatapack(program, namespace, outputRoot) {
     marker += `persistent.objective=${ctx.persistentObjective}\n`;
     for (const [name, spec] of Object.entries(program.persistentState || {}).sort(([a], [b]) => a.localeCompare(b))) marker += `persistent.state.${name}=${ctx.persistentStateHolder(name)};schema=${spec.schema};on_mismatch=${spec.onSchemaMismatch}\n`;
   }
+  if (program.version >= 19) {
+    for (const grid of [...(program.persistentGrids || [])].sort((a, b) => a.id.localeCompare(b.id))) marker += `persistent.grid.${grid.id}=grids.${ctx.persistentGridKey(grid.id)};size=${grid.width}x${grid.height};schema=${grid.schema};on_mismatch=${grid.onSchemaMismatch}\n`;
+  }
   for (const name of Object.keys(program.initialInputs)) marker += `input.${name}=${inputHolder(name)}\n`;
   if (program.version >= 12) {
     marker += `player.init=${playerInitObjective(namespace)}\n`;
@@ -144,6 +147,7 @@ export function compileDatapack(program, namespace, outputRoot) {
       marker += `session.${session.id}.team=${session.players.team}\n`;
       for (const name of Object.keys(session.initialState).sort()) marker += `session.${session.id}.state.${name}=${ctx.sessionStateHolder(session.id, name)}\n`;
       for (const [name, spec] of Object.entries(session.persistentState || {}).sort(([a], [b]) => a.localeCompare(b))) marker += `session.${session.id}.persistent.${name}=${ctx.persistentStateHolder(name, session.id)};schema=${spec.schema};on_mismatch=${spec.onSchemaMismatch}\n`;
+      for (const grid of [...(session.persistentGrids || [])].sort((a, b) => a.id.localeCompare(b.id))) marker += `session.${session.id}.persistentGrid.${grid.id}=grids.${ctx.persistentGridKey(grid.id, session.id)};size=${grid.width}x${grid.height};schema=${grid.schema};on_mismatch=${grid.onSchemaMismatch}\n`;
       for (const value of [...session.grids].sort((a, b) => a.id.localeCompare(b.id))) marker += `session.${session.id}.grid.${value.id}=${ctx.sessionGridObjective(session.id, value.id)}\n`;
       for (const value of [...session.rngs].sort((a, b) => a.id.localeCompare(b.id))) marker += `session.${session.id}.rng.${value.id}=${ctx.sessionRngHolder(session.id, value.id)}\n`;
       for (const value of [...(session.gridWorlds || [])].sort((a, b) => a.id.localeCompare(b.id))) marker += `session.${session.id}.gridWorld.${value.id}.ready=${ctx.gridWorldReadyHolder(value.id, session.id)}\n`;
@@ -155,6 +159,8 @@ export function compileDatapack(program, namespace, outputRoot) {
     namespace, objective: ctx.objective,
     stateCount: Object.keys(program.initialState).length,
     persistentStateCount: Object.keys(program.persistentState || {}).length + (program.sessions || []).reduce((sum, session) => sum + Object.keys(session.persistentState || {}).length, 0),
+    persistentGridCount: (program.persistentGrids || []).length + (program.sessions || []).reduce((sum, session) => sum + (session.persistentGrids || []).length, 0),
+    persistentGridCellCount: (program.persistentGrids || []).reduce((sum, grid) => sum + grid.width * grid.height, 0) + (program.sessions || []).reduce((sum, session) => sum + (session.persistentGrids || []).reduce((inner, grid) => inner + grid.width * grid.height, 0), 0),
     inputCount: Object.keys(program.initialInputs).length,
     playerStateCount: Object.keys(program.initialPlayerState || {}).length,
     playerInputCount: program.playerInputs?.size ?? 0,

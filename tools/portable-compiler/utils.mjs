@@ -41,11 +41,13 @@ export const LIMITS = Object.freeze({
   ownershipChunks: 64,
   reductions: 64,
   persistentStates: 64,
+  persistentGrids: 8,
+  persistentGridCellsTotal: 16384,
   actions: 2048,
   depth: 16,
 });
 
-export const CURRENT_VERSION = 18;
+export const CURRENT_VERSION = 19;
 
 export function fail(message) { throw new Error(message); }
 export function has(object, member) { return Object.prototype.hasOwnProperty.call(object, member); }

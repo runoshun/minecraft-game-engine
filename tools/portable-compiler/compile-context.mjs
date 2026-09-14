@@ -59,6 +59,7 @@ export class CompileContext {
     this.sidebarValues = new Map();
     this.persistentStateHolders = new Map();
     this.persistentSchemaHolders = new Map();
+    this.persistentGridKeys = new Map();
     const persistentHashes = new Map();
     const registerPersistent = (key, label) => {
       const hash = hashHex8(key);
@@ -69,6 +70,15 @@ export class CompileContext {
       this.persistentSchemaHolders.set(key, `#v${hash}`);
     };
     Object.keys(program.persistentState || {}).sort().forEach(name => registerPersistent(`global:${name}`, `global persistent state ${name}`));
+    const persistentGridHashes = new Map();
+    const registerPersistentGrid = key => {
+      const hash = hashHex8(`grid:${key}`);
+      const previous = persistentGridHashes.get(hash);
+      if (previous && previous !== key) fail(`persistent grid hash collision between ${previous} and ${key}`);
+      persistentGridHashes.set(hash, key);
+      this.persistentGridKeys.set(key, `g${hash}`);
+    };
+    [...(program.persistentGrids || [])].map(grid => grid.id).sort().forEach(id => registerPersistentGrid(`global:${id}`));
     this.playerStateObjectives = new Map();
     Object.keys(program.initialPlayerState || {}).sort().forEach((name, index) => this.playerStateObjectives.set(name, playerStateObjective(namespace, index)));
     this.gridObjectives = new Map();
@@ -80,6 +90,7 @@ export class CompileContext {
     this.sessionRngHolders = new Map();
     [...(program.sessions || [])].sort((a, b) => a.id.localeCompare(b.id)).forEach((session, sessionIndex) => {
       Object.keys(session.persistentState || {}).sort().forEach(name => registerPersistent(`session:${session.id}:${name}`, `session persistent state ${session.id}.${name}`));
+      [...(session.persistentGrids || [])].map(grid => grid.id).sort().forEach(id => registerPersistentGrid(`session:${session.id}:${id}`));
       Object.keys(session.initialState).sort().forEach((name, stateIndex) => {
         this.sessionStateHolders.set(`${session.id}:${name}`, `#ss${slot(sessionIndex)}${slot(stateIndex)}`);
       });
@@ -146,6 +157,12 @@ export class CompileContext {
     const holder = this.persistentSchemaHolders.get(key);
     if (!holder) fail(`unknown ${session ? `session ${session} ` : ""}persistent schema holder: ${name}`);
     return holder;
+  }
+  persistentGridKey(id, session = null) {
+    const key = session ? `session:${session}:${id}` : `global:${id}`;
+    const value = this.persistentGridKeys.get(key);
+    if (!value) fail(`unknown ${session ? `session ${session} ` : ""}persistent grid storage key: ${id}`);
+    return value;
   }
   sessionStateHolder(session, name) {
     const holder = this.sessionStateHolders.get(`${session}:${name}`);

@@ -11,6 +11,7 @@
   const PLAYER_SCOPE = Symbol("mcgame.portableDsl.playerScope");
   const SESSION_SCOPE = Symbol("mcgame.portableDsl.sessionScope");
   const GRID = Symbol("mcgame.portableDsl.grid");
+  const PERSISTENT_GRID = Symbol("mcgame.portableDsl.persistentGrid");
   const RNG = Symbol("mcgame.portableDsl.rng");
   const GRID_WORLD = Symbol("mcgame.portableDsl.gridWorld");
 
@@ -76,6 +77,9 @@
     const stateValues = Object.create(null);
     const persistentStateValues = Object.create(null);
     let persistentStateCount = 0;
+    const persistentGrids = [];
+    let persistentGridCount = 0;
+    let persistentGridCellCount = 0;
     const inputValues = Object.create(null);
     const playerStateValues = Object.create(null);
     const playerInputs = new Set();
@@ -119,6 +123,7 @@
     let usesV16 = false;
     let usesV17 = false;
     let usesV18 = false;
+    let usesV19 = false;
 
     function assertUnique(name) {
       if (Object.prototype.hasOwnProperty.call(stateValues, name) || Object.prototype.hasOwnProperty.call(persistentStateValues, name) || Object.prototype.hasOwnProperty.call(inputValues, name)) {
@@ -511,7 +516,7 @@
       sessionTeams.add(setKey);
       const scope = ++nextSessionScope;
       const declarationIds = new Set();
-      const declaration = { id, players: serializedSet, state: Object.create(null), persistentState: Object.create(null), grids: [], rngs: [], gridWorlds: [] };
+      const declaration = { id, players: serializedSet, state: Object.create(null), persistentState: Object.create(null), grids: [], persistentGrids: [], rngs: [], gridWorlds: [] };
       sessions.push(declaration);
 
       function assertSessionActive(label) {
@@ -555,6 +560,29 @@
         ref.negate = () => { assertSessionSharedMutation("session persistent state negate"); emit({ op: "persistent_negate", target: name }); };
         return Object.freeze(ref);
       }
+      function sessionPersistentGrid(gridId, spec) {
+        assertSessionActive("session.persistentGrid(...)");
+        localId(gridId, "session persistentGrid");
+        const grid = normalizePersistentGridSpec(gridId, spec, "session persistent grid " + gridId);
+        declaration.persistentGrids.push(grid);
+        const ref = {
+          [PERSISTENT_GRID]: true, id: gridId, width: grid.width, height: grid.height, [SESSION_SCOPE]: scope, session: id,
+          fill(value) { assertSessionSharedMutation("session persistentGrid.fill(...)"); emit({ op: "persistent_grid_fill", grid: gridId, value: unwrapValue(value) }); },
+          get(x, z, target) {
+            assertSessionSharedMutation("session persistentGrid.get(...)");
+            if (!target || target[REF] !== "session_state" || target[SESSION_SCOPE] !== scope) fail("session persistentGrid.get(...) target must be a state from the same session");
+            emit({ op: "persistent_grid_get", grid: gridId, x: unwrapValue(x), z: unwrapValue(z), target: target.name });
+          },
+          set(x, z, value) { assertSessionSharedMutation("session persistentGrid.set(...)"); emit({ op: "persistent_grid_set", grid: gridId, x: unwrapValue(x), z: unwrapValue(z), value: unwrapValue(value) }); },
+          fillRect(rect) {
+            assertSessionSharedMutation("session persistentGrid.fillRect(...)");
+            if (rect == null || typeof rect !== "object") fail("session persistentGrid.fillRect(...) requires an object");
+            emit({ op: "persistent_grid_fill_rect", grid: gridId, x: unwrapValue(rect.x), z: unwrapValue(rect.z), width: unwrapValue(rect.width), height: unwrapValue(rect.height), value: unwrapValue(rect.value) });
+          },
+        };
+        return Object.freeze(ref);
+      }
+
       function sessionGrid(gridId, spec) {
         assertSessionActive("session.grid(...)");
         localId(gridId, "session grid");
@@ -659,6 +687,7 @@
         persistentState: sessionPersistentState,
         reduce: sessionReduce,
         grid: sessionGrid,
+        persistentGrid: sessionPersistentGrid,
         rng: sessionRng,
         gridWorld: sessionGridWorld,
         forEachPlayer(playerCallback) { assertSessionActive("session.forEachPlayer(...)"); capturePlayerContext(set, playerCallback, "multi", "for_each_player", "session.forEachPlayer"); },
@@ -904,6 +933,51 @@
       if (activeSessionScope !== null) fail(label + " is global shared mutation and cannot run inside SessionContext");
       if (activePlayerMode === "multi") fail(label + " is shared mutation and cannot run inside multi-player PlayerContext");
       usesV13 = true;
+    }
+
+    function normalizePersistentGridSpec(id, spec, label) {
+      if (spec == null || typeof spec !== "object") fail(label + " spec must be an object");
+      const width = finiteInteger(spec.width, label + " width", 1, 64);
+      const height = finiteInteger(spec.height, label + " height", 1, 64);
+      if (width * height > 2048) fail(label + " exceeds 2048 cells");
+      if (persistentGridCellCount + width * height > 16384) fail("portable v19 persistent grids exceed aggregate 16384 cells");
+      if (persistentGridCount >= 8) fail("portable v19 supports at most 8 persistent grids total");
+      const initial = finiteNumber(spec.initial === undefined ? 0 : spec.initial, label + " initial");
+      const outside = finiteNumber(spec.outside === undefined ? initial : spec.outside, label + " outside");
+      const schema = finiteInteger(spec.schema === undefined ? 1 : spec.schema, label + " schema", 1, 2147483647);
+      const onSchemaMismatch = spec.onSchemaMismatch === undefined ? "reset" : spec.onSchemaMismatch;
+      if (onSchemaMismatch !== "reset" && onSchemaMismatch !== "preserve") fail(label + " onSchemaMismatch must be reset or preserve");
+      persistentGridCount++;
+      persistentGridCellCount += width * height;
+      usesV19 = true;
+      return { id, width, height, initial, outside, schema, onSchemaMismatch };
+    }
+
+    function persistentGridDeclaration(id, spec) {
+      if (activeSessionScope !== null) fail("game.persistentGrid(...) is global; use session.persistentGrid(...) inside SessionContext");
+      assertV13Id(id, "persistentGrid");
+      const declaration = normalizePersistentGridSpec(id, spec, "persistent grid " + id);
+      persistentGrids.push(declaration);
+      const assertSharedMutation = label => {
+        if (activeSessionScope !== null) fail(label + " is global persistent mutation and cannot run inside SessionContext");
+        if (activePlayerMode === "multi") fail(label + " is persistent shared grid mutation and cannot run inside multi-player PlayerContext");
+      };
+      const ref = {
+        [PERSISTENT_GRID]: true, id, width: declaration.width, height: declaration.height,
+        fill(value) { assertSharedMutation("persistentGrid.fill(...)"); emit({ op: "persistent_grid_fill", grid: id, value: unwrapValue(value) }); },
+        get(x, z, target) {
+          assertSharedMutation("persistentGrid.get(...)");
+          if (!target || target[REF] !== "state") fail("persistentGrid.get(...) target must be a shared state reference");
+          emit({ op: "persistent_grid_get", grid: id, x: unwrapValue(x), z: unwrapValue(z), target: target.name });
+        },
+        set(x, z, value) { assertSharedMutation("persistentGrid.set(...)"); emit({ op: "persistent_grid_set", grid: id, x: unwrapValue(x), z: unwrapValue(z), value: unwrapValue(value) }); },
+        fillRect(rect) {
+          assertSharedMutation("persistentGrid.fillRect(...)");
+          if (rect == null || typeof rect !== "object") fail("persistentGrid.fillRect(...) requires an object");
+          emit({ op: "persistent_grid_fill_rect", grid: id, x: unwrapValue(rect.x), z: unwrapValue(rect.z), width: unwrapValue(rect.width), height: unwrapValue(rect.height), value: unwrapValue(rect.value) });
+        },
+      };
+      return Object.freeze(ref);
     }
 
     function gridDeclaration(id, spec) {
@@ -1250,6 +1324,7 @@
       reduce: globalReduce,
       session: sessionBlock,
       grid: gridDeclaration,
+      persistentGrid: persistentGridDeclaration,
       rng: rngDeclaration,
       gridWorld: gridWorldDeclaration,
       tick,
@@ -1278,7 +1353,7 @@
 
     build(dsl);
     if (tickActions === null) fail("tick(...) must be declared exactly once");
-    if (Object.keys(stateValues).length === 0 && Object.keys(persistentStateValues).length === 0 && Object.keys(playerStateValues).length === 0 && grids.length === 0 && sessions.length === 0) fail("at least one shared state, player-local state, grid, or session is required");
+    if (Object.keys(stateValues).length === 0 && Object.keys(persistentStateValues).length === 0 && Object.keys(playerStateValues).length === 0 && grids.length === 0 && persistentGrids.length === 0 && sessions.length === 0) fail("at least one shared state, player-local state, grid, or session is required");
 
     if (usesPlayerApi) {
       if (Object.keys(inputValues).length > 0 || Object.keys(vanillaInputs).length > 0) fail("game.input(...) is v1-v11 compatibility only; use player.input.* in multiplayer v12");
@@ -1292,18 +1367,20 @@
 
     const usesSpectateCamera = cameras.some(camera => camera.mode === "spectate");
     const spec = {
-      version: usesV18 ? 18 : (usesV17 ? 17 : (usesV16 ? 16 : (usesV15 ? 15 : (usesV14 ? 14 : (usesV13 ? 13 : (usesPlayerApi ? 12 : (usesSpectateCamera ? 11 : (ownership === null ? 9 : 10)))))))),
+      version: usesV19 ? 19 : (usesV18 ? 18 : (usesV17 ? 17 : (usesV16 ? 16 : (usesV15 ? 15 : (usesV14 ? 14 : (usesV13 ? 13 : (usesPlayerApi ? 12 : (usesSpectateCamera ? 11 : (ownership === null ? 9 : 10))))))))),
       fixedPoint,
       state: stateValues,
       tick: tickActions,
     };
     if (Object.keys(persistentStateValues).length > 0) spec.persistentState = persistentStateValues;
+    if (persistentGrids.length > 0) spec.persistentGrids = persistentGrids;
     if (Object.keys(inputValues).length > 0) spec.inputs = inputValues;
     if (playerTeams.size > 0) spec.playerSets = Array.from(playerTeams).sort().map(team => ({ team }));
     if (sessions.length > 0) spec.sessions = sessions.map(session => {
       let value = session;
       if (session.gridWorlds.length === 0) { const { gridWorlds: _gridWorlds, ...rest } = value; value = rest; }
       if (Object.keys(session.persistentState).length === 0) { const { persistentState: _persistentState, ...rest } = value; value = rest; }
+      if (session.persistentGrids.length === 0) { const { persistentGrids: _persistentGrids, ...rest } = value; value = rest; }
       return value;
     });
     if (grids.length > 0) spec.grids = grids;

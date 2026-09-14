@@ -13,6 +13,40 @@ function uniqueIds(values, path) {
   }
 }
 
+function parsePersistentGridEntry(value, index, path, fixedPoint) {
+  const p = `${path}[${index}]`;
+  if (!isObject(value)) fail(`${p} must be an object`);
+  const id = portableId(value, p);
+  const width = boundedInteger(requiredMember(value, "width", p), 1, LIMITS.gridDimension, `${p}.width`);
+  const height = boundedInteger(requiredMember(value, "height", p), 1, LIMITS.gridDimension, `${p}.height`);
+  if (width * height > LIMITS.gridCells) fail(`${p} exceeds max persistent-grid cell count ${LIMITS.gridCells}`);
+  const initial = finiteNumber(requiredMember(value, "initial", p), `${p}.initial`);
+  const outside = finiteNumber(requiredMember(value, "outside", p), `${p}.outside`);
+  const onSchemaMismatch = Object.prototype.hasOwnProperty.call(value, "onSchemaMismatch") ? value.onSchemaMismatch : "reset";
+  if (onSchemaMismatch !== "reset" && onSchemaMismatch !== "preserve") fail(`${p}.onSchemaMismatch must be reset or preserve`);
+  return {
+    id, width, height,
+    initialRaw: scale(initial, fixedPoint, `${p}.initial`),
+    outsideRaw: scale(outside, fixedPoint, `${p}.outside`),
+    schema: boundedInteger(Object.prototype.hasOwnProperty.call(value, "schema") ? value.schema : 1, 1, 2147483647, `${p}.schema`),
+    onSchemaMismatch,
+  };
+}
+
+export function parsePersistentGrids(spec, version, fixedPoint, api) {
+  if (!has(spec, "persistentGrids")) return [];
+  if (version < 19) fail(`${api}.persistentGrids requires portable version 19`);
+  const values = requiredArray(spec, "persistentGrids", api);
+  if (values.length > LIMITS.persistentGrids) fail(`${api}.persistentGrids exceeds max persistent-grid count ${LIMITS.persistentGrids}`);
+  uniqueIds(values, `${api}.persistentGrids`);
+  return values.map((value, index) => parsePersistentGridEntry(value, index, `${api}.persistentGrids`, fixedPoint));
+}
+
+export function parsePersistentGridValues(values, fixedPoint, path) {
+  uniqueIds(values, path);
+  return values.map((value, index) => parsePersistentGridEntry(value, index, path, fixedPoint));
+}
+
 export function parseGrids(spec, version, fixedPoint, api) {
   if (!has(spec, "grids")) return [];
   if (version < 13) fail(`${api}.grids requires portable version 13`);

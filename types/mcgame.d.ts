@@ -483,7 +483,30 @@ type PortableProgramSpecV18 = Omit<PortableProgramSpecV16, "version" | "sessions
   vanilla?: Omit<NonNullable<PortableProgramSpecV16["vanilla"]>, "playerHuds"> & { playerHuds?: Array<{ id: string; audience: PortablePlayerSetRefV14; session?: string; tokens: Array<{ text: string } | { value: PortableV18Value }> }> };
   tick: PortableV18Action[];
 };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14 | PortableProgramSpecV15 | PortableProgramSpecV16 | PortableProgramSpecV17 | PortableProgramSpecV18;
+type PortablePersistentGridSpec = {
+  id: string; width: number; height: number; initial: number; outside: number;
+  schema?: number; onSchemaMismatch?: "reset" | "preserve";
+};
+type PortableV19Action =
+  | Exclude<PortableV18Action,
+      { op: "if" } | { op: "if_aabb" } | { op: "if_circle" } | { op: "if_circle_capsule" } | { op: "if_trigger" } |
+      { op: "for_each_player" | "for_single_player" } | { op: "for_session" }>
+  | { op: "persistent_grid_fill"; grid: string; value: PortableV18Value }
+  | { op: "persistent_grid_get"; grid: string; x: PortableV18Value; z: PortableV18Value; target: string }
+  | { op: "persistent_grid_set"; grid: string; x: PortableV18Value; z: PortableV18Value; value: PortableV18Value }
+  | { op: "persistent_grid_fill_rect"; grid: string; x: PortableV18Value; z: PortableV18Value; width: PortableV18Value; height: PortableV18Value; value: PortableV18Value }
+  | { op: "if"; condition: PortableV18Comparison; then: PortableV19Action[]; else?: PortableV19Action[] }
+  | { op: "if_aabb"; a: PortableV18Aabb; b: PortableV18Aabb; then: PortableV19Action[]; else?: PortableV19Action[] }
+  | { op: "if_circle"; a: PortableV18Circle; b: PortableV18Circle; then: PortableV19Action[]; else?: PortableV19Action[] }
+  | { op: "if_circle_capsule"; circle: PortableV18Circle; capsule: PortableCapsule; then: PortableV19Action[]; else?: PortableV19Action[] }
+  | { op: "if_trigger"; trigger: PortableV18Aabb; point: PortableV18Point; then: PortableV19Action[]; else?: PortableV19Action[] }
+  | { op: "for_each_player" | "for_single_player"; players: PortablePlayerSetRefV14; actions: PortableV19Action[] }
+  | { op: "for_session"; session: string; actions: PortableV19Action[] };
+type PortableSessionSpecV19 = PortableSessionSpecV18 & { persistentGrids?: PortablePersistentGridSpec[] };
+type PortableProgramSpecV19 = Omit<PortableProgramSpecV18, "version" | "sessions" | "tick"> & {
+  version: 19; persistentGrids?: PortablePersistentGridSpec[]; sessions?: PortableSessionSpecV19[]; tick: PortableV19Action[];
+};
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14 | PortableProgramSpecV15 | PortableProgramSpecV16 | PortableProgramSpecV17 | PortableProgramSpecV18 | PortableProgramSpecV19;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -564,6 +587,16 @@ type PortableDslGrid = {
   set(x: PortableDslValue, z: PortableDslValue, value: PortableDslValue): void;
   fillRect(spec: { x: PortableDslValue; z: PortableDslValue; width: PortableDslValue; height: PortableDslValue; value: PortableDslValue }): void;
 };
+type PortableDslPersistentGridSpec = {
+  width: number; height: number; initial?: number; outside?: number; schema?: number; onSchemaMismatch?: "reset" | "preserve";
+};
+type PortableDslPersistentGrid = {
+  readonly id: string; readonly width: number; readonly height: number;
+  fill(value: PortableDslValue): void;
+  get(x: PortableDslValue, z: PortableDslValue, target: PortableDslState): void;
+  set(x: PortableDslValue, z: PortableDslValue, value: PortableDslValue): void;
+  fillRect(spec: { x: PortableDslValue; z: PortableDslValue; width: PortableDslValue; height: PortableDslValue; value: PortableDslValue }): void;
+};
 type PortableDslRng = {
   readonly id: string;
   reset(): void;
@@ -573,6 +606,13 @@ type PortableDslSessionGrid = {
   readonly id: string;
   readonly width: number;
   readonly height: number;
+  fill(value: PortableDslValue): void;
+  get(x: PortableDslValue, z: PortableDslValue, target: PortableDslSessionState): void;
+  set(x: PortableDslValue, z: PortableDslValue, value: PortableDslValue): void;
+  fillRect(spec: { x: PortableDslValue; z: PortableDslValue; width: PortableDslValue; height: PortableDslValue; value: PortableDslValue }): void;
+};
+type PortableDslSessionPersistentGrid = {
+  readonly id: string; readonly width: number; readonly height: number;
   fill(value: PortableDslValue): void;
   get(x: PortableDslValue, z: PortableDslValue, target: PortableDslSessionState): void;
   set(x: PortableDslValue, z: PortableDslValue, value: PortableDslValue): void;
@@ -712,6 +752,7 @@ type PortableDslSessionContext = {
   persistentState(name: string, initial: number, options?: PortableDslPersistentStateOptions): PortableDslSessionPersistentState;
   readonly reduce: PortableDslSessionReduction;
   grid(id: string, spec: { width: number; height: number; initial?: number; outside?: number }): PortableDslSessionGrid;
+  persistentGrid(id: string, spec: PortableDslPersistentGridSpec): PortableDslSessionPersistentGrid;
   rng(id: string, spec: { seed: number }): PortableDslSessionRng;
   gridWorld(id: string, spec: PortableDslSessionGridWorldSpec): PortableDslGridWorld;
   forEachPlayer(callback: (player: PortableDslPlayerContext) => void): void;
@@ -730,6 +771,7 @@ type PortableDsl = {
   readonly reduce: PortableDslGlobalReduction;
   session(id: string, players: PortableDslPlayerSet, callback: (session: PortableDslSessionContext) => void): void;
   grid(id: string, spec: { width: number; height: number; initial?: number; outside?: number }): PortableDslGrid;
+  persistentGrid(id: string, spec: PortableDslPersistentGridSpec): PortableDslPersistentGrid;
   rng(id: string, spec: { seed: number }): PortableDslRng;
   gridWorld(id: string, spec: PortableDslGridWorldSpec): PortableDslGridWorld;
   tick(callback: () => void): void;

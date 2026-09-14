@@ -2,6 +2,7 @@ import { fail } from "./utils.mjs";
 import { stateHolder } from "./compile-context.mjs";
 import { compileAabbIf, compileCircleIf, compileCircleCapsuleIf, compileTriggerIf } from "./compile-collisions.mjs";
 import { compileGridAction } from "./compile-grid.mjs";
+import { compilePersistentGridAction } from "./compile-persistent.mjs";
 import { playerSetSelector } from "./compile-player.mjs";
 
 function score(value, ctx) { return ctx.score(value); }
@@ -32,6 +33,7 @@ function branchFunction(actions, ctx) {
 
 export function compileActions(actions, lines, ctx) {
   for (const action of actions) {
+    if (compilePersistentGridAction(action, lines, ctx)) continue;
     if (compileGridAction(action, lines, ctx)) continue;
     switch (action.op) {
       case "set": {

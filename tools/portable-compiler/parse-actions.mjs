@@ -114,6 +114,40 @@ export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }
       out.push(parsed);
       continue;
     }
+    if (["persistent_grid_fill", "persistent_grid_get", "persistent_grid_set", "persistent_grid_fill_rect"].includes(op)) {
+      if (ctx.version < 19) fail(`${p}.op requires portable version 19`);
+      if (ctx.playerScope === "multi") fail(`${p}.op is persistent shared grid mutation and is not allowed inside multi-player PlayerContext`);
+      const grid = requiredString(a, "grid", p);
+      const session = ctx.sessionScope ? currentSession(ctx, p) : null;
+      const grids = session ? session.persistentGrids : ctx.persistentGrids;
+      if (!grids?.has(grid)) fail(`${p}.grid references unknown ${session ? `session ${ctx.sessionScope} ` : ""}persistent grid ${grid}`);
+      const scoped = ctx.sessionScope ? { session: ctx.sessionScope } : {};
+      if (op === "persistent_grid_fill") {
+        out.push({ op, ...scoped, grid, value: parseValue(requiredMember(a, "value", p), ctx, `${p}.value`) });
+        continue;
+      }
+      const x = parseValue(requiredMember(a, "x", p), ctx, `${p}.x`);
+      const z = parseValue(requiredMember(a, "z", p), ctx, `${p}.z`);
+      if (op === "persistent_grid_get") {
+        const target = requiredString(a, "target", p);
+        if (session) {
+          if (!session.states.has(target)) fail(`${p}.target references unknown session state ${ctx.sessionScope}.${target}`);
+        } else if (!ctx.states.has(target)) fail(`${p}.target references unknown shared state ${target}`);
+        out.push({ op, ...scoped, grid, x, z, target });
+        continue;
+      }
+      if (op === "persistent_grid_set") {
+        out.push({ op, ...scoped, grid, x, z, value: parseValue(requiredMember(a, "value", p), ctx, `${p}.value`) });
+        continue;
+      }
+      out.push({
+        op, ...scoped, grid, x, z,
+        width: parseValue(requiredMember(a, "width", p), ctx, `${p}.width`),
+        height: parseValue(requiredMember(a, "height", p), ctx, `${p}.height`),
+        value: parseValue(requiredMember(a, "value", p), ctx, `${p}.value`),
+      });
+      continue;
+    }
     if (["grid_fill", "grid_get", "grid_set", "grid_fill_rect"].includes(op)) {
       if (ctx.version < 13) fail(`${p}.op requires portable version 13`);
       if (ctx.playerScope === "multi") fail(`${p}.op is shared grid mutation and is not allowed inside multi-player PlayerContext`);

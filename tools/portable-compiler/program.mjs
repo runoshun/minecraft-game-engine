@@ -2,7 +2,7 @@ import { CURRENT_VERSION, LIMITS, PLAYER_INPUT_NAMES, fail, has, isObject, requi
 import { parseActions } from "./parse-actions.mjs";
 import { parseVanillaScene } from "./parse-vanilla-scene.mjs";
 import { parseVanillaUi } from "./parse-vanilla-ui.mjs";
-import { parseGrids, parseRngs } from "./parse-runtime.mjs";
+import { parseGrids, parsePersistentGrids, parseRngs } from "./parse-runtime.mjs";
 import { parsePlayerSetDeclarations } from "./player-set.mjs";
 import { parseSessions, sessionContextMap } from "./session.mjs";
 
@@ -93,8 +93,13 @@ export function parseProgram(spec, api = "portable.define") {
     }
   }
   const grids = parseGrids(spec, version, fixedPoint, api);
+  const persistentGrids = parsePersistentGrids(spec, version, fixedPoint, api);
   const rngs = parseRngs(spec, version, api);
-  if (Object.keys(initialState).length === 0 && Object.keys(persistentState).length === 0 && Object.keys(initialPlayerState).length === 0 && grids.length === 0 && sessions.length === 0) {
+  const persistentGridCount = persistentGrids.length + sessions.reduce((sum, session) => sum + (session.persistentGrids || []).length, 0);
+  const persistentGridCells = persistentGrids.reduce((sum, grid) => sum + grid.width * grid.height, 0) + sessions.reduce((sum, session) => sum + (session.persistentGrids || []).reduce((inner, grid) => inner + grid.width * grid.height, 0), 0);
+  if (persistentGridCount > LIMITS.persistentGrids) fail(`${api} exceeds max persistent-grid count ${LIMITS.persistentGrids}`);
+  if (persistentGridCells > LIMITS.persistentGridCellsTotal) fail(`${api} exceeds aggregate persistent-grid cell count ${LIMITS.persistentGridCellsTotal}`);
+  if (Object.keys(initialState).length === 0 && Object.keys(persistentState).length === 0 && Object.keys(initialPlayerState).length === 0 && grids.length === 0 && persistentGrids.length === 0 && sessions.length === 0) {
     fail(`${api} must define at least one shared state, player-local state, grid, or session`);
   }
 
@@ -128,6 +133,7 @@ export function parseProgram(spec, api = "portable.define") {
     playerStates: new Set(Object.keys(initialPlayerState)), playerInputs, playerTeams,
     sessions: sessionContextMap(sessions), sessionScope: null,
     grids: new Map(grids.map(grid => [grid.id, grid])),
+    persistentGrids: new Map(persistentGrids.map(grid => [grid.id, grid])),
     rngs: new Set(rngs.map(rng => rng.id)),
     gridWorlds: new Set(),
     playerScope: false,
@@ -145,7 +151,7 @@ export function parseProgram(spec, api = "portable.define") {
 
   const tickActions = parseActions(requiredArray(spec, "tick", api), ctx, `${api}.tick`);
   return {
-    version, fixedPoint, initialState, persistentState, initialPlayerState, initialInputs, playerInputs, playerTeams, sessions, grids, rngs,
+    version, fixedPoint, initialState, persistentState, initialPlayerState, initialInputs, playerInputs, playerTeams, sessions, grids, persistentGrids, rngs,
     vanillaInputs: vanilla.inputs, projections: vanilla.projections, texts: vanilla.texts,
     actors: vanilla.actors, worldBatches: vanilla.worldBatches, gridWorlds: vanilla.gridWorlds, cameras: vanilla.cameras,
     particles: vanilla.particles, sounds: vanilla.sounds, huds: vanilla.huds, playerHuds: vanilla.playerHuds,
