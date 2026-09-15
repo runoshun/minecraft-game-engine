@@ -278,3 +278,34 @@ Acceptance must verify:
 - `portable/cleanup` while a generated dialog is pending closes the surface, removes the complete selection/form objective banks, and preserves the external team.
 
 The accepted reference run rendered the styled `Arcane Purchase` confirmation with mixed-color text, a diamond-sword item body and tooltip, and authored `Buy`/`Leave` actions. The confirmation `Leave` path reached logical `-10`. Real-client form submits produced boolean `1`, option `Mage=3`, and range `3`; option/range cancel paths also produced logical `-1`. Pending form transports remained at the pending sentinel under repeated authored `open()`. Replacing pending `hints` with `role` rearmed the old transport to idle and left only the new form pending. `/reload` reset stage/results/transports and preserved `v21_party`; cleanup from a pending confirmation left zero generated objectives while retaining Camera in that team. Final teardown removed the team and pack, restarted the server to remove registry entries, and finished with zero objectives, zero teams, only vanilla enabled, and the pre-existing disabled video packs still available. The Node suite was 35/35 green, and 16 retained v1-v20 examples were byte-for-byte identical to pre-v21 commit `b000162`.
+
+## Expanded mannequin actor presentation v22 acceptance
+
+ADR 0032 defines Portable v22 actor presentation. Use `examples/portable-actor-presentation` on mod-free Minecraft 26.1 `second` with exactly one real client online. Unlike v20/v21 dialog resources, v22 actor presentation adds only ordinary function/entity state, so a generated pack can be installed and exercised with `/reload`; a restart is not required unless the same change independently modifies dialog registry resources.
+
+Compile and archive the acceptance pack with:
+
+```bash
+npm run compile:portable -- \
+  --source examples/portable-actor-presentation/datapack/data/portable_actor_v22/mcgame/main.ts \
+  --namespace portable_actor_v22 \
+  --output build/portable/portable_actor_v22
+
+tar -C build/portable/portable_actor_v22 -czf build/portable_actor_v22.tar.gz .
+sha256sum build/portable_actor_v22.tar.gz
+```
+
+Deploy the archive with the normal devcontainer `publish_file` -> `mc-mcp.write_datapack_files` transfer. Keep a real client online before or immediately after `/reload` so the vanilla server is not paused for an empty world; the owned-init stage is scheduled two ticks after load.
+
+Acceptance must verify:
+
+- the generated marker reports `portable_version=22`, and extended actor spawn functions contain the bounded authored `profile`, `hidden_layers`, `pose`, `main_hand`, `equipment`, `immovable`, and pitch rotation fields;
+- the real client renders the built-in Alex/Steve profiles, authored static equipment/poses, and the zombie-intent mob-head fallback without any client mod;
+- with exactly one player online, A/D changes shared `heroYaw` through `forSinglePlayer`, Space/Shift changes shared `heroPitch`, and the owned hero mannequin's `Rotation[0]` / `Rotation[1]` follows the same fixed-point values;
+- ordinary `/reload` returns yaw/pitch to authored initial values and recreates exactly one owned actor per declaration with its appearance/equipment intact;
+- retained v1-v21 checked-in examples are byte-for-byte identical to pre-v22 commit `c7d3cc9`;
+- `portable/cleanup` removes all generated objectives, owned entities, scheduled owned-init work, and ownership force-loads before deleting the acceptance pack.
+
+The accepted reference run rendered the three authored characters described above. Real A input changed yaw raw `180000 -> 204000` and entity yaw to `204.0f`; Space produced pitch raw `-20000` / entity `-20.0f`, and Shift produced raw `15000` / entity `15.0f`. `/reload` restored yaw/pitch to `180000/0`, preserved exactly three owned mannequins, and restored authored profile/equipment. Cleanup removed all objectives/entities and reduced nine ownership force-loaded chunks to zero. Final pack deletion plus `/reload` left only vanilla enabled, with the pre-existing video packs still disabled/available. Node was 39/39 green and all 17 retained v1-v21 example outputs matched pre-v22 `c7d3cc9` byte-for-byte.
+
+The accepted reference result is also recorded in ADR 0032 and `docs/architecture.md`; update all three records if the acceptance scenario or compiler ownership semantics change.

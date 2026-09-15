@@ -28,7 +28,7 @@ The compiler accepts one TypeScript source, namespace, and output directory. Mod
 
 Portable IR is the versioned semantic contract between authoring and vanilla lowering. It contains deterministic fixed-point values, bounded actions, collision primitives, declarative presentation/world resources, input mappings, and lifecycle metadata. Arbitrary JavaScript callbacks are not an IR feature.
 
-IR versions 1 through 21 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14, ADR 0024 defines team-bound logical sessions in v15, ADR 0025 defines session-local GridWorld projection in v16, ADR 0027 defines bounded player/session reductions in v17, ADR 0028 defines bounded persistent scalar state in v18, ADR 0029 defines bounded persistent Grid state in v19, ADR 0030 defines bounded native-dialog selection UI in v20, and ADR 0031 defines bounded rich/typed native-dialog UI in v21.
+IR versions 1 through 22 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14, ADR 0024 defines team-bound logical sessions in v15, ADR 0025 defines session-local GridWorld projection in v16, ADR 0027 defines bounded player/session reductions in v17, ADR 0028 defines bounded persistent scalar state in v18, ADR 0029 defines bounded persistent Grid state in v19, ADR 0030 defines bounded native-dialog selection UI in v20, ADR 0031 defines bounded rich/typed native-dialog UI in v21, and ADR 0032 defines bounded expanded mannequin actor presentation in v22.
 
 ### Generated datapack
 
@@ -104,7 +104,7 @@ The compiler supports bounded declarative:
 
 - block Displays with state-backed coordinates, scale/translation, and optional visibility condition;
 - text Displays with literal/state/input tokens, state-backed coordinates, scale, billboard, and optional visibility;
-- mannequin actors with state-backed position/yaw and optional lifetime condition; zombie/skeleton semantic appearances use mannequin carriers with vanilla mob heads;
+- mannequin actors with state-backed position/yaw/pitch and optional lifetime condition; v22 adds bounded static profile/skin-layer/pose/hand/equipment presentation, while zombie/skeleton semantic appearances still use mannequin carriers with vanilla mob-head fallback;
 - particle and sound emitters with optional conditions;
 - one actionbar HUD;
 - one global vanilla scoreboard sidebar with 1..15 rows;
@@ -283,6 +283,16 @@ Form `open()` is idempotent while already pending. A resolved result remains rea
 
 The vanilla return channel intentionally bounds the feature: v21 exposes exactly one typed input because a permission-0 client can safely return one integer through `/trigger`. Free-form text cannot be returned through that channel, and generic multi-field packing, arbitrary commands/events, custom packet handlers, inventory/container GUI ownership, runtime-created dialog graphs, and persistent form state remain unsupported. Generated `minecraft:dialog` resources follow the same registry-bootstrap lifecycle established by v20: add/change/remove requires cleanup where applicable, file replacement/removal, then server/world restart; ordinary `/reload` remains valid after startup bootstrap.
 
+## Expanded mannequin actor presentation v22
+
+ADR 0032 defines the implemented v22 actor expansion. `game.actor(...)` keeps the existing maximum of 64 statically declared compiler-owned mannequin carriers and the v7 `x`/`y`/`z`/`yaw`/`when` lifecycle, while adding state-backed `pitch` plus bounded static character presentation: profile texture/cape/elytra resource ids with `wide`/`slim` model override, hidden player skin layers, mannequin pose, main-hand preference, and item-resource-id equipment for head/chest/legs/feet/mainhand/offhand.
+
+Profile input is deliberately resource-backed rather than identity-backed. Portable source cannot request a player name/UUID lookup, provide signed/raw profile properties or arbitrary base64 texture payloads, or depend on compiler network access. Custom namespaced profile assets may be referenced but must be delivered through normal Minecraft resource-pack mechanisms; built-in `minecraft:` assets need no custom client mod. Equipment is presentation-only and carries item ids only: item components/NBT, counts, enchantments, inventory mutation, and runtime equipment changes are not part of v22.
+
+The vanilla backend still always owns a `minecraft:mannequin`. V22-presented actors add `immovable:1b` while retaining compiler-authored position/rotation projection. Existing zombie/skeleton semantic intents continue to map to mob heads; on v22 actors that head is inserted into the static equipment map unless explicit `equipment.head` overrides it. Old v1-v21 actor declarations retain their historical lowering path byte-for-byte. Pose/profile/layers/hand/equipment are static declarations; position/yaw/pitch may follow shared portable state. Arbitrary limb rotations, roll/scale animation, `/swing` authoring, runtime-created actors, attachment/passenger graphs, arbitrary entity NBT, and generic item/model-display actors remain outside the boundary.
+
+Actor replacement/reload/cleanup semantics do not change. A false `when` removes the owned mannequin and a later true condition recreates it with the full declaration. V22 introduces no registry-bootstrap resource; ordinary datapack `/reload` remains sufficient unless another declared capability such as v20+ dialogs independently requires restart for changed registry entries.
+
 ## Planned capability roadmap after v16
 
 ADR 0026 establishes a capability-first roadmap: prioritize portable semantics that current game source cannot reproduce safely with existing primitives before automation or infrastructure that already has a workable explicit fallback. This is planning policy, not an implemented API contract; each capability requires its own ADR and Portable IR version decision before implementation.
@@ -292,9 +302,9 @@ The roadmap order is:
 1. **bounded player/session reductions** — completed by Portable v17 / ADR 0027;
 2. **persistent portable state** — completed for bounded global/session scalar state by Portable v18 / ADR 0028 and bounded persistent Grid state by Portable v19 / ADR 0029; player/offline persistence remains deferred;
 3. **interactive dialog UI** — completed for bounded selections by Portable v20 / ADR 0030 and expanded in Portable v21 / ADR 0031 with static rich text/item bodies, native confirmation, and boolean/option/integer-range single-input forms;
-4. **mannequin/actor presentation expansion** — next priority — richer bounded character appearance such as mannequin appearance/profile or skin controls supported by vanilla, equipment, and pose/transform controls, while preserving compiler-owned lifecycle and declaration bounds. Item/model projections or attachment relationships require the same ownership discipline and are design-time candidates rather than current features.
+4. **mannequin/actor presentation expansion** — completed by Portable v22 / ADR 0032 with bounded static profile/skin-layer/pose/hand/equipment presentation and state-backed pitch while preserving compiler-owned lifecycle and the 64-actor declaration bound. Item/model projections and attachment relationships remain separate future capabilities.
 
-The existing v7 actor contract remains current until item 4 lands: actor carriers are mannequins with state-backed position/yaw/lifetime, with zombie/skeleton intents represented by mob heads. ADR 0015's richer-presentation items were non-goals for v7; ADR 0026 intentionally promotes mannequin/actor expression to planned work without introducing runtime-created or unbounded entity collections.
+ADR 0032 completes item 4 by extending rather than replacing the v7 lifecycle: actor carriers remain bounded compiler-owned mannequins with state-backed transforms/lifetime and zombie/skeleton mob-head intents, now with the v22 presentation fields described above. Runtime-created or unbounded entity collections remain out of scope.
 
 Automatic arena allocation, per-session ownership/dynamic chunk leasing, dynamic matchmaking, session-local presentation declarations, per-player vanilla sidebars, and module/import support remain useful but lower priority because current prototypes have explicit workarounds. Client-private scene visibility is still a genuine missing isolation feature, but spatially separate footprints are sufficient for current acceptance games, so privacy work is also behind the four capability priorities unless a retained game makes it a blocker.
 
@@ -305,18 +315,25 @@ After those priorities, additional capability gaps include 3D/swept collision, d
 - single-file TypeScript; no import/module resolution;
 - v1-v11 remain single-controller-oriented for compatibility; v12 is the multiplayer model;
 - fixed-point arithmetic relies on Minecraft scoreboard 32-bit behavior; generated commands do not add generic overflow guards;
-- no runtime generic arrays/collections, arbitrary packet-event dispatch, arbitrary inventory/form/dialog API, arbitrary NBT/storage API, or arbitrary Minecraft queries; v21 provides bounded static rich native-dialog content, confirmation, and boolean/option/integer-range single-input forms, while free-form text input, generic multi-field/dynamic forms, arbitrary clicks/commands, and inventory GUI ownership remain unsupported;
+- no runtime generic arrays/collections, arbitrary packet-event dispatch, arbitrary inventory/form/dialog API, arbitrary NBT/storage API, or arbitrary Minecraft queries; v21 provides bounded static rich native-dialog content, confirmation, and boolean/option/integer-range single-input forms, and v22 provides bounded static mannequin profile/pose/equipment presentation without exposing arbitrary entity NBT; free-form text input, generic multi-field/dynamic forms, arbitrary clicks/commands, inventory GUI ownership, generic entity mutation, and runtime actor collections remain unsupported;
 - one server-global sidebar; v14 permits up to eight camera declarations only for disjoint external-team audiences;
 - bounded 2D logic collision only, not Minecraft hitbox queries or 3D/swept physics;
 - v8 world projection is compile-time declared and persistent; v13 additionally provides bounded incremental runtime grid projection, also persistent;
-- v15 adds independent team-bound logical sessions; v16 adds explicit session-local Grid-to-world footprints inside one shared ownership rectangle; v17 adds bounded cross-player/session reductions; v18 adds persistent scalars, v19 adds persistent Grids, v20 adds player-local native-dialog selection, and v21 adds bounded rich/typed native-dialog UI. Automatic arena allocation, per-session ownership/private visibility scenes, dynamic matchmaking, independent per-player vanilla sidebars, player/offline persistent state, richer generic persistent collections, free-form/multi-field forms, and inventory UI are not implemented.
+- v15 adds independent team-bound logical sessions; v16 adds explicit session-local Grid-to-world footprints inside one shared ownership rectangle; v17 adds bounded cross-player/session reductions; v18 adds persistent scalars, v19 adds persistent Grids, v20 adds player-local native-dialog selection, v21 adds bounded rich/typed native-dialog UI, and v22 expands bounded mannequin actor presentation. Automatic arena allocation, per-session ownership/private visibility scenes, dynamic matchmaking, independent per-player vanilla sidebars, player/offline persistent state, richer generic persistent collections, free-form/multi-field forms, and inventory UI are not implemented.
 
 ## Validation baseline
 
-Portable v1-v21 compiler behavior is covered by the Node regression suite; generated milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
+Portable v1-v22 compiler behavior is covered by the Node regression suite; generated milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
 
 Node migration ADR 0021 additionally established byte-for-byte output parity with the retired Java compiler for representative v1, v9, v10, and v11 programs including Bounce, Pinball, Breakout, Presentation, UI, World, JRPG, and spectate-camera cases. Node compiler regression tests are now the maintained build-time acceptance suite.
 
+### v22 expanded mannequin actor validation
+
+Portable v22 passed focused mod-free Minecraft 26.1 acceptance on `second` using real client `Camera` and checked-in `examples/portable-actor-presentation`. The rendered scene contained a slim Alex-profile crouching hero with diamond chest/boots, sword and shield; a wide Steve-profile guard in iron equipment; and a crouching zombie-intent mannequin with authored chest/main-hand equipment plus the compiler-supplied zombie-head fallback. Runtime entity data confirmed the authored `profile`, `hidden_layers`, `pose`, `main_hand`, and equipment maps.
+
+With exactly one player in the `forSinglePlayer` scope, real A input changed shared `heroYaw` from raw `180000` to `204000` and the owned mannequin rotation followed at `204.0f`. Real Space input set `heroPitch=-20000` with entity pitch `-20.0f`; Shift then set raw `15000` with entity pitch `15.0f`. Ordinary `/reload` restored yaw/pitch to `180000/0`, recreated exactly three owned mannequin actors, and restored the hero profile/equipment and `[180.0f, 0.0f]` rotation.
+
+The Node regression suite was 39/39 green. Seventeen retained v1-v21 checked-in examples were compiled against both v22 and pre-v22 commit `c7d3cc9`, with byte-for-byte identical generated output. Cleanup removed all generated objectives and owned entities and reduced the acceptance ownership rectangle from nine force-loaded chunks to zero. Final pack removal plus `/reload` left only vanilla enabled; the two pre-existing video packs remained disabled/available.
 
 ### v21 rich/typed native dialog UI validation
 

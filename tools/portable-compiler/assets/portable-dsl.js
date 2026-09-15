@@ -132,6 +132,7 @@
     let usesV19 = false;
     let usesV20 = false;
     let usesV21 = false;
+    let usesV22 = false;
 
     function assertUnique(name) {
       if (Object.prototype.hasOwnProperty.call(stateValues, name) || Object.prototype.hasOwnProperty.call(persistentStateValues, name) || Object.prototype.hasOwnProperty.call(inputValues, name)) {
@@ -1322,6 +1323,35 @@
         z: normalizeCoordinate(spec.z, "actor " + id + " z"),
         yaw: normalizeCoordinate(spec.yaw === undefined ? 0 : spec.yaw, "actor " + id + " yaw"),
       };
+      const resourceId = (value, label) => {
+        if (typeof value !== "string" || !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(value)) fail(label + " must be a resource id");
+        return value;
+      };
+      if (spec.pitch !== undefined) { actor.pitch = normalizeCoordinate(spec.pitch, "actor " + id + " pitch"); usesV22 = true; }
+      if (spec.profile !== undefined) {
+        if (spec.profile == null || typeof spec.profile !== "object" || Array.isArray(spec.profile)) fail("actor " + id + " profile must be an object");
+        for (const key of Object.keys(spec.profile)) if (!["texture", "cape", "elytra", "model"].includes(key)) fail("actor " + id + " profile." + key + " is not supported");
+        const profile = {};
+        for (const key of ["texture", "cape", "elytra"]) if (spec.profile[key] !== undefined) profile[key] = resourceId(spec.profile[key], "actor " + id + " profile." + key);
+        if (spec.profile.model !== undefined) { if (!["wide", "slim"].includes(spec.profile.model)) fail("actor " + id + " profile.model must be wide or slim"); profile.model = spec.profile.model; }
+        actor.profile = profile; usesV22 = true;
+      }
+      if (spec.hiddenLayers !== undefined) {
+        const allowed = ["cape", "jacket", "left_sleeve", "right_sleeve", "left_pants_leg", "right_pants_leg", "hat"];
+        if (!Array.isArray(spec.hiddenLayers) || spec.hiddenLayers.length > allowed.length) fail("actor " + id + " hiddenLayers must be an array of at most 7 layers");
+        if (new Set(spec.hiddenLayers).size !== spec.hiddenLayers.length || spec.hiddenLayers.some(layer => !allowed.includes(layer))) fail("actor " + id + " hiddenLayers contains an unsupported or duplicate layer");
+        actor.hiddenLayers = [...spec.hiddenLayers]; usesV22 = true;
+      }
+      if (spec.pose !== undefined) { if (!["standing", "crouching", "swimming", "fall_flying", "sleeping"].includes(spec.pose)) fail("actor " + id + " pose is unsupported"); actor.pose = spec.pose; usesV22 = true; }
+      if (spec.mainHand !== undefined) { if (!["left", "right"].includes(spec.mainHand)) fail("actor " + id + " mainHand must be left or right"); actor.mainHand = spec.mainHand; usesV22 = true; }
+      if (spec.equipment !== undefined) {
+        if (spec.equipment == null || typeof spec.equipment !== "object" || Array.isArray(spec.equipment)) fail("actor " + id + " equipment must be an object");
+        const slots = ["head", "chest", "legs", "feet", "mainhand", "offhand"];
+        for (const key of Object.keys(spec.equipment)) if (!slots.includes(key)) fail("actor " + id + " equipment." + key + " is not supported");
+        actor.equipment = {};
+        for (const key of slots) if (spec.equipment[key] !== undefined) actor.equipment[key] = resourceId(spec.equipment[key], "actor " + id + " equipment." + key);
+        usesV22 = true;
+      }
       if (spec.when !== undefined) actor.when = serializedCondition(spec.when, "actor " + id + " when");
       actorProjections.push(actor);
     }
@@ -1553,7 +1583,7 @@
 
     const usesSpectateCamera = cameras.some(camera => camera.mode === "spectate");
     const spec = {
-      version: usesV21 ? 21 : (usesV20 ? 20 : (usesV19 ? 19 : (usesV18 ? 18 : (usesV17 ? 17 : (usesV16 ? 16 : (usesV15 ? 15 : (usesV14 ? 14 : (usesV13 ? 13 : (usesPlayerApi ? 12 : (usesSpectateCamera ? 11 : (ownership === null ? 9 : 10))))))))))),
+      version: usesV22 ? 22 : usesV21 ? 21 : usesV20 ? 20 : usesV19 ? 19 : usesV18 ? 18 : usesV17 ? 17 : usesV16 ? 16 : usesV15 ? 15 : usesV14 ? 14 : usesV13 ? 13 : usesPlayerApi ? 12 : usesSpectateCamera ? 11 : ownership === null ? 9 : 10,
       fixedPoint,
       state: stateValues,
       tick: tickActions,

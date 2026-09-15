@@ -123,10 +123,28 @@ function ensureActorSpawnFunction(program, actor, ctx) {
   const tag = actorTag(ctx.namespace, actor.id), x = logicalCoordinate(program, actor.x), y = logicalCoordinate(program, actor.y), z = logicalCoordinate(program, actor.z), yaw = logicalCoordinate(program, actor.yaw);
   const bx = Math.floor(x), bz = Math.floor(z), body = [];
   if (!program.ownership) body.push(`execute in ${actor.dimension} run forceload add ${bx} ${bz}`);
-  const snbt = `{${entityTagsSnbt(ctx, tag)},NoGravity:1b,Invulnerable:1b,Silent:1b,Rotation:[${format3(yaw)}f,0f]}`;
+  const pitch = actor.pitch ? logicalCoordinate(program, actor.pitch) : 0;
+  const extended = actor.pitch !== null || actor.profile !== null || actor.hiddenLayers !== null || actor.pose !== null || actor.mainHand !== null || actor.equipment !== null;
+  const fields = [entityTagsSnbt(ctx, tag), "NoGravity:1b", "Invulnerable:1b", "Silent:1b", `Rotation:[${format3(yaw)}f,${extended ? `${format3(pitch)}f` : "0f"}]`];
+  if (extended) fields.push("immovable:1b");
+  if (actor.profile !== null) {
+    const profile = [];
+    for (const key of ["texture", "cape", "elytra", "model"]) if (actor.profile[key] !== undefined) profile.push(`${key}:${snbtQuoted(actor.profile[key])}`);
+    fields.push(`profile:{${profile.join(",")}}`);
+  }
+  if (actor.hiddenLayers !== null) fields.push(`hidden_layers:[${actor.hiddenLayers.map(value => snbtQuoted(value)).join(",")}]`);
+  if (actor.pose !== null) fields.push(`pose:${snbtQuoted(actor.pose)}`);
+  if (actor.mainHand !== null) fields.push(`main_hand:${snbtQuoted(actor.mainHand)}`);
+  const fallbackHead = actor.entityType === "minecraft:zombie" ? "minecraft:zombie_head" : actor.entityType === "minecraft:skeleton" ? "minecraft:skeleton_skull" : null;
+  if (extended) {
+    const equipment = { ...(actor.equipment || {}) };
+    if (fallbackHead && equipment.head === undefined) equipment.head = fallbackHead;
+    const slots = Object.entries(equipment).map(([slot, item]) => `${slot}:{id:${snbtQuoted(item)}}`);
+    if (slots.length) fields.push(`equipment:{${slots.join(",")}}`);
+  }
+  const snbt = `{${fields.join(",")}}`;
   body.push(`execute in ${actor.dimension} run summon minecraft:mannequin ${format6(x)} ${format6(y)} ${format6(z)} ${snbt}`);
-  const head = actor.entityType === "minecraft:zombie" ? "minecraft:zombie_head" : actor.entityType === "minecraft:skeleton" ? "minecraft:skeleton_skull" : null;
-  if (head) body.push(`execute in ${actor.dimension} run item replace entity @e[tag=${tag},limit=1] armor.head with ${head}`);
+  if (!extended && fallbackHead) body.push(`execute in ${actor.dimension} run item replace entity @e[tag=${tag},limit=1] armor.head with ${fallbackHead}`);
   if (!program.ownership) body.push(`execute in ${actor.dimension} run forceload remove ${bx} ${bz}`);
   ctx.functions.set(name, body);
 }
@@ -261,6 +279,7 @@ export function compileVanillaActorUpdates(program, lines, ctx) {
       lines.push(`execute ${condition(actor.condition, false, ctx)} in ${actor.dimension} if entity @e[tag=${tag},limit=1] run kill @e[tag=${tag}]`);
     }
     compileEntityAxis(actor.dimension, tag, "Pos[0]", actor.x, s, lines, ctx); compileEntityAxis(actor.dimension, tag, "Pos[1]", actor.y, s, lines, ctx); compileEntityAxis(actor.dimension, tag, "Pos[2]", actor.z, s, lines, ctx); compileEntityFloat(actor.dimension, tag, "Rotation[0]", actor.yaw, s, lines, ctx);
+    if (actor.pitch) compileEntityFloat(actor.dimension, tag, "Rotation[1]", actor.pitch, s, lines, ctx);
   }
 }
 

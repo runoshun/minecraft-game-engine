@@ -64,7 +64,30 @@ export function parseVanillaScene(vanilla, ctx, api) {
     out.actors = values.map((v, i) => {
       const p = `${api}.vanilla.actors[${i}]`, entityType = memberResource(v, "entityType", "minecraft:mannequin", p);
       if (!["minecraft:mannequin", "minecraft:zombie", "minecraft:skeleton"].includes(entityType)) fail(`${p}.entityType must be minecraft:mannequin, minecraft:zombie, or minecraft:skeleton`);
-      return { id: v.id, dimension: memberResource(v, "dimension", "minecraft:overworld", p), entityType, x: parseCoordinate(requiredMember(v, "x", p), ctx, `${p}.x`), y: parseCoordinate(requiredMember(v, "y", p), ctx, `${p}.y`), z: parseCoordinate(requiredMember(v, "z", p), ctx, `${p}.z`), yaw: has(v, "yaw") ? parseCoordinate(v.yaw, ctx, `${p}.yaw`) : { state: null, baseRaw: 0 }, condition: has(v, "when") ? parseCondition(requiredObject(v, "when", p), ctx, `${p}.when`) : null };
+      const v22Keys = ["pitch", "profile", "hiddenLayers", "pose", "mainHand", "equipment"];
+      if (ctx.version < 22 && v22Keys.some(key => has(v, key))) fail(`${p} expanded actor presentation requires portable version 22`);
+      const result = { id: v.id, dimension: memberResource(v, "dimension", "minecraft:overworld", p), entityType, x: parseCoordinate(requiredMember(v, "x", p), ctx, `${p}.x`), y: parseCoordinate(requiredMember(v, "y", p), ctx, `${p}.y`), z: parseCoordinate(requiredMember(v, "z", p), ctx, `${p}.z`), yaw: has(v, "yaw") ? parseCoordinate(v.yaw, ctx, `${p}.yaw`) : { state: null, baseRaw: 0 }, pitch: has(v, "pitch") ? parseCoordinate(v.pitch, ctx, `${p}.pitch`) : null, condition: has(v, "when") ? parseCondition(requiredObject(v, "when", p), ctx, `${p}.when`) : null, profile: null, hiddenLayers: null, pose: null, mainHand: null, equipment: null };
+      if (has(v, "profile")) {
+        const q = `${p}.profile`, profile = requiredObject(v, "profile", p), allowed = new Set(["texture", "cape", "elytra", "model"]);
+        for (const key of Object.keys(profile)) if (!allowed.has(key)) fail(`${q}.${key} is not supported`);
+        result.profile = {};
+        for (const key of ["texture", "cape", "elytra"]) if (has(profile, key)) result.profile[key] = memberResource(profile, key, null, q);
+        if (has(profile, "model")) { if (profile.model !== "wide" && profile.model !== "slim") fail(`${q}.model must be wide or slim`); result.profile.model = profile.model; }
+      }
+      if (has(v, "hiddenLayers")) {
+        const layers = requiredArray(v, "hiddenLayers", p), allowed = new Set(["cape", "jacket", "left_sleeve", "right_sleeve", "left_pants_leg", "right_pants_leg", "hat"]);
+        if (layers.length > 7 || new Set(layers).size !== layers.length || layers.some(layer => typeof layer !== "string" || !allowed.has(layer))) fail(`${p}.hiddenLayers contains an unsupported or duplicate layer`);
+        result.hiddenLayers = [...layers];
+      }
+      if (has(v, "pose")) { if (!["standing", "crouching", "swimming", "fall_flying", "sleeping"].includes(v.pose)) fail(`${p}.pose is unsupported`); result.pose = v.pose; }
+      if (has(v, "mainHand")) { if (v.mainHand !== "left" && v.mainHand !== "right") fail(`${p}.mainHand must be left or right`); result.mainHand = v.mainHand; }
+      if (has(v, "equipment")) {
+        const q = `${p}.equipment`, equipment = requiredObject(v, "equipment", p), slots = new Set(["head", "chest", "legs", "feet", "mainhand", "offhand"]);
+        for (const key of Object.keys(equipment)) if (!slots.has(key)) fail(`${q}.${key} is not supported`);
+        result.equipment = {};
+        for (const key of slots) if (has(equipment, key)) result.equipment[key] = memberResource(equipment, key, null, q);
+      }
+      return result;
     });
   }
   if (has(vanilla, "worldBatches")) {

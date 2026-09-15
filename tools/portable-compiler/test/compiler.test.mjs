@@ -986,6 +986,7 @@ test("representative checked-in examples compile deterministically", () => {
     ["examples/portable-persistent-grid/datapack/data/portable_persistent_grid/mcgame/main.ts", "portable_persistent_grid", 19],
     ["examples/portable-selection-ui/datapack/data/portable_selection_ui/mcgame/main.ts", "portable_selection_ui", 20],
     ["examples/portable-dialog-ui/datapack/data/portable_dialog_ui/mcgame/main.ts", "portable_dialog_ui", 21],
+    ["examples/portable-actor-presentation/datapack/data/portable_actor_v22/mcgame/main.ts", "portable_actor_v22", 22],
   ];
   for (const [relative, namespace, expectedVersion] of cases) {
     const source = fs.readFileSync(path.join(root, relative), "utf8");

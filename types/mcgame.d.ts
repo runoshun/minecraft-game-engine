@@ -79,6 +79,16 @@ type PortableVanillaActorProjection = {
   yaw?: PortableVanillaCoordinate;
   when?: PortableComparison;
 };
+type PortableVanillaActorProfileV22 = { texture?: string; cape?: string; elytra?: string; model?: "wide" | "slim" };
+type PortableVanillaActorEquipmentV22 = { head?: string; chest?: string; legs?: string; feet?: string; mainhand?: string; offhand?: string };
+type PortableVanillaActorProjectionV22 = PortableVanillaActorProjection & {
+  pitch?: PortableVanillaCoordinate;
+  profile?: PortableVanillaActorProfileV22;
+  hiddenLayers?: Array<"cape" | "jacket" | "left_sleeve" | "right_sleeve" | "left_pants_leg" | "right_pants_leg" | "hat">;
+  pose?: "standing" | "crouching" | "swimming" | "fall_flying" | "sleeping";
+  mainHand?: "left" | "right";
+  equipment?: PortableVanillaActorEquipmentV22;
+};
 type PortableVanillaWorldBlockWrite = { x: number; y: number; z: number; block: string };
 type PortableVanillaWorldBatch = {
   id: string;
@@ -608,7 +618,11 @@ type PortableProgramSpecV21 = Omit<PortableProgramSpecV20, "version" | "tick" | 
   version: 21; selections?: Array<PortableSelectionSpecV21 | PortableConfirmationSpecV21>; forms?: PortableFormSpecV21[]; tick: PortableV21Action[];
   vanilla?: Omit<NonNullable<PortableProgramSpecV18["vanilla"]>, "playerHuds"> & { playerHuds?: Array<{ id: string; audience: PortablePlayerSetRefV14; session?: string; tokens: Array<{ text: string } | { value: PortableV21Value }> }> };
 };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14 | PortableProgramSpecV15 | PortableProgramSpecV16 | PortableProgramSpecV17 | PortableProgramSpecV18 | PortableProgramSpecV19 | PortableProgramSpecV20 | PortableProgramSpecV21;
+type PortableProgramSpecV22 = Omit<PortableProgramSpecV21, "version" | "vanilla"> & {
+  version: 22;
+  vanilla?: Omit<NonNullable<PortableProgramSpecV21["vanilla"]>, "actors"> & { actors?: PortableVanillaActorProjectionV22[] };
+};
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14 | PortableProgramSpecV15 | PortableProgramSpecV16 | PortableProgramSpecV17 | PortableProgramSpecV18 | PortableProgramSpecV19 | PortableProgramSpecV20 | PortableProgramSpecV21 | PortableProgramSpecV22;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -786,6 +800,12 @@ type PortableDslActorSpec = {
   y: PortableDslCoordinate;
   z: PortableDslCoordinate;
   yaw?: PortableDslCoordinate;
+  pitch?: PortableDslCoordinate;
+  profile?: PortableVanillaActorProfileV22;
+  hiddenLayers?: Array<"cape" | "jacket" | "left_sleeve" | "right_sleeve" | "left_pants_leg" | "right_pants_leg" | "hat">;
+  pose?: "standing" | "crouching" | "swimming" | "fall_flying" | "sleeping";
+  mainHand?: "left" | "right";
+  equipment?: PortableVanillaActorEquipmentV22;
   when?: PortableDslCondition;
 };
 type PortableDslWorldBlockWrite = { x: number; y: number; z: number; block: string };
