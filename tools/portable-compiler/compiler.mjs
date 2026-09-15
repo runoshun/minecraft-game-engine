@@ -4,6 +4,7 @@ import { compileActions } from "./compile-actions.mjs";
 import { CompileContext, inputHolder, ownerTag, playerInitObjective } from "./compile-context.mjs";
 import {
   cleanupLines, compileVanillaActorLoad, compileVanillaActorUpdates, compileVanillaCameraLoad,
+  compileVanillaInteractionLoad, compileVanillaInteractionUpdates,
   compileVanillaCameraLock, compileVanillaCameraUpdates, compileVanillaHuds, compileVanillaInputs,
   compileVanillaParticleLoad, compileVanillaParticles, compileVanillaProjectionLoad,
   compileVanillaProjections, compileVanillaSidebarLoad, compileVanillaSidebars,
@@ -73,6 +74,7 @@ export function compileDatapack(program, namespace, outputRoot) {
   compileVanillaProjections(program, tick, ctx);
   compileVanillaTextUpdates(program, tick, ctx);
   compileVanillaActorUpdates(program, tick, ctx);
+  compileVanillaInteractionUpdates(program, tick, ctx);
   prepareVanillaWorldBatches(program, tick, ctx);
   compileVanillaCameraUpdates(program, tick, ctx);
   compileVanillaCameraLock(program, tick, ctx);
@@ -110,6 +112,7 @@ export function compileDatapack(program, namespace, outputRoot) {
     compileVanillaProjectionLoad(program, ownedInit, ctx);
     compileVanillaTextLoad(program, ownedInit, ctx);
     compileVanillaActorLoad(program, ownedInit, ctx);
+    compileVanillaInteractionLoad(program, ownedInit, ctx);
     compileVanillaCameraLoad(program, ownedInit, ctx);
     compileVanillaParticleLoad(program, ownedInit, ctx);
     compileVanillaSoundLoad(program, ownedInit, ctx);
@@ -120,6 +123,7 @@ export function compileDatapack(program, namespace, outputRoot) {
     compileVanillaProjectionLoad(program, load, ctx);
     compileVanillaTextLoad(program, load, ctx);
     compileVanillaActorLoad(program, load, ctx);
+    compileVanillaInteractionLoad(program, load, ctx);
     compileVanillaCameraLoad(program, load, ctx);
     compileVanillaParticleLoad(program, load, ctx);
     compileVanillaSoundLoad(program, load, ctx);
@@ -205,6 +209,7 @@ export function compileDatapack(program, namespace, outputRoot) {
     projectionCount: program.projections.length,
     textCount: program.texts.length,
     actorCount: program.actors.length,
+    interactionCount: program.interactions.length,
     worldBatchCount: program.worldBatches.length,
     cameraCount: program.cameras.length,
     particleCount: program.particles.length,

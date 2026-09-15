@@ -1,4 +1,4 @@
-import { LIMITS, fail, has, isObject, requiredArray, requiredMember, requiredObject, requiredString, memberString, boundedInteger, memberResource, portableId, sortedKeys } from "./utils.mjs";
+import { LIMITS, fail, has, isObject, requiredArray, requiredMember, requiredObject, requiredString, memberString, memberNumber, memberBoolean, boundedInteger, memberResource, portableId, sortedKeys } from "./utils.mjs";
 import { parseCondition, parseCoordinate, parseTokens } from "./parse-value.mjs";
 import { parseVec3 } from "./parse-shapes.mjs";
 import { parseGridWorlds } from "./parse-runtime.mjs";
@@ -14,7 +14,7 @@ function uniqueIds(values, path) {
 }
 
 export function parseVanillaScene(vanilla, ctx, api) {
-  const out = { inputs: {}, projections: [], texts: [], actors: [], worldBatches: [], gridWorlds: [] };
+  const out = { inputs: {}, projections: [], texts: [], actors: [], interactions: [], worldBatches: [], gridWorlds: [] };
   if (has(vanilla, "inputs")) {
     const bindings = requiredObject(vanilla, "inputs", `${api}.vanilla`);
     const allowed = ["first_player_hotbar_slot", "first_player_forward", "first_player_backward", "first_player_left", "first_player_right", "first_player_jump", "first_player_sneak", "first_player_sprint"];
@@ -88,6 +88,28 @@ export function parseVanillaScene(vanilla, ctx, api) {
         for (const key of slots) if (has(equipment, key)) result.equipment[key] = memberResource(equipment, key, null, q);
       }
       return result;
+    });
+  }
+  if (has(vanilla, "interactions")) {
+    if (ctx.version < 23) fail(`${api}.vanilla.interactions requires portable version 23`);
+    const values = requiredArray(vanilla, "interactions", `${api}.vanilla`);
+    if (values.length > LIMITS.interactions) fail(`${api}.vanilla.interactions exceeds max interaction count ${LIMITS.interactions}`);
+    uniqueIds(values, `${api}.vanilla.interactions`);
+    out.interactions = values.map((v, i) => {
+      const p = `${api}.vanilla.interactions[${i}]`;
+      const width = memberNumber(v, "width", 1, p), height = memberNumber(v, "height", 1, p);
+      if (width < 0.01 || width > 64) fail(`${p}.width must be between 0.01 and 64`);
+      if (height < 0.01 || height > 64) fail(`${p}.height must be between 0.01 and 64`);
+      return {
+        id: v.id,
+        dimension: memberResource(v, "dimension", "minecraft:overworld", p),
+        x: parseCoordinate(requiredMember(v, "x", p), ctx, `${p}.x`),
+        y: parseCoordinate(requiredMember(v, "y", p), ctx, `${p}.y`),
+        z: parseCoordinate(requiredMember(v, "z", p), ctx, `${p}.z`),
+        width, height,
+        response: memberBoolean(v, "response", true, p),
+        condition: has(v, "when") ? parseCondition(requiredObject(v, "when", p), ctx, `${p}.when`) : null,
+      };
     });
   }
   if (has(vanilla, "worldBatches")) {

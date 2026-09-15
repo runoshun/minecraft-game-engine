@@ -144,7 +144,7 @@ export function parseProgram(spec, api = "portable.define") {
     gridWorlds: new Set(),
     playerScope: false,
   };
-  let vanilla = { inputs: {}, projections: [], texts: [], actors: [], worldBatches: [], gridWorlds: [], cameras: [], particles: [], sounds: [], huds: [], playerHuds: [], sidebars: [], ownership: null };
+  let vanilla = { inputs: {}, projections: [], texts: [], actors: [], interactions: [], worldBatches: [], gridWorlds: [], cameras: [], particles: [], sounds: [], huds: [], playerHuds: [], sidebars: [], ownership: null };
   if (has(spec, "vanilla")) {
     if (version < 2) fail(`${api}.vanilla requires portable version 2`);
     const raw = requiredObject(spec, "vanilla", api);
@@ -153,13 +153,14 @@ export function parseProgram(spec, api = "portable.define") {
   if (version >= 12 && Object.keys(vanilla.inputs).length) fail(`${api}.vanilla.inputs first_player_* bindings are v1-v11 compatibility only; use player.input.* in v12`);
   if (version >= 12 && vanilla.huds.length) fail(`${api}.vanilla.huds is single-controller v1-v11 presentation; use player.hud(...) in v12`);
   ctx.gridWorlds = new Set(vanilla.gridWorlds.map(value => value.id));
+  ctx.interactions = new Set(vanilla.interactions.map(value => value.id));
   if (version >= 16) validateSessionGridWorldFootprints(grids, sessions, vanilla.gridWorlds, vanilla.ownership, api);
 
   const tickActions = parseActions(requiredArray(spec, "tick", api), ctx, `${api}.tick`);
   return {
     version, fixedPoint, initialState, persistentState, initialPlayerState, initialInputs, playerInputs, playerTeams, sessions, grids, persistentGrids, rngs, selections, forms,
     vanillaInputs: vanilla.inputs, projections: vanilla.projections, texts: vanilla.texts,
-    actors: vanilla.actors, worldBatches: vanilla.worldBatches, gridWorlds: vanilla.gridWorlds, cameras: vanilla.cameras,
+    actors: vanilla.actors, interactions: vanilla.interactions, worldBatches: vanilla.worldBatches, gridWorlds: vanilla.gridWorlds, cameras: vanilla.cameras,
     particles: vanilla.particles, sounds: vanilla.sounds, huds: vanilla.huds, playerHuds: vanilla.playerHuds,
     sidebars: vanilla.sidebars, ownership: vanilla.ownership, tickActions,
     collisionDivisor: Math.max(1, Math.floor((fixedPoint + 99) / 100)),

@@ -12,6 +12,7 @@ export function ownerTag(namespace) { return `mcg_o_${hashBase36(namespace)}`; }
 export function projectionTag(namespace, id) { return `mcg_v_${hashBase36(namespace)}_${id}`; }
 export function textTag(namespace, id) { return `mcg_t_${hashBase36(namespace)}_${id}`; }
 export function actorTag(namespace, id) { return `mcg_a_${hashBase36(namespace)}_${id}`; }
+export function interactionTag(namespace, id) { return `mcg_i_${hashBase36(namespace)}_${id}`; }
 export function cameraTag(namespace, id) { return `mcg_c_${hashBase36(namespace)}_${id}`; }
 export function particleTag(namespace, id) { return `mcg_p_${hashBase36(namespace)}_${id}`; }
 export function soundTag(namespace, id) { return `mcg_s_${hashBase36(namespace)}_${id}`; }

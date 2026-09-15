@@ -23,6 +23,7 @@ export function participantSelector() {
 function collectActionPlayerSets(actions, out) {
   for (const action of actions) {
     if (action.op === "for_each_player" || action.op === "for_single_player" || action.op === "player_reduce") out.set(playerSetKey(action.players), action.players);
+    if (action.op === "interaction_use") out.set("all_online", "all_online");
     if (Array.isArray(action.actions)) collectActionPlayerSets(action.actions, out);
     if (Array.isArray(action.then)) collectActionPlayerSets(action.then, out);
     if (Array.isArray(action.else)) collectActionPlayerSets(action.else, out);

@@ -16,6 +16,7 @@
   const GRID_WORLD = Symbol("mcgame.portableDsl.gridWorld");
   const SELECTION = Symbol("mcgame.portableDsl.selection");
   const FORM = Symbol("mcgame.portableDsl.form");
+  const INTERACTION = Symbol("mcgame.portableDsl.interaction");
 
   function fail(message) {
     throw new Error("portableDsl: " + message);
@@ -100,6 +101,9 @@
     const projections = [];
     const texts = [];
     const actorProjections = [];
+    const interactions = [];
+    const interactionIds = new Set();
+    const interactionUseIds = new Set();
     const worldBatches = [];
     let worldWriteCount = 0;
     const cameras = [];
@@ -113,6 +117,7 @@
     const forms = [];
     const formIds = new Set();
     let tickActions = null;
+    let tickRootSink = null;
     let actionSink = null;
     let activePlayerScope = null;
     let activePlayerMode = null;
@@ -133,6 +138,7 @@
     let usesV20 = false;
     let usesV21 = false;
     let usesV22 = false;
+    let usesV23 = false;
 
     function assertUnique(name) {
       if (Object.prototype.hasOwnProperty.call(stateValues, name) || Object.prototype.hasOwnProperty.call(persistentStateValues, name) || Object.prototype.hasOwnProperty.call(inputValues, name)) {
@@ -318,7 +324,12 @@
     function tick(callback) {
       if (tickActions !== null) fail("tick(...) may only be declared once");
       if (actionSink !== null) fail("tick(...) cannot be nested");
-      tickActions = captureActions(callback, "tick");
+      if (typeof callback !== "function") fail("tick callback is required");
+      const captured = [];
+      actionSink = captured;
+      tickRootSink = captured;
+      try { callback(); } finally { actionSink = null; tickRootSink = null; }
+      tickActions = captured;
     }
 
     function players() {
@@ -1306,6 +1317,66 @@
       texts.push(projection);
     }
 
+    function interactionDeclaration(id, spec) {
+      assertSharedPresentation("interaction(...)");
+      if (typeof id !== "string" || !/^[a-z][a-z0-9_]{0,23}$/.test(id)) fail("interaction id must match [a-z][a-z0-9_]{0,23}");
+      if (interactionIds.has(id)) fail("duplicate interaction id: " + id);
+      if (interactions.length >= 64) fail("portable v23 supports at most 64 interaction(...) declarations");
+      if (spec == null || typeof spec !== "object") fail("interaction " + id + " spec must be an object");
+      const width = finiteNumber(spec.width === undefined ? 1 : spec.width, "interaction " + id + " width");
+      const height = finiteNumber(spec.height === undefined ? 1 : spec.height, "interaction " + id + " height");
+      if (width < 0.01 || width > 64) fail("interaction " + id + " width must be between 0.01 and 64");
+      if (height < 0.01 || height > 64) fail("interaction " + id + " height must be between 0.01 and 64");
+      const response = spec.response === undefined ? true : spec.response;
+      if (typeof response !== "boolean") fail("interaction " + id + " response must be boolean");
+      const declaration = {
+        id,
+        dimension: spec.dimension === undefined ? "minecraft:overworld" : spec.dimension,
+        x: normalizeCoordinate(spec.x, "interaction " + id + " x"),
+        y: normalizeCoordinate(spec.y, "interaction " + id + " y"),
+        z: normalizeCoordinate(spec.z, "interaction " + id + " z"),
+        width, height, response,
+      };
+      if (typeof declaration.dimension !== "string" || declaration.dimension.length === 0) fail("interaction " + id + " dimension must be a resource id string");
+      if (spec.when !== undefined) declaration.when = serializedCondition(spec.when, "interaction " + id + " when");
+      interactions.push(declaration);
+      interactionIds.add(id);
+      usesV23 = true;
+      usesPlayerApi = true;
+
+      function onUse(callback) {
+        if (actionSink === null) fail("interaction " + id + ".onUse(...) is only valid inside tick(...)");
+        if (actionSink !== tickRootSink || activePlayerScope !== null || activeSessionScope !== null) fail("interaction " + id + ".onUse(...) must be declared directly in the root tick scope");
+        if (interactionUseIds.has(id)) fail("interaction " + id + " may declare only one onUse(...) handler");
+        if (typeof callback !== "function") fail("interaction " + id + ".onUse(...) callback is required");
+        interactionUseIds.add(id);
+        const scope = ++nextPlayerScope;
+        const input = {};
+        for (const name of ["hotbarSlot", "forward", "backward", "left", "right", "jump", "sneak", "sprint"]) {
+          Object.defineProperty(input, name, { enumerable: true, get() { return playerInputRef(name, scope); } });
+        }
+        const player = Object.freeze({
+          state(name, initial) {
+            if (activePlayerScope !== scope) fail("player.state(...) is only valid in its interaction onUse PlayerContext");
+            return makePlayerState(name, initial, scope);
+          },
+          input: Object.freeze(input),
+          selection(value) { return playerSelectionRef(scope, value); },
+          form(value) { return playerFormRef(scope, value); },
+          hud() { fail("player.hud(...) is not supported inside interaction onUse; HUD audiences must be statically declared"); },
+        });
+        const previousSink = actionSink, previousScope = activePlayerScope, previousMode = activePlayerMode, previousRoot = playerRootSink;
+        const captured = [];
+        actionSink = captured; activePlayerScope = scope; activePlayerMode = "single"; playerRootSink = captured;
+        try { callback(player); } finally {
+          actionSink = previousSink; activePlayerScope = previousScope; activePlayerMode = previousMode; playerRootSink = previousRoot;
+        }
+        emit({ op: "interaction_use", interaction: id, actions: captured });
+      }
+
+      return Object.freeze({ [INTERACTION]: true, id, onUse });
+    }
+
     function actorProjection(id, spec) {
       assertSharedPresentation("actor(...)");
       if (typeof id !== "string" || id.length === 0) fail("actor id must be a non-empty string");
@@ -1558,6 +1629,7 @@
       block,
       text: textProjection,
       actor: actorProjection,
+      interaction: interactionDeclaration,
       worldBatch,
       worldFill,
       camera: cameraProjection,
@@ -1583,7 +1655,7 @@
 
     const usesSpectateCamera = cameras.some(camera => camera.mode === "spectate");
     const spec = {
-      version: usesV22 ? 22 : usesV21 ? 21 : usesV20 ? 20 : usesV19 ? 19 : usesV18 ? 18 : usesV17 ? 17 : usesV16 ? 16 : usesV15 ? 15 : usesV14 ? 14 : usesV13 ? 13 : usesPlayerApi ? 12 : usesSpectateCamera ? 11 : ownership === null ? 9 : 10,
+      version: usesV23 ? 23 : usesV22 ? 22 : usesV21 ? 21 : usesV20 ? 20 : usesV19 ? 19 : usesV18 ? 18 : usesV17 ? 17 : usesV16 ? 16 : usesV15 ? 15 : usesV14 ? 14 : usesV13 ? 13 : usesPlayerApi ? 12 : usesSpectateCamera ? 11 : ownership === null ? 9 : 10,
       fixedPoint,
       state: stateValues,
       tick: tickActions,
@@ -1607,13 +1679,14 @@
       spec.playerState = playerStateValues;
       spec.playerInputs = Array.from(playerInputs);
     }
-    if (ownership !== null || Object.keys(vanillaInputs).length > 0 || projections.length > 0 || texts.length > 0 || actorProjections.length > 0 || worldBatches.length > 0 || gridWorlds.length > 0 || cameras.length > 0 || particles.length > 0 || sounds.length > 0 || huds.length > 0 || playerHuds.length > 0 || sidebars.length > 0) {
+    if (ownership !== null || Object.keys(vanillaInputs).length > 0 || projections.length > 0 || texts.length > 0 || actorProjections.length > 0 || interactions.length > 0 || worldBatches.length > 0 || gridWorlds.length > 0 || cameras.length > 0 || particles.length > 0 || sounds.length > 0 || huds.length > 0 || playerHuds.length > 0 || sidebars.length > 0) {
       spec.vanilla = {};
       if (ownership !== null) spec.vanilla.ownership = ownership;
       if (Object.keys(vanillaInputs).length > 0) spec.vanilla.inputs = vanillaInputs;
       if (projections.length > 0) spec.vanilla.projections = projections;
       if (texts.length > 0) spec.vanilla.texts = texts;
       if (actorProjections.length > 0) spec.vanilla.actors = actorProjections;
+      if (interactions.length > 0) spec.vanilla.interactions = interactions;
       if (worldBatches.length > 0) spec.vanilla.worldBatches = worldBatches;
       if (gridWorlds.length > 0) spec.vanilla.gridWorlds = gridWorlds;
       if (cameras.length > 0) spec.vanilla.cameras = cameras;

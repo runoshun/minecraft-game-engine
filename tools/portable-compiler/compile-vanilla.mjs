@@ -1,6 +1,6 @@
 import { condition } from "./compile-actions.mjs";
 import {
-  actorTag, cameraTag, inputHolder, ownerTag, particleTag, projectionTag,
+  actorTag, cameraTag, inputHolder, interactionTag, ownerTag, particleTag, projectionTag,
   sidebarObjectiveName, sidebarRowHolder, soundTag, stateHolder, textTag,
 } from "./compile-context.mjs";
 import { floatLiteral, floorDiv, format3, format6, numberLiteral, scale, snbtQuoted, storeScale } from "./utils.mjs";
@@ -161,6 +161,31 @@ export function compileVanillaActorLoad(program, lines, ctx) {
   }
 }
 
+function ensureInteractionSpawnFunction(program, interaction, ctx) {
+  const name = `interaction_${interaction.id}_spawn`;
+  if (ctx.functions.has(name)) return;
+  const tag = interactionTag(ctx.namespace, interaction.id);
+  const x = logicalCoordinate(program, interaction.x), y = logicalCoordinate(program, interaction.y), z = logicalCoordinate(program, interaction.z);
+  const bx = Math.floor(x), bz = Math.floor(z), body = [];
+  if (!program.ownership) body.push(`execute in ${interaction.dimension} run forceload add ${bx} ${bz}`);
+  const snbt = `{${entityTagsSnbt(ctx, tag)},width:${floatLiteral(interaction.width)},height:${floatLiteral(interaction.height)},response:${interaction.response ? "1b" : "0b"}}`;
+  body.push(`execute in ${interaction.dimension} run summon minecraft:interaction ${format6(x)} ${format6(y)} ${format6(z)} ${snbt}`);
+  if (!program.ownership) body.push(`execute in ${interaction.dimension} run forceload remove ${bx} ${bz}`);
+  ctx.functions.set(name, body);
+}
+
+export function compileVanillaInteractionLoad(program, lines, ctx) {
+  for (const interaction of program.interactions) {
+    const tag = interactionTag(ctx.namespace, interaction.id), x = logicalCoordinate(program, interaction.x), z = logicalCoordinate(program, interaction.z), bx = Math.floor(x), bz = Math.floor(z);
+    ensureInteractionSpawnFunction(program, interaction, ctx);
+    if (!program.ownership) lines.push(`execute in ${interaction.dimension} run forceload add ${bx} ${bz}`);
+    lines.push(`execute in ${interaction.dimension} run kill @e[tag=${tag}]`);
+    const spawn = `${ctx.namespace}:portable/interaction_${interaction.id}_spawn`;
+    lines.push(interaction.condition ? `execute ${condition(interaction.condition, true, ctx)} run function ${spawn}` : `function ${spawn}`);
+    if (!program.ownership) lines.push(`execute in ${interaction.dimension} run forceload remove ${bx} ${bz}`);
+  }
+}
+
 function ensureWorldBatchFunction(batch, ctx) {
   const name = `world_${batch.id}`;
   if (ctx.functions.has(name)) return;
@@ -283,6 +308,22 @@ export function compileVanillaActorUpdates(program, lines, ctx) {
   }
 }
 
+export function compileVanillaInteractionUpdates(program, lines, ctx) {
+  const s = storeScale(program.fixedPoint);
+  for (const interaction of program.interactions) {
+    const tag = interactionTag(ctx.namespace, interaction.id);
+    ensureInteractionSpawnFunction(program, interaction, ctx);
+    const spawn = `${ctx.namespace}:portable/interaction_${interaction.id}_spawn`;
+    if (interaction.condition) {
+      lines.push(`execute ${condition(interaction.condition, true, ctx)} in ${interaction.dimension} unless entity @e[tag=${tag},limit=1] run function ${spawn}`);
+      lines.push(`execute ${condition(interaction.condition, false, ctx)} in ${interaction.dimension} if entity @e[tag=${tag},limit=1] run kill @e[tag=${tag}]`);
+    }
+    compileEntityAxis(interaction.dimension, tag, "Pos[0]", interaction.x, s, lines, ctx);
+    compileEntityAxis(interaction.dimension, tag, "Pos[1]", interaction.y, s, lines, ctx);
+    compileEntityAxis(interaction.dimension, tag, "Pos[2]", interaction.z, s, lines, ctx);
+  }
+}
+
 export function compileVanillaCameraUpdates(program, lines, ctx) {
   const s = storeScale(program.fixedPoint);
   for (const camera of program.cameras) {
@@ -394,6 +435,7 @@ export function cleanupLines(program, ctx) {
   for (const p of program.projections) appendEntityCleanup(lines, program, p.dimension, projectionTag(ctx.namespace, p.id), p.x, p.z);
   for (const t of program.texts) appendEntityCleanup(lines, program, t.dimension, textTag(ctx.namespace, t.id), t.x, t.z);
   for (const a of program.actors) appendEntityCleanup(lines, program, a.dimension, actorTag(ctx.namespace, a.id), a.x, a.z);
+  for (const i of program.interactions) appendEntityCleanup(lines, program, i.dimension, interactionTag(ctx.namespace, i.id), i.x, i.z);
   for (const c of program.cameras) appendEntityCleanup(lines, program, c.dimension, cameraTag(ctx.namespace, c.id), c.x, c.z);
   for (const p of program.particles) if (dynamic(p.x, p.y, p.z)) appendEntityCleanup(lines, program, p.dimension, particleTag(ctx.namespace, p.id), p.x, p.z);
   for (const s of program.sounds) if (dynamic(s.x, s.y, s.z)) appendEntityCleanup(lines, program, s.dimension, soundTag(ctx.namespace, s.id), s.x, s.z);
@@ -413,6 +455,7 @@ export function validateOwnershipCoverage(program) {
   for (const p of program.projections) check(p.dimension, p.x, p.z, `projection ${p.id}`);
   for (const t of program.texts) check(t.dimension, t.x, t.z, `text ${t.id}`);
   for (const a of program.actors) check(a.dimension, a.x, a.z, `actor ${a.id}`);
+  for (const i of program.interactions) check(i.dimension, i.x, i.z, `interaction ${i.id}`);
   for (const c of program.cameras) check(c.dimension, c.x, c.z, `camera ${c.id}`);
   for (const p of program.particles) if (dynamic(p.x, p.y, p.z)) check(p.dimension, p.x, p.z, `particle ${p.id}`);
   for (const s of program.sounds) if (dynamic(s.x, s.y, s.z)) check(s.dimension, s.x, s.z, `sound ${s.id}`);

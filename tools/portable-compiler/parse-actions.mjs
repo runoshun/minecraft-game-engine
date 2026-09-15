@@ -63,6 +63,17 @@ export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }
       out.push(op === "player_negate" ? { op, target } : { op, target, value: parseValue(requiredMember(a, "value", p), ctx, `${p}.value`) });
       continue;
     }
+    if (op === "interaction_use") {
+      if (ctx.version < 23) fail(`${p}.op requires portable version 23`);
+      if (depth !== 0 || ctx.playerScope || ctx.sessionScope) fail(`${p}.op must be declared directly in the root tick action list`);
+      const interaction = requiredString(a, "interaction", p);
+      if (!ctx.interactions?.has(interaction)) fail(`${p}.interaction references unknown interaction ${interaction}`);
+      if (!counter.interactionUses) counter.interactionUses = new Set();
+      if (counter.interactionUses.has(interaction)) fail(`${p} duplicate use handler for interaction ${interaction}`);
+      counter.interactionUses.add(interaction);
+      out.push({ op, interaction, actions: parseActions(requiredArray(a, "actions", p), childContext(ctx, "single"), `${p}.actions`, depth + 1, counter) });
+      continue;
+    }
     if (op === "for_session") {
       if (ctx.version < 15) fail(`${p}.op requires portable version 15`);
       if (ctx.sessionScope) fail(`${p} nested SessionContext is not supported`);

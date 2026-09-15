@@ -28,7 +28,7 @@ The compiler accepts one entry TypeScript source, namespace, and output director
 
 Portable IR is the versioned semantic contract between authoring and vanilla lowering. It contains deterministic fixed-point values, bounded actions, collision primitives, declarative presentation/world resources, input mappings, and lifecycle metadata. Arbitrary JavaScript callbacks are not an IR feature.
 
-IR versions 1 through 22 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14, ADR 0024 defines team-bound logical sessions in v15, ADR 0025 defines session-local GridWorld projection in v16, ADR 0027 defines bounded player/session reductions in v17, ADR 0028 defines bounded persistent scalar state in v18, ADR 0029 defines bounded persistent Grid state in v19, ADR 0030 defines bounded native-dialog selection UI in v20, ADR 0031 defines bounded rich/typed native-dialog UI in v21, and ADR 0032 defines bounded expanded mannequin actor presentation in v22.
+IR versions 1 through 23 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14, ADR 0024 defines team-bound logical sessions in v15, ADR 0025 defines session-local GridWorld projection in v16, ADR 0027 defines bounded player/session reductions in v17, ADR 0028 defines bounded persistent scalar state in v18, ADR 0029 defines bounded persistent Grid state in v19, ADR 0030 defines bounded native-dialog selection UI in v20, ADR 0031 defines bounded rich/typed native-dialog UI in v21, ADR 0032 defines bounded expanded mannequin actor presentation in v22, and ADR 0034 defines bounded world right-click interaction input in v23.
 
 ### Generated datapack
 
@@ -106,6 +106,7 @@ The compiler supports bounded declarative:
 - block Displays with state-backed coordinates, scale/translation, and optional visibility condition;
 - text Displays with literal/state/input tokens, state-backed coordinates, scale, billboard, and optional visibility;
 - mannequin actors with state-backed position/yaw/pitch and optional lifetime condition; v22 adds bounded static profile/skin-layer/pose/hand/equipment presentation, while zombie/skeleton semantic appearances still use mannequin carriers with vanilla mob-head fallback;
+- v23 compiler-owned `minecraft:interaction` hitboxes with state-backed position, optional lifetime condition, static width/height/response, and right-click dispatch to the recorded player;
 - particle and sound emitters with optional conditions;
 - one actionbar HUD;
 - one global vanilla scoreboard sidebar with 1..15 rows;
@@ -294,6 +295,14 @@ The vanilla backend still always owns a `minecraft:mannequin`. V22-presented act
 
 Actor replacement/reload/cleanup semantics do not change. A false `when` removes the owned mannequin and a later true condition recreates it with the full declaration. V22 introduces no registry-bootstrap resource; ordinary datapack `/reload` remains sufficient unless another declared capability such as v20+ dialogs independently requires restart for changed registry entries.
 
+## World interaction use v23
+
+ADR 0034 adds a bounded vanilla right-click input primitive backed by compiler-owned `minecraft:interaction` entities. `game.interaction(id, spec)` declares at most 64 static hitboxes. Coordinates use the existing shared/state-backed coordinate model; width/height are static `0.01..64` values, `response` is a static boolean defaulting to `true`, and optional `when` owns the entity lifetime. Interactions participate in the existing ownership rectangle, staged initialization, stable tagging, reload replacement, and cleanup lifecycle.
+
+A handle's single `onUse(player => ...)` handler is declared directly in the root `game.tick(...)` scope. The backend executes the callback through vanilla `execute ... on target`, so `player` is the actual player whose right click Minecraft recorded. The callback uses an exact mutable PlayerContext subset: player-local state/input and selection/form operations are available, and shared state mutation is allowed under the existing single-player mutation rule. `player.hud(...)` is excluded because HUD declarations require a static PlayerSet audience.
+
+After dispatch, generated code removes the interaction entity's `interaction` compound. A right click is therefore an edge-like event rather than a persistent level and cannot replay every tick. Vanilla stores only the latest interaction record, so v23 deliberately does not promise a queued stream if multiple uses are collapsed before one compiler tick. Left-click/attack handling, arbitrary entity/NBT queries, dynamic hitbox shape/response, runtime-created interactions, session-local interaction declarations, and durable binding of the clicking player as a later controller are not part of v23. The feature adds no registry resource; ordinary `/reload` is sufficient.
+
 ## Planned capability roadmap after v16
 
 ADR 0026 establishes a capability-first roadmap: prioritize portable semantics that current game source cannot reproduce safely with existing primitives before automation or infrastructure that already has a workable explicit fallback. This is planning policy, not an implemented API contract; each capability requires its own ADR and Portable IR version decision before implementation.
@@ -307,7 +316,7 @@ The roadmap order is:
 
 ADR 0032 completes item 4 by extending rather than replacing the v7 lifecycle: actor carriers remain bounded compiler-owned mannequins with state-backed transforms/lifetime and zombie/skeleton mob-head intents, now with the v22 presentation fields described above. Runtime-created or unbounded entity collections remain out of scope.
 
-Automatic arena allocation, per-session ownership/dynamic chunk leasing, dynamic matchmaking, session-local presentation declarations, and per-player vanilla sidebars remain useful but lower priority because current prototypes have explicit workarounds. Bounded local TypeScript module/import authoring is implemented by ADR 0033 without changing Portable IR. Client-private scene visibility is still a genuine missing isolation feature, but spatially separate footprints are sufficient for current acceptance games, so privacy work is also behind the four capability priorities unless a retained game makes it a blocker.
+Automatic arena allocation, per-session ownership/dynamic chunk leasing, dynamic matchmaking, session-local presentation declarations, and per-player vanilla sidebars remain useful but lower priority because current prototypes have explicit workarounds. Bounded local TypeScript module/import authoring is implemented by ADR 0033 without changing Portable IR. Bounded world-object right-click input is implemented by Portable v23 / ADR 0034 without opening a generic Minecraft query/event API. Client-private scene visibility is still a genuine missing isolation feature, but spatially separate footprints are sufficient for current acceptance games, so privacy work is also behind the four capability priorities unless a retained game makes it a blocker.
 
 After those priorities, additional capability gaps include 3D/swept collision, deliberately scoped Minecraft world/entity queries, pathfinding/topology helpers, and generic runtime collections where existing Grid/fixed-slot patterns prove insufficient.
 
@@ -316,11 +325,11 @@ After those priorities, additional capability gaps include 3D/swept collision, d
 - TypeScript modules are local build-time composition only: at most 64 `.ts` files / 1,000,000 aggregate source bytes under the entry directory; Node built-ins, npm/bare packages, non-TypeScript assets, dynamic import, authored `require`, and circular imports are unsupported;
 - v1-v11 remain single-controller-oriented for compatibility; v12 is the multiplayer model;
 - fixed-point arithmetic relies on Minecraft scoreboard 32-bit behavior; generated commands do not add generic overflow guards;
-- no runtime generic arrays/collections, arbitrary packet-event dispatch, arbitrary inventory/form/dialog API, arbitrary NBT/storage API, or arbitrary Minecraft queries; v21 provides bounded static rich native-dialog content, confirmation, and boolean/option/integer-range single-input forms, and v22 provides bounded static mannequin profile/pose/equipment presentation without exposing arbitrary entity NBT; free-form text input, generic multi-field/dynamic forms, arbitrary clicks/commands, inventory GUI ownership, generic entity mutation, and runtime actor collections remain unsupported;
+- no runtime generic arrays/collections, arbitrary packet-event dispatch, arbitrary inventory/form/dialog API, arbitrary NBT/storage API, or arbitrary Minecraft queries; v21 provides bounded static rich native-dialog content, v22 provides bounded static mannequin profile/pose/equipment presentation, and v23 provides bounded right-click/use events through compiler-owned interaction entities; free-form text input, generic multi-field/dynamic forms, arbitrary click/attack events or commands, inventory GUI ownership, generic entity mutation, durable interaction-controller identity, and runtime entity collections remain unsupported;
 - one server-global sidebar; v14 permits up to eight camera declarations only for disjoint external-team audiences;
 - bounded 2D logic collision only, not Minecraft hitbox queries or 3D/swept physics;
 - v8 world projection is compile-time declared and persistent; v13 additionally provides bounded incremental runtime grid projection, also persistent;
-- v15 adds independent team-bound logical sessions; v16 adds explicit session-local Grid-to-world footprints inside one shared ownership rectangle; v17 adds bounded cross-player/session reductions; v18 adds persistent scalars, v19 adds persistent Grids, v20 adds player-local native-dialog selection, v21 adds bounded rich/typed native-dialog UI, and v22 expands bounded mannequin actor presentation. Automatic arena allocation, per-session ownership/private visibility scenes, dynamic matchmaking, independent per-player vanilla sidebars, player/offline persistent state, richer generic persistent collections, free-form/multi-field forms, and inventory UI are not implemented.
+- v15 adds independent team-bound logical sessions; v16 adds explicit session-local Grid-to-world footprints inside one shared ownership rectangle; v17 adds bounded cross-player/session reductions; v18 adds persistent scalars, v19 adds persistent Grids, v20 adds player-local native-dialog selection, v21 adds bounded rich/typed native-dialog UI, v22 expands bounded mannequin actor presentation, and v23 adds bounded compiler-owned world interaction/right-click input. Automatic arena allocation, per-session ownership/private visibility scenes, dynamic matchmaking, independent per-player vanilla sidebars, player/offline persistent state, richer generic persistent collections, free-form/multi-field forms, and inventory UI are not implemented.
 
 ## Validation baseline
 
@@ -330,9 +339,17 @@ ADR 0033 adds compiler-frontend module composition without changing Portable IR 
 
 Because this feature changes only build-time source loading, Minecraft runtime acceptance is inherited from the unchanged generated datapack semantics; compiler regression and byte-parity validation are the acceptance evidence.
 
-Portable v1-v22 compiler behavior is covered by the Node regression suite; generated milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
+Portable v1-v23 compiler behavior is covered by the Node regression suite; generated milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
 
 Node migration ADR 0021 additionally established byte-for-byte output parity with the retired Java compiler for representative v1, v9, v10, and v11 programs including Bounce, Pinball, Breakout, Presentation, UI, World, JRPG, and spectate-camera cases. Node compiler regression tests are now the maintained build-time acceptance suite.
+
+### v23 world interaction/use validation
+
+Portable v23 passed focused mod-free Minecraft 26.1 acceptance on `second` using real client `Camera` and checked-in `examples/portable-interaction`. The generated cabinet owned exactly one `minecraft:interaction` with authored `width=1.8f`, `height=2.2f`, `response=1b`, the stable declaration tag, and the normal namespace owner tag. The accompanying block/text Displays rendered the visible cabinet while the interaction entity remained the invisible use hitbox.
+
+The first real right click changed shared raw `totalUses` and Camera's player-local raw `cabinetUses` from `0` to `1000`. Generated event consumption removed the entity's `interaction` compound after dispatch. A second distinct real right click changed both values to `2000`, proving separate uses dispatch separately without replaying the prior record. Ordinary `/reload` reset both active-instance states to `0`, recreated exactly one interaction entity, and left no stale pending use.
+
+The Node regression suite was 50/50 green. All 18 pre-existing retained v1-v22 examples were compiled with v23 and parent commit `ed4673e`, with byte-for-byte identical generated output. Cleanup removed every generated objective and owned entity and reduced the four acceptance ownership force-loaded chunks to zero. Final pack removal plus `/reload` left only vanilla enabled; the two pre-existing video packs remained disabled/available.
 
 ### v22 expanded mannequin actor validation
 

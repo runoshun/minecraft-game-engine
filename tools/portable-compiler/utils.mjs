@@ -25,6 +25,7 @@ export const LIMITS = Object.freeze({
   projections: 64,
   texts: 64,
   actors: 64,
+  interactions: 64,
   worldBatches: 32,
   gridWorlds: 4,
   gridPalette: 8,
@@ -51,7 +52,7 @@ export const LIMITS = Object.freeze({
   depth: 16,
 });
 
-export const CURRENT_VERSION = 22;
+export const CURRENT_VERSION = 23;
 
 export function fail(message) { throw new Error(message); }
 export function has(object, member) { return Object.prototype.hasOwnProperty.call(object, member); }

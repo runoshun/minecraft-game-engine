@@ -317,3 +317,30 @@ Acceptance must verify:
 The accepted reference run rendered the three authored characters described above. Real A input changed yaw raw `180000 -> 204000` and entity yaw to `204.0f`; Space produced pitch raw `-20000` / entity `-20.0f`, and Shift produced raw `15000` / entity `15.0f`. `/reload` restored yaw/pitch to `180000/0`, preserved exactly three owned mannequins, and restored authored profile/equipment. Cleanup removed all objectives/entities and reduced nine ownership force-loaded chunks to zero. Final pack deletion plus `/reload` left only vanilla enabled, with the pre-existing video packs still disabled/available. Node was 39/39 green and all 17 retained v1-v21 example outputs matched pre-v22 `c7d3cc9` byte-for-byte.
 
 The accepted reference result is also recorded in ADR 0032 and `docs/architecture.md`; update all three records if the acceptance scenario or compiler ownership semantics change.
+
+## World interaction/use v23 acceptance
+
+ADR 0034 defines Portable v23 bounded world right-click input. Use `examples/portable-interaction` on mod-free Minecraft 26.1 `second` with one real client. v23 adds only ordinary entity/function state, so install/replacement uses `/reload`; a server restart is not required unless another capability in the same pack changes registry resources.
+
+Compile the acceptance pack with:
+
+```bash
+npm run compile:portable -- \
+  --source examples/portable-interaction/datapack/data/portable_interaction/mcgame/main.ts \
+  --namespace portable_interaction \
+  --output build/portable/portable_interaction
+```
+
+The generated marker must report `portable_version=23`. The reference pack declares one interaction-backed cabinet at the acceptance coordinates and increments both shared `totalUses` and player-local `cabinetUses` from `cabinet.onUse(player => ...)`.
+
+Acceptance must verify:
+
+- owned initialization creates exactly one `minecraft:interaction` with the compiler owner tag plus stable declaration tag and the authored width/height/response values;
+- a real-client right click, not a directly invoked callback function, increments both the shared and clicking-player local state exactly once;
+- after the callback runs, the entity has no `interaction` compound, and waiting without another click does not replay the event;
+- a second distinct real right click increments both states a second time;
+- `/reload` resets active-instance state, recreates exactly one interaction entity, and has no stale interaction event;
+- all pre-existing retained examples remain byte-for-byte identical to parent compiler commit `ed4673e`;
+- `portable/cleanup` removes objectives, interaction/Display entities, scheduled initialization, and owned force-loads before pack deletion.
+
+The accepted reference run used real client `Camera`. Starting from raw shared/player-local values `0/0`, one physical right click produced `1000/1000`; the generated event-consumption command left no `interaction` compound. A second distinct click produced `2000/2000`. Ordinary `/reload` returned both values to `0`, recreated exactly one interaction entity, and left no pending record. Cleanup removed every objective/entity and reduced four ownership force-loaded chunks to zero. The acceptance pack and temporary floor were removed; the final world had no objectives or force-loads, only vanilla enabled, and the pre-existing `video_breakout` / `video_pinball` packs still disabled/available. Node regression was 50/50 green and all 18 pre-existing retained example outputs matched `ed4673e` byte-for-byte.

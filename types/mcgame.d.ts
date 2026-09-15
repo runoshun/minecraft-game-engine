@@ -89,6 +89,17 @@ type PortableVanillaActorProjectionV22 = PortableVanillaActorProjection & {
   mainHand?: "left" | "right";
   equipment?: PortableVanillaActorEquipmentV22;
 };
+type PortableVanillaInteractionV23 = {
+  id: string;
+  dimension?: string;
+  x: PortableVanillaCoordinate;
+  y: PortableVanillaCoordinate;
+  z: PortableVanillaCoordinate;
+  width?: number;
+  height?: number;
+  response?: boolean;
+  when?: PortableV21Comparison;
+};
 type PortableVanillaWorldBlockWrite = { x: number; y: number; z: number; block: string };
 type PortableVanillaWorldBatch = {
   id: string;
@@ -622,7 +633,13 @@ type PortableProgramSpecV22 = Omit<PortableProgramSpecV21, "version" | "vanilla"
   version: 22;
   vanilla?: Omit<NonNullable<PortableProgramSpecV21["vanilla"]>, "actors"> & { actors?: PortableVanillaActorProjectionV22[] };
 };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14 | PortableProgramSpecV15 | PortableProgramSpecV16 | PortableProgramSpecV17 | PortableProgramSpecV18 | PortableProgramSpecV19 | PortableProgramSpecV20 | PortableProgramSpecV21 | PortableProgramSpecV22;
+type PortableV23Action = PortableV21Action | { op: "interaction_use"; interaction: string; actions: PortableV21Action[] };
+type PortableProgramSpecV23 = Omit<PortableProgramSpecV22, "version" | "tick" | "vanilla"> & {
+  version: 23;
+  tick: PortableV23Action[];
+  vanilla?: NonNullable<PortableProgramSpecV22["vanilla"]> & { interactions?: PortableVanillaInteractionV23[] };
+};
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14 | PortableProgramSpecV15 | PortableProgramSpecV16 | PortableProgramSpecV17 | PortableProgramSpecV18 | PortableProgramSpecV19 | PortableProgramSpecV20 | PortableProgramSpecV21 | PortableProgramSpecV22 | PortableProgramSpecV23;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -808,6 +825,16 @@ type PortableDslActorSpec = {
   equipment?: PortableVanillaActorEquipmentV22;
   when?: PortableDslCondition;
 };
+type PortableDslInteractionSpec = {
+  dimension?: string;
+  x: PortableDslCoordinate;
+  y: PortableDslCoordinate;
+  z: PortableDslCoordinate;
+  width?: number;
+  height?: number;
+  response?: boolean;
+  when?: PortableDslCondition;
+};
 type PortableDslWorldBlockWrite = { x: number; y: number; z: number; block: string };
 type PortableDslWorldBatchSpec = {
   dimension?: string;
@@ -881,6 +908,11 @@ type PortableDslPlayerContext = {
   form(form: PortableDslForm): PortableDslPlayerForm;
   hud(id: string, spec: PortableDslPlayerHudSpec): void;
 };
+type PortableDslInteractionPlayerContext = Omit<PortableDslPlayerContext, "hud">;
+type PortableDslInteraction = {
+  readonly id: string;
+  onUse(callback: (player: PortableDslInteractionPlayerContext) => void): void;
+};
 type PortableDslGlobalReduction = {
   count(players: PortableDslPlayerSet, target: PortableDslState): void;
   sum(players: PortableDslPlayerSet, target: PortableDslState, select: (player: PortableDslPlayerContext) => PortableDslValue): void;
@@ -947,6 +979,7 @@ type PortableDsl = {
   block(id: string, spec: PortableDslBlockSpec): void;
   text(id: string, spec: PortableDslTextSpec): void;
   actor(id: string, spec: PortableDslActorSpec): void;
+  interaction(id: string, spec: PortableDslInteractionSpec): PortableDslInteraction;
   worldBatch(id: string, spec: PortableDslWorldBatchSpec): void;
   worldFill(id: string, spec: PortableDslWorldFillSpec): void;
   camera(id: string, spec: PortableDslCameraSpec): void;

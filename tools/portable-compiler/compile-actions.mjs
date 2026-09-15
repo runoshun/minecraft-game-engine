@@ -1,5 +1,5 @@
 import { fail } from "./utils.mjs";
-import { stateHolder } from "./compile-context.mjs";
+import { interactionTag, stateHolder } from "./compile-context.mjs";
 import { compileAabbIf, compileCircleIf, compileCircleCapsuleIf, compileTriggerIf } from "./compile-collisions.mjs";
 import { compileGridAction } from "./compile-grid.mjs";
 import { compilePersistentGridAction } from "./compile-persistent.mjs";
@@ -78,6 +78,17 @@ export function compileActions(actions, lines, ctx) {
         ctx.usesNegate = true;
         lines.push(`scoreboard players operation @s ${ctx.playerStateObjective(action.target)} *= #neg1 ${ctx.objective}`);
         break;
+      case "interaction_use": {
+        const interaction = ctx.program.interactions.find(value => value.id === action.interaction);
+        if (!interaction) fail(`unknown interaction use target: ${action.interaction}`);
+        const fn = ctx.nextPlayerFunctionName(), body = [];
+        compileActions(action.actions, body, ctx);
+        ctx.functions.set(fn, body);
+        const selector = `@e[type=minecraft:interaction,tag=${interactionTag(ctx.namespace, interaction.id)},limit=1]`;
+        lines.push(`execute in ${interaction.dimension} as ${selector} on target run function ${ctx.namespace}:portable/${fn}`);
+        lines.push(`execute in ${interaction.dimension} as ${selector} run data remove entity @s interaction`);
+        break;
+      }
       case "for_session":
         compileActions(action.actions, lines, ctx);
         break;
