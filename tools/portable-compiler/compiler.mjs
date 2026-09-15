@@ -16,6 +16,7 @@ import { compilePlayerHuds, compilePlayerLoad, compilePlayerTickPrelude, playerI
 import { compileGridLoad, compileGridWorldServices, gridCleanupLines } from "./compile-grid.mjs";
 import { compilePersistentLoad, hasPersistentData, persistentPurgeLines, persistentResetLines } from "./compile-persistent.mjs";
 import { compileSelectionLoad, selectionCleanupLines, selectionDialogJson } from "./compile-selection.mjs";
+import { compileFormLoad, compileFormTickPrelude, formCleanupLines, formDialogJson } from "./compile-form.mjs";
 
 function write(file, content) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -29,6 +30,13 @@ function writeSelectionDialogs(program, outputRoot, namespace, ctx) {
   if (program.version < 20) return;
   for (const selection of program.selections) {
     write(path.join(outputRoot, "data", namespace, "dialog", "portable", "selection", `${selection.id}.json`), prettyJson(selectionDialogJson(selection, ctx)));
+  }
+}
+
+function writeFormDialogs(program, outputRoot, namespace, ctx) {
+  if (program.version < 21) return;
+  for (const form of program.forms) {
+    write(path.join(outputRoot, "data", namespace, "dialog", "portable", "form", `${form.id}.json`), prettyJson(formDialogJson(form, ctx)));
   }
 }
 
@@ -59,6 +67,7 @@ export function compileDatapack(program, namespace, outputRoot) {
 
   compileVanillaInputs(program, tick, ctx);
   compilePlayerTickPrelude(program, tick, ctx);
+  compileFormTickPrelude(program, tick, ctx);
   compileActions(program.tickActions, tick, ctx);
   compileGridWorldServices(program, tick, ctx);
   compileVanillaProjections(program, tick, ctx);
@@ -87,6 +96,7 @@ export function compileDatapack(program, namespace, outputRoot) {
   }
   for (const [name, raw] of Object.entries(program.initialInputs)) load.push(`scoreboard players set ${inputHolder(name)} ${ctx.objective} ${raw}`);
   compileSelectionLoad(program, load, ctx);
+  compileFormLoad(program, load, ctx);
   compilePlayerLoad(program, load, ctx);
   compileGridLoad(program, load, ctx);
   if (ctx.usesNegate) load.push(`scoreboard players set #neg1 ${ctx.objective} -1`);
@@ -126,11 +136,12 @@ export function compileDatapack(program, namespace, outputRoot) {
   write(path.join(outputRoot, "data", "minecraft", "tags", "function", "tick.json"), functionTag(`${namespace}:portable/tick`));
   writeInputPredicates(program, outputRoot, namespace);
   writeSelectionDialogs(program, outputRoot, namespace, ctx);
+  writeFormDialogs(program, outputRoot, namespace, ctx);
 
   const functionRoot = path.join(outputRoot, "data", namespace, "function", "portable");
   write(path.join(functionRoot, "load.mcfunction"), `${load.join("\n")}\n`);
   write(path.join(functionRoot, "tick.mcfunction"), `${tick.join("\n")}\n`);
-  write(path.join(functionRoot, "cleanup.mcfunction"), `${[...gridCleanupLines(program, ctx), ...selectionCleanupLines(program, ctx), ...cleanupLines(program, ctx)].join("\n")}\n`);
+  write(path.join(functionRoot, "cleanup.mcfunction"), `${[...gridCleanupLines(program, ctx), ...selectionCleanupLines(program, ctx), ...formCleanupLines(program, ctx), ...cleanupLines(program, ctx)].join("\n")}\n`);
   for (const [name, body] of ctx.functions.entries()) write(path.join(functionRoot, `${name}.mcfunction`), `${body.join("\n")}\n`);
 
   let marker = `namespace=${namespace}\nobjective=${ctx.objective}\nportable_version=${program.version}\nfixed_point=${program.fixedPoint}\n`;
@@ -143,6 +154,9 @@ export function compileDatapack(program, namespace, outputRoot) {
   }
   if (program.version >= 20) {
     for (const selection of [...program.selections].sort((a, b) => a.id.localeCompare(b.id))) marker += `selection.${selection.id}=${ctx.selectionObjective(selection.id)}\n`;
+  }
+  if (program.version >= 21) {
+    for (const form of [...program.forms].sort((a, b) => a.id.localeCompare(b.id))) marker += `form.${form.id}.transport=${ctx.formTransportObjective(form.id)};result=${ctx.formResultObjective(form.id)}\n`;
   }
   for (const name of Object.keys(program.initialInputs)) marker += `input.${name}=${inputHolder(name)}\n`;
   if (program.version >= 12) {
@@ -175,6 +189,7 @@ export function compileDatapack(program, namespace, outputRoot) {
     persistentGridCount: (program.persistentGrids || []).length + (program.sessions || []).reduce((sum, session) => sum + (session.persistentGrids || []).length, 0),
     persistentGridCellCount: (program.persistentGrids || []).reduce((sum, grid) => sum + grid.width * grid.height, 0) + (program.sessions || []).reduce((sum, session) => sum + (session.persistentGrids || []).reduce((inner, grid) => inner + grid.width * grid.height, 0), 0),
     selectionCount: program.selections?.length ?? 0,
+    formCount: program.forms?.length ?? 0,
     inputCount: Object.keys(program.initialInputs).length,
     playerStateCount: Object.keys(program.initialPlayerState || {}).length,
     playerInputCount: program.playerInputs?.size ?? 0,

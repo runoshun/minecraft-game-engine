@@ -546,7 +546,69 @@ type PortableProgramSpecV20 = Omit<PortableProgramSpecV19, "version" | "tick" | 
   version: 20; selections?: PortableSelectionSpec[]; tick: PortableV20Action[];
   vanilla?: Omit<NonNullable<PortableProgramSpecV18["vanilla"]>, "playerHuds"> & { playerHuds?: Array<{ id: string; audience: PortablePlayerSetRefV14; session?: string; tokens: Array<{ text: string } | { value: PortableV20Value }> }> };
 };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14 | PortableProgramSpecV15 | PortableProgramSpecV16 | PortableProgramSpecV17 | PortableProgramSpecV18 | PortableProgramSpecV19 | PortableProgramSpecV20;
+type PortableDialogTextSpan = {
+  text: string; color?: string; bold?: boolean; italic?: boolean; underlined?: boolean; strikethrough?: boolean;
+};
+type PortableDialogText = string | PortableDialogTextSpan | Array<string | PortableDialogTextSpan>;
+type PortableDialogBodyElement =
+  | { type: "text"; text: PortableDialogText; width?: number }
+  | { type: "item"; item: string; count?: number; description?: PortableDialogText; descriptionWidth?: number; showTooltip?: boolean; showDecoration?: boolean; width?: number; height?: number };
+type PortableSelectionSpecV21 = {
+  id: string; kind?: "selection"; title: PortableDialogText; body?: string | PortableDialogBodyElement[]; columns?: number;
+  options: Array<{ label: PortableDialogText; tooltip?: PortableDialogText; value: number }>;
+  cancel?: { label?: PortableDialogText; tooltip?: PortableDialogText; value?: number };
+};
+type PortableConfirmationSpecV21 = {
+  id: string; kind: "confirmation"; title: PortableDialogText; body?: string | PortableDialogBodyElement[];
+  yes?: { label?: PortableDialogText; tooltip?: PortableDialogText; value?: number };
+  no?: { label?: PortableDialogText; tooltip?: PortableDialogText; value?: number };
+};
+type PortableFormSpecV21 = {
+  id: string; title: PortableDialogText; body?: string | PortableDialogBodyElement[];
+  input:
+    | { type: "boolean"; label: PortableDialogText; initial?: boolean; trueValue?: number; falseValue?: number }
+    | { type: "option"; label: PortableDialogText; options: Array<{ label: PortableDialogText; value: number }>; initial?: number; width?: number; labelVisible?: boolean }
+    | { type: "range"; label: PortableDialogText; start: number; end: number; step?: number; initial?: number; width?: number };
+  submit?: { label?: PortableDialogText; tooltip?: PortableDialogText };
+  cancel?: { label?: PortableDialogText; tooltip?: PortableDialogText; value?: number };
+};
+type PortablePlayerFormRef = { playerForm: string };
+type PortableV21Value = PortableV20Value | PortablePlayerFormRef;
+type PortableV21Comparison = { op: "eq" | "ne" | "lt" | "lte" | "gt" | "gte"; left: PortableV21Value; right: PortableV21Value };
+type PortableV21Aabb = { x: PortableV21Value; y: PortableV21Value; width: number; height: number };
+type PortableV21Circle = { x: PortableV21Value; y: PortableV21Value; radius: number };
+type PortableV21Point = { x: PortableV21Value; y: PortableV21Value };
+type PortableV21Action =
+  | { op: "set" | "add" | "sub"; target: string; value: PortableV21Value }
+  | { op: "negate"; target: string }
+  | { op: "persistent_set" | "persistent_add" | "persistent_sub"; target: string; value: PortableV21Value }
+  | { op: "persistent_negate"; target: string }
+  | { op: "player_set" | "player_add" | "player_sub"; target: string; value: PortableV21Value }
+  | { op: "player_negate"; target: string }
+  | { op: "selection_open" | "selection_clear"; selection: string }
+  | { op: "form_open" | "form_clear"; form: string }
+  | { op: "grid_fill" | "persistent_grid_fill"; grid: string; value: PortableV21Value }
+  | { op: "grid_get" | "persistent_grid_get"; grid: string; x: PortableV21Value; z: PortableV21Value; target: string }
+  | { op: "grid_set" | "persistent_grid_set"; grid: string; x: PortableV21Value; z: PortableV21Value; value: PortableV21Value }
+  | { op: "grid_fill_rect" | "persistent_grid_fill_rect"; grid: string; x: PortableV21Value; z: PortableV21Value; width: PortableV21Value; height: PortableV21Value; value: PortableV21Value }
+  | { op: "rng_reset"; rng: string } | { op: "rng_int"; rng: string; target: string; min: number; max: number }
+  | { op: "grid_world_rebuild"; target: string }
+  | { op: "player_reduce"; kind: "count"; players: PortablePlayerSetRefV14; target: string }
+  | { op: "player_reduce"; kind: "sum"; players: PortablePlayerSetRefV14; target: string; value: PortableV21Value }
+  | { op: "player_reduce"; kind: "min" | "max"; players: PortablePlayerSetRefV14; target: string; empty: number; value: PortableV21Value }
+  | { op: "player_reduce"; kind: "any" | "all"; players: PortablePlayerSetRefV14; target: string; condition: PortableV21Comparison }
+  | { op: "if"; condition: PortableV21Comparison; then: PortableV21Action[]; else?: PortableV21Action[] }
+  | { op: "if_aabb"; a: PortableV21Aabb; b: PortableV21Aabb; then: PortableV21Action[]; else?: PortableV21Action[] }
+  | { op: "if_circle"; a: PortableV21Circle; b: PortableV21Circle; then: PortableV21Action[]; else?: PortableV21Action[] }
+  | { op: "if_circle_capsule"; circle: PortableV21Circle; capsule: PortableCapsule; then: PortableV21Action[]; else?: PortableV21Action[] }
+  | { op: "if_trigger"; trigger: PortableV21Aabb; point: PortableV21Point; then: PortableV21Action[]; else?: PortableV21Action[] }
+  | { op: "for_each_player" | "for_single_player"; players: PortablePlayerSetRefV14; actions: PortableV21Action[] }
+  | { op: "for_session"; session: string; actions: PortableV21Action[] };
+type PortableProgramSpecV21 = Omit<PortableProgramSpecV20, "version" | "tick" | "selections" | "vanilla"> & {
+  version: 21; selections?: Array<PortableSelectionSpecV21 | PortableConfirmationSpecV21>; forms?: PortableFormSpecV21[]; tick: PortableV21Action[];
+  vanilla?: Omit<NonNullable<PortableProgramSpecV18["vanilla"]>, "playerHuds"> & { playerHuds?: Array<{ id: string; audience: PortablePlayerSetRefV14; session?: string; tokens: Array<{ text: string } | { value: PortableV21Value }> }> };
+};
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14 | PortableProgramSpecV15 | PortableProgramSpecV16 | PortableProgramSpecV17 | PortableProgramSpecV18 | PortableProgramSpecV19 | PortableProgramSpecV20 | PortableProgramSpecV21;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -592,16 +654,37 @@ type PortableDslSessionState = PortableDslComparable & {
   negate(): void;
 };
 type PortableDslPlayerInput = PortableDslComparable & { readonly name: PortablePlayerInputName };
+type PortableDslDialogTextSpan = { text: string; color?: string; bold?: boolean; italic?: boolean; underlined?: boolean; strikethrough?: boolean };
+type PortableDslDialogText = string | PortableDslDialogTextSpan | Array<string | PortableDslDialogTextSpan>;
+type PortableDslDialogBodyElement =
+  | { type: "text"; text: PortableDslDialogText; width?: number }
+  | { type: "item"; item: string; count?: number; description?: PortableDslDialogText; descriptionWidth?: number; showTooltip?: boolean; showDecoration?: boolean; width?: number; height?: number };
 type PortableDslPlayerSelection = PortableDslComparable & { open(): void; clear(): void };
 type PortableDslSelectionSpec = {
-  title: string; body?: string; columns?: number;
-  options: Array<{ label: string; tooltip?: string; value: number }>;
-  cancel?: { label?: string; value?: number };
+  title: PortableDslDialogText; body?: string | PortableDslDialogBodyElement[]; columns?: number;
+  options: Array<{ label: PortableDslDialogText; tooltip?: PortableDslDialogText; value: number }>;
+  cancel?: { label?: PortableDslDialogText; tooltip?: PortableDslDialogText; value?: number };
+};
+type PortableDslConfirmationSpec = {
+  title: PortableDslDialogText; body?: string | PortableDslDialogBodyElement[];
+  yes?: { label?: PortableDslDialogText; tooltip?: PortableDslDialogText; value?: number };
+  no?: { label?: PortableDslDialogText; tooltip?: PortableDslDialogText; value?: number };
 };
 type PortableDslSelection = { readonly __portableDslSelection?: never };
+type PortableDslFormSpec = {
+  title: PortableDslDialogText; body?: string | PortableDslDialogBodyElement[];
+  input:
+    | { type: "boolean"; label: PortableDslDialogText; initial?: boolean; trueValue?: number; falseValue?: number }
+    | { type: "option"; label: PortableDslDialogText; options: Array<{ label: PortableDslDialogText; value: number }>; initial?: number; width?: number; labelVisible?: boolean }
+    | { type: "range"; label: PortableDslDialogText; start: number; end: number; step?: number; initial?: number; width?: number };
+  submit?: { label?: PortableDslDialogText; tooltip?: PortableDslDialogText };
+  cancel?: { label?: PortableDslDialogText; tooltip?: PortableDslDialogText; value?: number };
+};
+type PortableDslForm = { readonly __portableDslForm?: never };
+type PortableDslPlayerForm = PortableDslComparable & { open(): void; clear(): void };
 type PortableDslGridWorldReady = PortableDslComparable & { readonly name: string };
 type PortableDslSharedValue = number | PortableDslState | PortableDslPersistentState | PortableDslInput | PortableDslGridWorldReady;
-type PortableDslValue = PortableDslSharedValue | PortableDslSessionState | PortableDslSessionPersistentState | PortableDslPlayerState | PortableDslPlayerInput | PortableDslPlayerSelection;
+type PortableDslValue = PortableDslSharedValue | PortableDslSessionState | PortableDslSessionPersistentState | PortableDslPlayerState | PortableDslPlayerInput | PortableDslPlayerSelection | PortableDslPlayerForm;
 type PortableDslCondition = { readonly __portableDslCondition?: never };
 type PortableDslCoordinate = number | PortableDslState | { readonly __portableDslCoordinate?: never };
 type PortableDslInputBinding = { source: PortableVanillaInputSource };
@@ -761,7 +844,7 @@ type PortableDslFlipperSpec = {
 };
 type PortableDslCollider = PortableDslBox | PortableDslCircle | PortableDslSegment | PortableDslCapsule | PortableDslFlipper;
 type PortableDslHudSpec = { text: string | Array<string | PortableDslState | PortableDslPersistentState | PortableDslInput> };
-type PortableDslPlayerHudSpec = { text: string | Array<string | PortableDslState | PortableDslPersistentState | PortableDslInput | PortableDslSessionState | PortableDslSessionPersistentState | PortableDslPlayerState | PortableDslPlayerInput | PortableDslPlayerSelection> };
+type PortableDslPlayerHudSpec = { text: string | Array<string | PortableDslState | PortableDslPersistentState | PortableDslInput | PortableDslSessionState | PortableDslSessionPersistentState | PortableDslPlayerState | PortableDslPlayerInput | PortableDslPlayerSelection | PortableDslPlayerForm> };
 type PortableDslPlayerContext = {
   state(name: string, initial: number): PortableDslPlayerState;
   readonly input: {
@@ -775,6 +858,7 @@ type PortableDslPlayerContext = {
     readonly sprint: PortableDslPlayerInput;
   };
   selection(selection: PortableDslSelection): PortableDslPlayerSelection;
+  form(form: PortableDslForm): PortableDslPlayerForm;
   hud(id: string, spec: PortableDslPlayerHudSpec): void;
 };
 type PortableDslGlobalReduction = {
@@ -815,6 +899,8 @@ type PortableDsl = {
   players(): PortableDslPlayerSet;
   teamPlayers(team: string): PortableDslPlayerSet;
   selection(id: string, spec: PortableDslSelectionSpec): PortableDslSelection;
+  confirmation(id: string, spec: PortableDslConfirmationSpec): PortableDslSelection;
+  form(id: string, spec: PortableDslFormSpec): PortableDslForm;
   forEachPlayer(players: PortableDslPlayerSet, callback: (player: PortableDslPlayerContext) => void): void;
   forSinglePlayer(players: PortableDslPlayerSet, callback: (player: PortableDslPlayerContext) => void): void;
   readonly reduce: PortableDslGlobalReduction;

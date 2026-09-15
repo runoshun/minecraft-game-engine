@@ -6,6 +6,7 @@ import { parseGrids, parsePersistentGrids, parseRngs } from "./parse-runtime.mjs
 import { parsePlayerSetDeclarations } from "./player-set.mjs";
 import { parseSessions, sessionContextMap } from "./session.mjs";
 import { parseSelections } from "./parse-selection.mjs";
+import { parseForms } from "./parse-form.mjs";
 
 function parsePersistentState(spec, version, fixedPoint, api) {
   if (!has(spec, "persistentState")) return {};
@@ -97,12 +98,13 @@ export function parseProgram(spec, api = "portable.define") {
   const persistentGrids = parsePersistentGrids(spec, version, fixedPoint, api);
   const rngs = parseRngs(spec, version, api);
   const selections = parseSelections(spec, version, fixedPoint, api);
+  const forms = parseForms(spec, version, fixedPoint, api);
   const persistentGridCount = persistentGrids.length + sessions.reduce((sum, session) => sum + (session.persistentGrids || []).length, 0);
   const persistentGridCells = persistentGrids.reduce((sum, grid) => sum + grid.width * grid.height, 0) + sessions.reduce((sum, session) => sum + (session.persistentGrids || []).reduce((inner, grid) => inner + grid.width * grid.height, 0), 0);
   if (persistentGridCount > LIMITS.persistentGrids) fail(`${api} exceeds max persistent-grid count ${LIMITS.persistentGrids}`);
   if (persistentGridCells > LIMITS.persistentGridCellsTotal) fail(`${api} exceeds aggregate persistent-grid cell count ${LIMITS.persistentGridCellsTotal}`);
-  if (Object.keys(initialState).length === 0 && Object.keys(persistentState).length === 0 && Object.keys(initialPlayerState).length === 0 && grids.length === 0 && persistentGrids.length === 0 && sessions.length === 0 && selections.length === 0) {
-    fail(`${api} must define at least one shared state, player-local state, grid, session, or selection`);
+  if (Object.keys(initialState).length === 0 && Object.keys(persistentState).length === 0 && Object.keys(initialPlayerState).length === 0 && grids.length === 0 && persistentGrids.length === 0 && sessions.length === 0 && selections.length === 0 && forms.length === 0) {
+    fail(`${api} must define at least one shared state, player-local state, grid, session, selection, or form`);
   }
 
   const initialInputs = {};
@@ -138,6 +140,7 @@ export function parseProgram(spec, api = "portable.define") {
     persistentGrids: new Map(persistentGrids.map(grid => [grid.id, grid])),
     rngs: new Set(rngs.map(rng => rng.id)),
     selections: new Set(selections.map(selection => selection.id)),
+    forms: new Set(forms.map(form => form.id)),
     gridWorlds: new Set(),
     playerScope: false,
   };
@@ -154,7 +157,7 @@ export function parseProgram(spec, api = "portable.define") {
 
   const tickActions = parseActions(requiredArray(spec, "tick", api), ctx, `${api}.tick`);
   return {
-    version, fixedPoint, initialState, persistentState, initialPlayerState, initialInputs, playerInputs, playerTeams, sessions, grids, persistentGrids, rngs, selections,
+    version, fixedPoint, initialState, persistentState, initialPlayerState, initialInputs, playerInputs, playerTeams, sessions, grids, persistentGrids, rngs, selections, forms,
     vanillaInputs: vanilla.inputs, projections: vanilla.projections, texts: vanilla.texts,
     actors: vanilla.actors, worldBatches: vanilla.worldBatches, gridWorlds: vanilla.gridWorlds, cameras: vanilla.cameras,
     particles: vanilla.particles, sounds: vanilla.sounds, huds: vanilla.huds, playerHuds: vanilla.playerHuds,

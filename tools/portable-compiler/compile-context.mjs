@@ -32,6 +32,18 @@ export function fullSelectionObjectiveBank(namespace) {
   for (let i = 0; i < LIMITS.selections; i++) out.push(selectionObjectiveName(namespace, i));
   return out;
 }
+export function formTransportObjectiveName(namespace, index) { return `muf${hashHex8(namespace)}${slot(index)}`; }
+export function formResultObjectiveName(namespace, index) { return `mur${hashHex8(namespace)}${slot(index)}`; }
+export function fullFormTransportObjectiveBank(namespace) {
+  const out = [];
+  for (let i = 0; i < LIMITS.forms; i++) out.push(formTransportObjectiveName(namespace, i));
+  return out;
+}
+export function fullFormResultObjectiveBank(namespace) {
+  const out = [];
+  for (let i = 0; i < LIMITS.forms; i++) out.push(formResultObjectiveName(namespace, i));
+  return out;
+}
 export function gridObjective(namespace, index) { return `mgg${hashHex8(namespace)}${slot(index)}`; }
 export function fullGridObjectiveBank(namespace) {
   const out = [];
@@ -89,6 +101,12 @@ export class CompileContext {
     Object.keys(program.initialPlayerState || {}).sort().forEach((name, index) => this.playerStateObjectives.set(name, playerStateObjective(namespace, index)));
     this.selectionObjectives = new Map();
     [...(program.selections || [])].map(selection => selection.id).sort().forEach((id, index) => this.selectionObjectives.set(id, selectionObjectiveName(namespace, index)));
+    this.formTransportObjectives = new Map();
+    this.formResultObjectives = new Map();
+    [...(program.forms || [])].map(form => form.id).sort().forEach((id, index) => {
+      this.formTransportObjectives.set(id, formTransportObjectiveName(namespace, index));
+      this.formResultObjectives.set(id, formResultObjectiveName(namespace, index));
+    });
     this.gridObjectives = new Map();
     [...(program.grids || [])].map(grid => grid.id).sort().forEach((id, index) => this.gridObjectives.set(id, gridObjective(namespace, index)));
     this.rngHolders = new Map();
@@ -143,6 +161,16 @@ export class CompileContext {
   selectionObjective(id) {
     const objective = this.selectionObjectives.get(id);
     if (!objective) fail(`unknown selection objective: ${id}`);
+    return objective;
+  }
+  formTransportObjective(id) {
+    const objective = this.formTransportObjectives.get(id);
+    if (!objective) fail(`unknown form transport objective: ${id}`);
+    return objective;
+  }
+  formResultObjective(id) {
+    const objective = this.formResultObjectives.get(id);
+    if (!objective) fail(`unknown form result objective: ${id}`);
     return objective;
   }
   playerHudTempObjective(index) {
@@ -220,6 +248,7 @@ export class CompileContext {
       case "player_state": return { holder: "@s", objective: this.playerStateObjective(value.name) };
       case "player_input": return { holder: "@s", objective: this.playerInputObjective(value.name) };
       case "player_selection": return { holder: "@s", objective: this.selectionObjective(value.name) };
+      case "player_form": return { holder: "@s", objective: this.formResultObjective(value.name) };
       case "grid_world_ready": return { holder: this.gridWorldReadyHolder(value.name, value.session ?? null), objective: this.objective };
       case "constant": return { holder: this.constantHolder(value.raw), objective: this.objective };
       default: fail(`unknown portable value kind: ${value.kind}`);

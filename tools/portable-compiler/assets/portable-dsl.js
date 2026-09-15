@@ -15,6 +15,7 @@
   const RNG = Symbol("mcgame.portableDsl.rng");
   const GRID_WORLD = Symbol("mcgame.portableDsl.gridWorld");
   const SELECTION = Symbol("mcgame.portableDsl.selection");
+  const FORM = Symbol("mcgame.portableDsl.form");
 
   function fail(message) {
     throw new Error("portableDsl: " + message);
@@ -109,6 +110,8 @@
     const sidebars = [];
     const selections = [];
     const selectionIds = new Set();
+    const forms = [];
+    const formIds = new Set();
     let tickActions = null;
     let actionSink = null;
     let activePlayerScope = null;
@@ -128,6 +131,7 @@
     let usesV18 = false;
     let usesV19 = false;
     let usesV20 = false;
+    let usesV21 = false;
 
     function assertUnique(name) {
       if (Object.prototype.hasOwnProperty.call(stateValues, name) || Object.prototype.hasOwnProperty.call(persistentStateValues, name) || Object.prototype.hasOwnProperty.call(inputValues, name)) {
@@ -136,7 +140,7 @@
     }
 
     function isPlayerRef(value) {
-      return value && (value[REF] === "player_state" || value[REF] === "player_input" || value[REF] === "player_selection");
+      return value && (value[REF] === "player_state" || value[REF] === "player_input" || value[REF] === "player_selection" || value[REF] === "player_form");
     }
 
     function isSessionRef(value) {
@@ -169,6 +173,10 @@
       if (value && value[REF] === "player_selection") {
         if (activePlayerScope === null || value[PLAYER_SCOPE] !== activePlayerScope) fail("player selection reference escaped its PlayerContext");
         return { playerSelection: value.name };
+      }
+      if (value && value[REF] === "player_form") {
+        if (activePlayerScope === null || value[PLAYER_SCOPE] !== activePlayerScope) fail("player form reference escaped its PlayerContext");
+        return { playerForm: value.name };
       }
       if (value && value[REF] === "grid_world_ready") {
         if (value.session !== null) {
@@ -326,43 +334,149 @@
       return Object.freeze({ [PLAYER_SET]: Object.freeze({ team }) });
     }
 
+    const DIALOG_COLORS = new Set([
+      "black", "dark_blue", "dark_green", "dark_aqua", "dark_red", "dark_purple", "gold", "gray",
+      "dark_gray", "blue", "green", "aqua", "red", "light_purple", "yellow", "white",
+    ]);
+    function cloneDialogText(value, label, allowEmpty = false) {
+      function span(entry, itemLabel) {
+        if (typeof entry === "string") {
+          if ((!allowEmpty && entry.length < 1) || entry.length > 256) fail(itemLabel + " must contain " + (allowEmpty ? "0..256" : "1..256") + " characters");
+          return entry;
+        }
+        if (entry == null || typeof entry !== "object" || Array.isArray(entry)) fail(itemLabel + " must be a string or rich-text span");
+        for (const key of Object.keys(entry)) if (!["text", "color", "bold", "italic", "underlined", "strikethrough"].includes(key)) fail(itemLabel + "." + key + " is not supported");
+        if (typeof entry.text !== "string" || ((!allowEmpty && entry.text.length < 1) || entry.text.length > 256)) fail(itemLabel + ".text has invalid length");
+        const out = { text: entry.text };
+        if (entry.color !== undefined) {
+          if (typeof entry.color !== "string" || (!DIALOG_COLORS.has(entry.color) && !/^#[0-9A-Fa-f]{6}$/.test(entry.color))) fail(itemLabel + ".color must be a standard Minecraft color or #RRGGBB");
+          out.color = entry.color;
+        }
+        for (const key of ["bold", "italic", "underlined", "strikethrough"]) {
+          if (entry[key] !== undefined) { if (typeof entry[key] !== "boolean") fail(itemLabel + "." + key + " must be boolean"); out[key] = entry[key]; }
+        }
+        return out;
+      }
+      if (Array.isArray(value)) {
+        if (value.length < 1 || value.length > 32) fail(label + " must contain 1..32 rich-text spans");
+        return value.map((entry, index) => span(entry, label + "[" + index + "]"));
+      }
+      return span(value, label);
+    }
+    function cloneDialogBody(value, label) {
+      if (value === undefined) return undefined;
+      if (typeof value === "string") { if (value.length > 1024) fail(label + " exceeds 1024 characters"); return value; }
+      if (!Array.isArray(value) || value.length > 16) fail(label + " must be a string or an array of at most 16 body elements");
+      return value.map((entry, index) => {
+        const itemLabel = label + "[" + index + "]";
+        if (entry == null || typeof entry !== "object" || Array.isArray(entry)) fail(itemLabel + " must be an object");
+        if (entry.type === "text") {
+          const out = { type: "text", text: cloneDialogText(entry.text, itemLabel + ".text", true) };
+          if (entry.width !== undefined) out.width = finiteInteger(entry.width, itemLabel + ".width", 1, 1024);
+          return out;
+        }
+        if (entry.type === "item") {
+          if (typeof entry.item !== "string" || !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(entry.item)) fail(itemLabel + ".item must be a resource id");
+          const out = { type: "item", item: entry.item };
+          if (entry.count !== undefined) out.count = finiteInteger(entry.count, itemLabel + ".count", 1, 99);
+          if (entry.description !== undefined) out.description = cloneDialogText(entry.description, itemLabel + ".description", true);
+          if (entry.descriptionWidth !== undefined) out.descriptionWidth = finiteInteger(entry.descriptionWidth, itemLabel + ".descriptionWidth", 1, 1024);
+          for (const key of ["showTooltip", "showDecoration"]) if (entry[key] !== undefined) { if (typeof entry[key] !== "boolean") fail(itemLabel + "." + key + " must be boolean"); out[key] = entry[key]; }
+          if (entry.width !== undefined) out.width = finiteInteger(entry.width, itemLabel + ".width", 1, 256);
+          if (entry.height !== undefined) out.height = finiteInteger(entry.height, itemLabel + ".height", 1, 256);
+          return out;
+        }
+        fail(itemLabel + ".type must be text or item");
+      });
+    }
+    function dialogUsesV21Text(value) { return value !== undefined && typeof value !== "string"; }
+
     function selectionDeclaration(id, spec) {
       if (actionSink !== null || activePlayerScope !== null || activeSessionScope !== null) fail("selection(...) must be declared outside tick/session/player scope");
       if (typeof id !== "string" || !/^[a-z][a-z0-9_]{0,23}$/.test(id)) fail("selection id must match [a-z][a-z0-9_]{0,23}");
       if (selectionIds.has(id)) fail("duplicate selection id: " + id);
       if (selections.length >= 8) fail("portable v20 supports at most 8 selections");
       if (spec == null || typeof spec !== "object") fail("selection " + id + " spec must be an object");
-      if (typeof spec.title !== "string" || spec.title.length < 1 || spec.title.length > 128) fail("selection " + id + " title must contain 1..128 characters");
-      const body = spec.body === undefined ? "" : spec.body;
-      if (typeof body !== "string" || body.length > 1024) fail("selection " + id + " body must contain 0..1024 characters");
+      const rich = dialogUsesV21Text(spec.title) || (spec.body !== undefined && typeof spec.body !== "string") || (Array.isArray(spec.options) && spec.options.some(option => option && (dialogUsesV21Text(option.label) || dialogUsesV21Text(option.tooltip)))) || (spec.cancel && (dialogUsesV21Text(spec.cancel.label) || dialogUsesV21Text(spec.cancel.tooltip)));
+      const title = rich ? cloneDialogText(spec.title, "selection " + id + " title") : spec.title;
+      if (!rich && (typeof title !== "string" || title.length < 1 || title.length > 128)) fail("selection " + id + " title must contain 1..128 characters");
+      const body = rich ? cloneDialogBody(spec.body, "selection " + id + " body") : (spec.body === undefined ? "" : spec.body);
+      if (!rich && (typeof body !== "string" || body.length > 1024)) fail("selection " + id + " body must contain 0..1024 characters");
       const columns = finiteInteger(spec.columns === undefined ? 1 : spec.columns, "selection " + id + " columns", 1, 4);
       if (!Array.isArray(spec.options) || spec.options.length < 1 || spec.options.length > 16) fail("selection " + id + " options must contain 1..16 entries");
       const rawValues = new Set([0, -2147483648]);
       function resultValue(value, label) {
-        const logical = finiteNumber(value, label);
-        const raw = Math.round(logical * fixedPoint);
+        const logical = finiteNumber(value, label); const raw = Math.round(logical * fixedPoint);
         if (raw < -2147483648 || raw > 2147483647) fail(label + " exceeds signed 32-bit fixed-point range");
-        if (rawValues.has(raw)) fail(label + " resolves to reserved or duplicate raw result " + raw);
-        rawValues.add(raw);
-        return logical;
+        if (rawValues.has(raw)) fail(label + " resolves to reserved or duplicate raw result " + raw); rawValues.add(raw); return logical;
       }
       const options = spec.options.map((option, index) => {
         if (option == null || typeof option !== "object") fail("selection " + id + " option " + index + " must be an object");
-        if (typeof option.label !== "string" || option.label.length < 1 || option.label.length > 128) fail("selection " + id + " option " + index + " label must contain 1..128 characters");
-        const tooltip = option.tooltip === undefined ? null : option.tooltip;
-        if (tooltip !== null && (typeof tooltip !== "string" || tooltip.length > 256)) fail("selection " + id + " option " + index + " tooltip must contain 0..256 characters");
-        return { label: option.label, tooltip, value: resultValue(option.value, "selection " + id + " option " + index + " value") };
+        const label = rich ? cloneDialogText(option.label, "selection " + id + " option " + index + " label") : option.label;
+        if (!rich && (typeof label !== "string" || label.length < 1 || label.length > 128)) fail("selection " + id + " option " + index + " label must contain 1..128 characters");
+        const tooltip = option.tooltip === undefined ? null : (rich ? cloneDialogText(option.tooltip, "selection " + id + " option " + index + " tooltip", true) : option.tooltip);
+        if (!rich && tooltip !== null && (typeof tooltip !== "string" || tooltip.length > 256)) fail("selection " + id + " option " + index + " tooltip must contain 0..256 characters");
+        return { label, tooltip, value: resultValue(option.value, "selection " + id + " option " + index + " value") };
       });
       const cancelSpec = spec.cancel === undefined ? { label: "Cancel", value: -1 } : spec.cancel;
       if (cancelSpec == null || typeof cancelSpec !== "object") fail("selection " + id + " cancel must be an object");
-      const cancelLabel = cancelSpec.label === undefined ? "Cancel" : cancelSpec.label;
-      if (typeof cancelLabel !== "string" || cancelLabel.length < 1 || cancelLabel.length > 128) fail("selection " + id + " cancel label must contain 1..128 characters");
+      const cancelLabel = cancelSpec.label === undefined ? "Cancel" : (rich ? cloneDialogText(cancelSpec.label, "selection " + id + " cancel label") : cancelSpec.label);
+      if (!rich && (typeof cancelLabel !== "string" || cancelLabel.length < 1 || cancelLabel.length > 128)) fail("selection " + id + " cancel label must contain 1..128 characters");
       const cancel = { label: cancelLabel, value: resultValue(cancelSpec.value === undefined ? -1 : cancelSpec.value, "selection " + id + " cancel value") };
-      selectionIds.add(id);
-      selections.push({ id, title: spec.title, body, columns, options, cancel });
-      usesV20 = true;
-      usesPlayerApi = true;
+      if (rich && cancelSpec.tooltip !== undefined) cancel.tooltip = cloneDialogText(cancelSpec.tooltip, "selection " + id + " cancel tooltip", true);
+      selectionIds.add(id); selections.push({ id, title, body, columns, options, cancel });
+      usesV20 = true; if (rich) usesV21 = true; usesPlayerApi = true;
       return Object.freeze({ [SELECTION]: true, id });
+    }
+
+    function confirmationDeclaration(id, spec) {
+      if (actionSink !== null || activePlayerScope !== null || activeSessionScope !== null) fail("confirmation(...) must be declared outside tick/session/player scope");
+      if (typeof id !== "string" || !/^[a-z][a-z0-9_]{0,23}$/.test(id)) fail("confirmation id must match [a-z][a-z0-9_]{0,23}");
+      if (selectionIds.has(id)) fail("duplicate selection/confirmation id: " + id);
+      if (selections.length >= 8) fail("portable supports at most 8 selection/confirmation declarations");
+      if (spec == null || typeof spec !== "object") fail("confirmation " + id + " spec must be an object");
+      const rawValues = new Set([0, -2147483648]);
+      function choice(value, fallbackLabel, fallbackValue, label) {
+        const source = value === undefined ? { label: fallbackLabel, value: fallbackValue } : value;
+        if (source == null || typeof source !== "object") fail(label + " must be an object");
+        const result = finiteNumber(source.value === undefined ? fallbackValue : source.value, label + " value");
+        const raw = Math.round(result * fixedPoint); if (raw < -2147483648 || raw > 2147483647 || rawValues.has(raw)) fail(label + " value resolves to reserved or duplicate raw result " + raw); rawValues.add(raw);
+        const out = { label: cloneDialogText(source.label === undefined ? fallbackLabel : source.label, label + " label"), value: result };
+        if (source.tooltip !== undefined) out.tooltip = cloneDialogText(source.tooltip, label + " tooltip", true);
+        return out;
+      }
+      selections.push({ id, kind: "confirmation", title: cloneDialogText(spec.title, "confirmation " + id + " title"), body: cloneDialogBody(spec.body, "confirmation " + id + " body"), yes: choice(spec.yes, "Yes", 1, "confirmation " + id + " yes"), no: choice(spec.no, "No", -1, "confirmation " + id + " no") });
+      selectionIds.add(id); usesV20 = true; usesV21 = true; usesPlayerApi = true;
+      return Object.freeze({ [SELECTION]: true, id });
+    }
+
+    function formDeclaration(id, spec) {
+      if (actionSink !== null || activePlayerScope !== null || activeSessionScope !== null) fail("form(...) must be declared outside tick/session/player scope");
+      if (typeof id !== "string" || !/^[a-z][a-z0-9_]{0,23}$/.test(id)) fail("form id must match [a-z][a-z0-9_]{0,23}");
+      if (formIds.has(id)) fail("duplicate form id: " + id); if (forms.length >= 8) fail("portable v21 supports at most 8 forms");
+      if (spec == null || typeof spec !== "object") fail("form " + id + " spec must be an object");
+      if (spec.input == null || typeof spec.input !== "object") fail("form " + id + " input must be an object");
+      if (spec.input.type === "text") fail("form " + id + " text input is not portable in v21: vanilla permission-0 trigger transport cannot return arbitrary strings");
+      if (!["boolean", "option", "range"].includes(spec.input.type)) fail("form " + id + " input type must be boolean, option, or range");
+      const input = { ...spec.input, label: cloneDialogText(spec.input.label, "form " + id + " input label") };
+      if (input.type === "boolean") {
+        if (input.initial !== undefined && typeof input.initial !== "boolean") fail("form " + id + " boolean initial must be boolean");
+        if (input.trueValue !== undefined) finiteNumber(input.trueValue, "form " + id + " trueValue"); if (input.falseValue !== undefined) finiteNumber(input.falseValue, "form " + id + " falseValue");
+      } else if (input.type === "option") {
+        if (!Array.isArray(input.options) || input.options.length < 1 || input.options.length > 16) fail("form " + id + " option input requires 1..16 options");
+        input.options = input.options.map((option, index) => { if (!option || typeof option !== "object") fail("form " + id + " option " + index + " must be an object"); return { label: cloneDialogText(option.label, "form " + id + " option " + index + " label"), value: finiteNumber(option.value, "form " + id + " option " + index + " value") }; });
+        if (input.initial !== undefined) finiteNumber(input.initial, "form " + id + " initial");
+      } else {
+        input.start = finiteInteger(input.start, "form " + id + " range start", -2147483646, 2147483646); input.end = finiteInteger(input.end, "form " + id + " range end", -2147483646, 2147483646);
+        if (input.start > input.end) fail("form " + id + " range requires start <= end");
+        if (input.step !== undefined) input.step = finiteInteger(input.step, "form " + id + " range step", 1, 2147483646);
+        if (input.initial !== undefined) input.initial = finiteInteger(input.initial, "form " + id + " range initial", input.start, input.end);
+      }
+      const out = { id, title: cloneDialogText(spec.title, "form " + id + " title"), body: cloneDialogBody(spec.body, "form " + id + " body"), input };
+      if (spec.submit !== undefined) { if (!spec.submit || typeof spec.submit !== "object") fail("form " + id + " submit must be an object"); out.submit = { ...spec.submit, label: cloneDialogText(spec.submit.label === undefined ? "Submit" : spec.submit.label, "form " + id + " submit label") }; if (spec.submit.tooltip !== undefined) out.submit.tooltip = cloneDialogText(spec.submit.tooltip, "form " + id + " submit tooltip", true); }
+      if (spec.cancel !== undefined) { if (!spec.cancel || typeof spec.cancel !== "object") fail("form " + id + " cancel must be an object"); out.cancel = { ...spec.cancel, label: cloneDialogText(spec.cancel.label === undefined ? "Cancel" : spec.cancel.label, "form " + id + " cancel label") }; if (spec.cancel.value !== undefined) finiteNumber(spec.cancel.value, "form " + id + " cancel value"); if (spec.cancel.tooltip !== undefined) out.cancel.tooltip = cloneDialogText(spec.cancel.tooltip, "form " + id + " cancel tooltip", true); }
+      forms.push(out); formIds.add(id); usesV21 = true; usesPlayerApi = true;
+      return Object.freeze({ [FORM]: true, id });
     }
 
     function requirePlayerSet(value, label) {
@@ -408,10 +522,19 @@
 
     function playerSelectionRef(scope, selection) {
       if (activePlayerScope !== scope) fail("player.selection(...) is only valid in its PlayerContext");
-      if (!selection || selection[SELECTION] !== true || !selectionIds.has(selection.id)) fail("player.selection(...) requires a value returned by game.selection(...)");
+      if (!selection || selection[SELECTION] !== true || !selectionIds.has(selection.id)) fail("player.selection(...) requires a value returned by game.selection(...) or game.confirmation(...)");
       const ref = comparable("player_selection", selection.id, scope);
       ref.open = () => emit({ op: "selection_open", selection: selection.id });
       ref.clear = () => emit({ op: "selection_clear", selection: selection.id });
+      return Object.freeze(ref);
+    }
+
+    function playerFormRef(scope, form) {
+      if (activePlayerScope !== scope) fail("player.form(...) is only valid in its PlayerContext");
+      if (!form || form[FORM] !== true || !formIds.has(form.id)) fail("player.form(...) requires a value returned by game.form(...)");
+      const ref = comparable("player_form", form.id, scope);
+      ref.open = () => emit({ op: "form_open", form: form.id });
+      ref.clear = () => emit({ op: "form_clear", form: form.id });
       return Object.freeze(ref);
     }
 
@@ -457,6 +580,7 @@
         },
         input: Object.freeze(input),
         selection(value) { return playerSelectionRef(scope, value); },
+        form(value) { return playerFormRef(scope, value); },
         hud(id, spec) { return playerHud(scope, serializedSet, id, spec); },
       });
       const previousSink = actionSink, previousScope = activePlayerScope, previousMode = activePlayerMode, previousRoot = playerRootSink;
@@ -508,6 +632,7 @@
           },
           input: Object.freeze(input),
           selection(value) { return playerSelectionRef(scope, value); },
+          form(value) { return playerFormRef(scope, value); },
           hud() { fail("player.hud(...) is not available inside a reduction selector callback"); },
         });
         const previousScope = activePlayerScope, previousMode = activePlayerMode;
@@ -1378,6 +1503,8 @@
       players,
       teamPlayers,
       selection: selectionDeclaration,
+      confirmation: confirmationDeclaration,
+      form: formDeclaration,
       forEachPlayer,
       forSinglePlayer,
       reduce: globalReduce,
@@ -1412,7 +1539,7 @@
 
     build(dsl);
     if (tickActions === null) fail("tick(...) must be declared exactly once");
-    if (Object.keys(stateValues).length === 0 && Object.keys(persistentStateValues).length === 0 && Object.keys(playerStateValues).length === 0 && grids.length === 0 && persistentGrids.length === 0 && sessions.length === 0 && selections.length === 0) fail("at least one shared state, player-local state, grid, session, or selection is required");
+    if (Object.keys(stateValues).length === 0 && Object.keys(persistentStateValues).length === 0 && Object.keys(playerStateValues).length === 0 && grids.length === 0 && persistentGrids.length === 0 && sessions.length === 0 && selections.length === 0 && forms.length === 0) fail("at least one shared state, player-local state, grid, session, selection, or form is required");
 
     if (usesPlayerApi) {
       if (Object.keys(inputValues).length > 0 || Object.keys(vanillaInputs).length > 0) fail("game.input(...) is v1-v11 compatibility only; use player.input.* in multiplayer v12");
@@ -1426,7 +1553,7 @@
 
     const usesSpectateCamera = cameras.some(camera => camera.mode === "spectate");
     const spec = {
-      version: usesV20 ? 20 : (usesV19 ? 19 : (usesV18 ? 18 : (usesV17 ? 17 : (usesV16 ? 16 : (usesV15 ? 15 : (usesV14 ? 14 : (usesV13 ? 13 : (usesPlayerApi ? 12 : (usesSpectateCamera ? 11 : (ownership === null ? 9 : 10)))))))))),
+      version: usesV21 ? 21 : (usesV20 ? 20 : (usesV19 ? 19 : (usesV18 ? 18 : (usesV17 ? 17 : (usesV16 ? 16 : (usesV15 ? 15 : (usesV14 ? 14 : (usesV13 ? 13 : (usesPlayerApi ? 12 : (usesSpectateCamera ? 11 : (ownership === null ? 9 : 10))))))))))),
       fixedPoint,
       state: stateValues,
       tick: tickActions,
@@ -1434,6 +1561,7 @@
     if (Object.keys(persistentStateValues).length > 0) spec.persistentState = persistentStateValues;
     if (persistentGrids.length > 0) spec.persistentGrids = persistentGrids;
     if (selections.length > 0) spec.selections = selections;
+    if (forms.length > 0) spec.forms = forms;
     if (Object.keys(inputValues).length > 0) spec.inputs = inputValues;
     if (playerTeams.size > 0) spec.playerSets = Array.from(playerTeams).sort().map(team => ({ team }));
     if (sessions.length > 0) spec.sessions = sessions.map(session => {

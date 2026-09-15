@@ -45,11 +45,13 @@ export const LIMITS = Object.freeze({
   persistentGridCellsTotal: 16384,
   selections: 8,
   selectionOptions: 16,
+  forms: 8,
+  formOptions: 16,
   actions: 2048,
   depth: 16,
 });
 
-export const CURRENT_VERSION = 20;
+export const CURRENT_VERSION = 21;
 
 export function fail(message) { throw new Error(message); }
 export function has(object, member) { return Object.prototype.hasOwnProperty.call(object, member); }

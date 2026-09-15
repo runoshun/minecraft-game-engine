@@ -81,7 +81,7 @@ For `mc-mcp` deployment from the development container, prefer file-sharing URL 
 3. publish/share that archive through the devcontainer file-sharing capability;
 4. immediately pass the short-lived HTTPS URL to `mc-mcp` using its archive deployment path and replace the target pack directory;
 5. compare the downloader-reported SHA-256 with the local archive hash when validating transfer;
-6. reload and inspect datapack state for ordinary reloadable resources. If the generated pack adds/removes/changes v20 dialog registry resources, restart the server/world after file replacement instead of relying on `/reload` to bootstrap those registry entries.
+6. reload and inspect datapack state for ordinary reloadable resources. If the generated pack adds/removes/changes v20+ dialog registry resources, restart the server/world after file replacement instead of relying on `/reload` to bootstrap those registry entries.
 
 Mint a fresh shared URL for every deployment; shared URLs are short-lived. Base64 is a fallback only when URL transfer is unavailable.
 
@@ -262,3 +262,19 @@ Acceptance steps are:
 - run `portable/cleanup` while a selection is pending and verify the dialog closes, the complete selection objective bank is removed, and the external team remains.
 
 The accepted reference run rendered `Portable Shop` with Potion=`1`, Sword=`2`, and Cancel=`-1`. Real Jump followed by a Potion mouse click produced `lastChoice=1000`, `menuEnabled=0`, and the idle selection sentinel. A second real Jump followed by Escape produced `lastChoice=-1000`. After `/reload`, `lastChoice=0`, `menuEnabled=1000`, and the selection reached pending raw `0`; the team still contained Camera. Cleanup removed every generated objective and left that team intact. Teardown removed the team and pack and restarted the server, leaving zero objectives, zero teams, and only vanilla enabled. The Node suite was 31/31 green, and 15 retained v1-v19 generated examples were byte-identical to pre-v20 commit `a2d324c`.
+
+## Rich/typed native dialog UI v21 acceptance
+
+ADR 0031 defines v21 rich text/body, confirmation, and typed single-input form semantics. Use `examples/portable-dialog-ui` on mod-free Minecraft 26.1 `second` with real client `Camera` in externally managed team `v21_party`. The v20 registry lifecycle applies unchanged: new/changed/removed generated dialog resources require cleanup where applicable, file replacement/removal, then server/world restart; ordinary `/reload` is valid after the registry contents were bootstrapped at startup.
+
+Acceptance must verify:
+
+- generated confirmation/form dialog JSON loads cleanly after restart, including bounded rich text and `minecraft:item` body presentation;
+- a confirmation action reaches the authored player-local fixed-point result;
+- boolean, single-option, and integer-range forms submit through compiler-owned `trigger` transports and copy expected authored fixed-point values into player-local state; Node coverage must include logical zero as a valid boolean result;
+- form cancel resolves the declared cancel result and rearms the transport;
+- level-triggered `open()` leaves an already-pending surface stable, while opening a different generated selection/form rearms the previous pending surface before replacing the visible dialog;
+- `/reload` resets all v21 active-instance player/result/transport state while preserving external team membership;
+- `portable/cleanup` while a generated dialog is pending closes the surface, removes the complete selection/form objective banks, and preserves the external team.
+
+The accepted reference run rendered the styled `Arcane Purchase` confirmation with mixed-color text, a diamond-sword item body and tooltip, and authored `Buy`/`Leave` actions. The confirmation `Leave` path reached logical `-10`. Real-client form submits produced boolean `1`, option `Mage=3`, and range `3`; option/range cancel paths also produced logical `-1`. Pending form transports remained at the pending sentinel under repeated authored `open()`. Replacing pending `hints` with `role` rearmed the old transport to idle and left only the new form pending. `/reload` reset stage/results/transports and preserved `v21_party`; cleanup from a pending confirmation left zero generated objectives while retaining Camera in that team. Final teardown removed the team and pack, restarted the server to remove registry entries, and finished with zero objectives, zero teams, only vanilla enabled, and the pre-existing disabled video packs still available. The Node suite was 35/35 green, and 16 retained v1-v20 examples were byte-for-byte identical to pre-v21 commit `b000162`.

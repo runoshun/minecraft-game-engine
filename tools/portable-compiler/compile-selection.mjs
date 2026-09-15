@@ -1,6 +1,8 @@
 import { fullSelectionObjectiveBank } from "./compile-context.mjs";
+import { dialogBodyJson } from "./parse-dialog.mjs";
+import { FORM_RESULT_IDLE_RAW, FORM_TRANSPORT_IDLE_RAW, FORM_TRANSPORT_PENDING_RAW, SELECTION_IDLE_RAW } from "./dialog-state.mjs";
 
-export const SELECTION_IDLE_RAW = -2147483648;
+export { SELECTION_IDLE_RAW } from "./dialog-state.mjs";
 
 export function selectionDialogResource(namespace, id) {
   return `${namespace}:portable/selection/${id}`;
@@ -17,6 +19,20 @@ function runCommandAction(label, command, tooltip = null) {
 
 export function selectionDialogJson(selection, ctx) {
   const objective = ctx.selectionObjective(selection.id);
+  if (selection.kind === "confirmation") {
+    const value = {
+      type: "minecraft:confirmation",
+      title: selection.title,
+      can_close_with_escape: true,
+      pause: false,
+      after_action: "close",
+      yes: runCommandAction(selection.yes.label, `trigger ${objective} set ${selection.yes.raw}`, selection.yes.tooltip),
+      no: runCommandAction(selection.no.label, `trigger ${objective} set ${selection.no.raw}`, selection.no.tooltip),
+    };
+    if (selection.body.length) value.body = dialogBodyJson(selection.body);
+    return value;
+  }
+
   const value = {
     type: "minecraft:multi_action",
     title: selection.title,
@@ -25,9 +41,13 @@ export function selectionDialogJson(selection, ctx) {
     after_action: "close",
     columns: selection.columns,
     actions: selection.options.map(option => runCommandAction(option.label, `trigger ${objective} set ${option.raw}`, option.tooltip)),
-    exit_action: runCommandAction(selection.cancel.label, `trigger ${objective} set ${selection.cancel.raw}`),
+    exit_action: runCommandAction(selection.cancel.label, `trigger ${objective} set ${selection.cancel.raw}`, selection.cancel.tooltip ?? null),
   };
-  if (selection.body.length) value.body = [{ type: "minecraft:plain_message", contents: selection.body, width: 320 }];
+  if (Array.isArray(selection.body)) {
+    if (selection.body.length) value.body = dialogBodyJson(selection.body);
+  } else if (selection.body.length) {
+    value.body = [{ type: "minecraft:plain_message", contents: selection.body, width: 320 }];
+  }
   return value;
 }
 
@@ -50,6 +70,12 @@ function ensureOpenFunction(selection, ctx) {
   for (const other of ctx.program.selections) {
     if (other.id === selection.id) continue;
     body.push(`execute if score @s ${ctx.selectionObjective(other.id)} matches 0 run scoreboard players set @s ${ctx.selectionObjective(other.id)} ${SELECTION_IDLE_RAW}`);
+  }
+  if (ctx.program.version >= 21) {
+    for (const form of ctx.program.forms) {
+      const result = ctx.formResultObjective(form.id), transport = ctx.formTransportObjective(form.id);
+      body.push(`execute if score @s ${result} matches ${FORM_RESULT_IDLE_RAW} if score @s ${transport} matches ${FORM_TRANSPORT_PENDING_RAW} run scoreboard players set @s ${transport} ${FORM_TRANSPORT_IDLE_RAW}`);
+    }
   }
   body.push(`scoreboard players set @s ${objective} 0`);
   body.push(`scoreboard players enable @s ${objective}`);

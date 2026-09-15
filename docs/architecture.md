@@ -28,11 +28,11 @@ The compiler accepts one TypeScript source, namespace, and output directory. Mod
 
 Portable IR is the versioned semantic contract between authoring and vanilla lowering. It contains deterministic fixed-point values, bounded actions, collision primitives, declarative presentation/world resources, input mappings, and lifecycle metadata. Arbitrary JavaScript callbacks are not an IR feature.
 
-IR versions 1 through 20 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14, ADR 0024 defines team-bound logical sessions in v15, ADR 0025 defines session-local GridWorld projection in v16, ADR 0027 defines bounded player/session reductions in v17, ADR 0028 defines bounded persistent scalar state in v18, ADR 0029 defines bounded persistent Grid state in v19, and ADR 0030 defines bounded native-dialog selection UI in v20.
+IR versions 1 through 21 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14, ADR 0024 defines team-bound logical sessions in v15, ADR 0025 defines session-local GridWorld projection in v16, ADR 0027 defines bounded player/session reductions in v17, ADR 0028 defines bounded persistent scalar state in v18, ADR 0029 defines bounded persistent Grid state in v19, ADR 0030 defines bounded native-dialog selection UI in v20, and ADR 0031 defines bounded rich/typed native-dialog UI in v21.
 
 ### Generated datapack
 
-The generated directory is the deployment artifact. It owns namespace-derived scoreboards, functions, predicates, generated entities, optional ownership-region force-loads, HUD/sidebar resources, v20 dialog registry resources and selection trigger objectives when declared, compiler-private persistent storage/objectives when declared, and `portable/cleanup` / persistence lifecycle functions.
+The generated directory is the deployment artifact. It owns namespace-derived scoreboards, functions, predicates, generated entities, optional ownership-region force-loads, HUD/sidebar resources, v20+ dialog registry resources and selection/form objectives when declared, compiler-private persistent storage/objectives when declared, and `portable/cleanup` / persistence lifecycle functions.
 
 The target Minecraft server needs no compiler, Node.js, TypeScript, Java, Fabric, or mod.
 
@@ -151,7 +151,8 @@ A generated pack contains at least:
     └── <namespace>/
         ├── function/portable/*.mcfunction
         ├── predicate/portable/input/*.json   # when held input is used
-        └── dialog/portable/selection/*.json  # when v20 selection UI is declared
+        ├── dialog/portable/selection/*.json  # when v20+ selection/confirmation UI is declared
+        └── dialog/portable/form/*.json       # when v21 typed forms are declared
 ```
 
 Generated content belongs under `build/` and is not committed.
@@ -268,7 +269,19 @@ Selection resources are active-instance compiler ownership. Player initializatio
 
 Minecraft 26.1 treats dialog definitions as registry bootstrap data. Focused acceptance proved that copying a new v20 dialog pack into an already-running world and using only `/reload` does not make the new dialog id available while functions are parsed. Installation, replacement, or removal that changes generated dialog resources must therefore run cleanup where applicable, replace/remove files, then restart the server/world. Once a pack's dialog registry entries were bootstrapped at server start, ordinary `/reload` succeeded and reset v20 active-instance state as specified.
 
-V20 does not expose text/number/boolean form controls, dynamic dialog text, arbitrary click events/commands, inventory/container GUI ownership, quick-action or pause-screen registration, runtime-created menu graphs, custom packets, or persistent selection state.
+V20 does not expose text/number/boolean form controls, dynamic dialog text, arbitrary click events/commands, inventory/container GUI ownership, quick-action or pause-screen registration, runtime-created menu graphs, custom packets, or persistent selection state. Portable v21 expands this boundary as described below.
+
+## Rich/typed native dialog UI v21
+
+ADR 0031 defines the implemented v21 dialog expansion. Static dialog-facing text may use a bounded `RichText` value made from strings and style spans (color, bold, italic, underline, strikethrough). Selection, confirmation, and form bodies may contain bounded static text elements plus presentation-only item elements with item id/count, optional description, tooltip/decorations flags, and bounded dimensions. Dynamic score/selector/NBT components, click/hover events, arbitrary component objects, custom fonts, and item NBT/components remain outside Portable IR.
+
+`game.confirmation(id, spec)` lowers to native `minecraft:confirmation` and reuses the v20 player-selection handle/lifecycle. Its yes/no actions return distinct non-zero authored fixed-point values through the existing stable selection trigger bank; native Escape follows the confirmation no action. Selection and confirmation declarations share the v20 eight-slot declaration bound.
+
+`game.form(id, spec)` plus `player.form(form)` adds one compiler-owned input per generated native form. V21 supports boolean, single-option, and integer `number_range` inputs. Boolean defaults to logical `1/0`; option labels map to bounded authored numeric values; range start/end/step/initial are integers. Each form owns a stable `trigger` transport objective plus a dummy fixed-point result objective from complete eight-slot banks sorted by form id. Submit uses compiler-authored permission-0 `minecraft:dynamic/run_command` to issue `trigger <transport> set $(v)`, then the tick prelude validates/maps that transport to the authored fixed-point result. Logical zero remains a valid resolved result because result idle state uses a separate signed-int sentinel.
+
+Form `open()` is idempotent while already pending. A resolved result remains readable until `clear()`. Opening a different generated selection/confirmation/form first rearms any other pending generated dialog surface for that player, matching Minecraft's one-current-dialog-per-client model. Form cancel uses a reserved compiler-private transport code and resolves to the declared cancel value (default logical `-1`). Player initialization, `/reload`, and `portable/cleanup` treat these as active-instance state; cleanup removes complete selection/form banks while leaving externally managed teams and gamemode untouched.
+
+The vanilla return channel intentionally bounds the feature: v21 exposes exactly one typed input because a permission-0 client can safely return one integer through `/trigger`. Free-form text cannot be returned through that channel, and generic multi-field packing, arbitrary commands/events, custom packet handlers, inventory/container GUI ownership, runtime-created dialog graphs, and persistent form state remain unsupported. Generated `minecraft:dialog` resources follow the same registry-bootstrap lifecycle established by v20: add/change/remove requires cleanup where applicable, file replacement/removal, then server/world restart; ordinary `/reload` remains valid after startup bootstrap.
 
 ## Planned capability roadmap after v16
 
@@ -278,7 +291,7 @@ The roadmap order is:
 
 1. **bounded player/session reductions** — completed by Portable v17 / ADR 0027;
 2. **persistent portable state** — completed for bounded global/session scalar state by Portable v18 / ADR 0028 and bounded persistent Grid state by Portable v19 / ADR 0029; player/offline persistence remains deferred;
-3. **interactive selection UI** — completed by Portable v20 / ADR 0030 with bounded native-dialog option/cancel choices and compiler-owned trigger results;
+3. **interactive dialog UI** — completed for bounded selections by Portable v20 / ADR 0030 and expanded in Portable v21 / ADR 0031 with static rich text/item bodies, native confirmation, and boolean/option/integer-range single-input forms;
 4. **mannequin/actor presentation expansion** — next priority — richer bounded character appearance such as mannequin appearance/profile or skin controls supported by vanilla, equipment, and pose/transform controls, while preserving compiler-owned lifecycle and declaration bounds. Item/model projections or attachment relationships require the same ownership discipline and are design-time candidates rather than current features.
 
 The existing v7 actor contract remains current until item 4 lands: actor carriers are mannequins with state-backed position/yaw/lifetime, with zombie/skeleton intents represented by mob heads. ADR 0015's richer-presentation items were non-goals for v7; ADR 0026 intentionally promotes mannequin/actor expression to planned work without introducing runtime-created or unbounded entity collections.
@@ -292,18 +305,26 @@ After those priorities, additional capability gaps include 3D/swept collision, d
 - single-file TypeScript; no import/module resolution;
 - v1-v11 remain single-controller-oriented for compatibility; v12 is the multiplayer model;
 - fixed-point arithmetic relies on Minecraft scoreboard 32-bit behavior; generated commands do not add generic overflow guards;
-- no runtime generic arrays/collections, arbitrary packet-event dispatch, arbitrary inventory/form/dialog API, arbitrary NBT/storage API, or arbitrary Minecraft queries; v20 provides bounded static native-dialog selection choices, while text inputs, dynamic forms, arbitrary clicks/commands, and inventory GUI ownership remain unsupported;
+- no runtime generic arrays/collections, arbitrary packet-event dispatch, arbitrary inventory/form/dialog API, arbitrary NBT/storage API, or arbitrary Minecraft queries; v21 provides bounded static rich native-dialog content, confirmation, and boolean/option/integer-range single-input forms, while free-form text input, generic multi-field/dynamic forms, arbitrary clicks/commands, and inventory GUI ownership remain unsupported;
 - one server-global sidebar; v14 permits up to eight camera declarations only for disjoint external-team audiences;
 - bounded 2D logic collision only, not Minecraft hitbox queries or 3D/swept physics;
 - v8 world projection is compile-time declared and persistent; v13 additionally provides bounded incremental runtime grid projection, also persistent;
-- v15 adds independent team-bound logical sessions; v16 adds explicit session-local Grid-to-world footprints inside one shared ownership rectangle; v17 adds bounded cross-player/session reductions; v18 adds persistent scalars, v19 adds persistent Grids, and v20 adds player-local native-dialog selection. Automatic arena allocation, per-session ownership/private visibility scenes, dynamic matchmaking, independent per-player vanilla sidebars, player/offline persistent state, richer generic persistent collections, and rich form/inventory UI are not implemented.
+- v15 adds independent team-bound logical sessions; v16 adds explicit session-local Grid-to-world footprints inside one shared ownership rectangle; v17 adds bounded cross-player/session reductions; v18 adds persistent scalars, v19 adds persistent Grids, v20 adds player-local native-dialog selection, and v21 adds bounded rich/typed native-dialog UI. Automatic arena allocation, per-session ownership/private visibility scenes, dynamic matchmaking, independent per-player vanilla sidebars, player/offline persistent state, richer generic persistent collections, free-form/multi-field forms, and inventory UI are not implemented.
 
 ## Validation baseline
 
-Portable v1-v20 compiler behavior is covered by the Node regression suite; generated milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
+Portable v1-v21 compiler behavior is covered by the Node regression suite; generated milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
 
 Node migration ADR 0021 additionally established byte-for-byte output parity with the retired Java compiler for representative v1, v9, v10, and v11 programs including Bounce, Pinball, Breakout, Presentation, UI, World, JRPG, and spectate-camera cases. Node compiler regression tests are now the maintained build-time acceptance suite.
 
+
+### v21 rich/typed native dialog UI validation
+
+Portable v21 passed focused mod-free Minecraft 26.1 acceptance on `second` using real client `Camera` in externally managed team `v21_party`. The checked-in `examples/portable-dialog-ui` pack rendered a styled `Arcane Purchase` native confirmation with mixed-color text, a diamond-sword item body and tooltip, plus authored `Buy`/`Leave` actions. The confirmation `Leave` path resolved to logical `-10`. The same pack rendered boolean, single-option, and integer-range forms; real-client submit paths reached logical boolean `1`, option `Mage=3`, and range `3` in authored player-local fixed-point state. Option/range cancel paths resolved logical `-1`.
+
+The acceptance source deliberately calls each surface's `open()` every tick while armed. Pending transport state remained stable across ticks. Replacing a pending `hints` form with `role` rearmed the old transport from pending to idle and left only the new form pending, proving cross-surface replacement does not leave a stale sentinel. `/reload` after startup bootstrap reset stage/results/transports while preserving external team membership. Running `portable/cleanup` from a pending confirmation removed every generated objective and left `v21_party` intact. Final teardown then removed the team and pack and restarted the server to remove registry entries; the server finished with zero objectives, zero teams, and only vanilla enabled (with the pre-existing disabled video packs merely available).
+
+The Node regression suite was 35/35 green. Sixteen retained v1-v20 checked-in examples were recompiled against both v21 and pre-v21 commit `b000162`, with byte-for-byte identical generated output. Node coverage includes rich-text/body validation, item lowering, all three form kinds, logical-zero result mapping, cancel, replacement, bounds, and rejection of unsupported text input.
 
 ### v20 interactive selection UI validation
 
