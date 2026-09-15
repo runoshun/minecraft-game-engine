@@ -639,7 +639,21 @@ type PortableProgramSpecV23 = Omit<PortableProgramSpecV22, "version" | "tick" | 
   tick: PortableV23Action[];
   vanilla?: NonNullable<PortableProgramSpecV22["vanilla"]> & { interactions?: PortableVanillaInteractionV23[] };
 };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14 | PortableProgramSpecV15 | PortableProgramSpecV16 | PortableProgramSpecV17 | PortableProgramSpecV18 | PortableProgramSpecV19 | PortableProgramSpecV20 | PortableProgramSpecV21 | PortableProgramSpecV22 | PortableProgramSpecV23;
+type PortableV24PlayerAction =
+  | Exclude<PortableV21Action,
+      | { op: "if" } | { op: "if_aabb" } | { op: "if_circle" } | { op: "if_circle_capsule" } | { op: "if_trigger" }>
+  | { op: "interaction_controller_claim"; interaction: string }
+  | { op: "if"; condition: PortableV21Comparison; then: PortableV24PlayerAction[]; else?: PortableV24PlayerAction[] }
+  | { op: "if_aabb"; a: PortableV21Aabb; b: PortableV21Aabb; then: PortableV24PlayerAction[]; else?: PortableV24PlayerAction[] }
+  | { op: "if_circle"; a: PortableV21Circle; b: PortableV21Circle; then: PortableV24PlayerAction[]; else?: PortableV24PlayerAction[] }
+  | { op: "if_circle_capsule"; circle: PortableV21Circle; capsule: PortableCapsule; then: PortableV24PlayerAction[]; else?: PortableV24PlayerAction[] }
+  | { op: "if_trigger"; trigger: PortableV21Aabb; point: PortableV21Point; then: PortableV24PlayerAction[]; else?: PortableV24PlayerAction[] };
+type PortableV24Action =
+  | Exclude<PortableV23Action, { op: "interaction_use" }>
+  | { op: "interaction_use"; interaction: string; actions: PortableV24PlayerAction[] }
+  | { op: "interaction_controller_player"; interaction: string; actions: PortableV21Action[] };
+type PortableProgramSpecV24 = Omit<PortableProgramSpecV23, "version" | "tick"> & { version: 24; tick: PortableV24Action[] };
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14 | PortableProgramSpecV15 | PortableProgramSpecV16 | PortableProgramSpecV17 | PortableProgramSpecV18 | PortableProgramSpecV19 | PortableProgramSpecV20 | PortableProgramSpecV21 | PortableProgramSpecV22 | PortableProgramSpecV23 | PortableProgramSpecV24;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -909,8 +923,13 @@ type PortableDslPlayerContext = {
   hud(id: string, spec: PortableDslPlayerHudSpec): void;
 };
 type PortableDslInteractionPlayerContext = Omit<PortableDslPlayerContext, "hud">;
+type PortableDslInteractionController = {
+  claim(player: PortableDslInteractionPlayerContext): void;
+  forPlayer(callback: (player: PortableDslInteractionPlayerContext) => void): void;
+};
 type PortableDslInteraction = {
   readonly id: string;
+  readonly controller: PortableDslInteractionController;
   onUse(callback: (player: PortableDslInteractionPlayerContext) => void): void;
 };
 type PortableDslGlobalReduction = {

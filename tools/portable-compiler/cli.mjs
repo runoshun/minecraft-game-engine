@@ -66,6 +66,7 @@ export function main(argv = process.argv.slice(2)) {
   console.log(`  texts: ${result.textCount}`);
   console.log(`  actors: ${result.actorCount}`);
   if (result.interactionCount) console.log(`  interactions: ${result.interactionCount}`);
+  if (result.interactionControllerCount) console.log(`  interaction controllers: ${result.interactionControllerCount}`);
   console.log(`  world batches: ${result.worldBatchCount}`);
   console.log(`  cameras: ${result.cameraCount}`);
   console.log(`  particles: ${result.particleCount}`);

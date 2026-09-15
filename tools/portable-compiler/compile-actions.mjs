@@ -89,6 +89,25 @@ export function compileActions(actions, lines, ctx) {
         lines.push(`execute in ${interaction.dimension} as ${selector} run data remove entity @s interaction`);
         break;
       }
+      case "interaction_controller_claim": {
+        const generation = ctx.interactionControllerGenerationHolder(action.interaction);
+        const objective = ctx.interactionControllerObjective(action.interaction);
+        lines.push(`execute if score ${generation} ${ctx.objective} matches 2147483647 run scoreboard objectives remove ${objective}`);
+        lines.push(`execute if score ${generation} ${ctx.objective} matches 2147483647 run scoreboard objectives add ${objective} dummy`);
+        lines.push(`execute if score ${generation} ${ctx.objective} matches 2147483647 run scoreboard players set ${generation} ${ctx.objective} 0`);
+        lines.push(`scoreboard players add ${generation} ${ctx.objective} 1`);
+        lines.push(`scoreboard players operation @s ${objective} = ${generation} ${ctx.objective}`);
+        break;
+      }
+      case "interaction_controller_player": {
+        const fn = ctx.nextPlayerFunctionName(), body = [];
+        compileActions(action.actions, body, ctx);
+        ctx.functions.set(fn, body);
+        const generation = ctx.interactionControllerGenerationHolder(action.interaction);
+        const objective = ctx.interactionControllerObjective(action.interaction);
+        lines.push(`execute as @a if score @s ${objective} = ${generation} ${ctx.objective} run function ${ctx.namespace}:portable/${fn}`);
+        break;
+      }
       case "for_session":
         compileActions(action.actions, lines, ctx);
         break;

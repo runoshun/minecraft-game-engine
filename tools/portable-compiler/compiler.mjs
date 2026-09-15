@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { compileActions } from "./compile-actions.mjs";
+import { compileInteractionControllerLoad, interactionControllerCleanupLines, interactionControllerIds } from "./compile-interaction-controller.mjs";
 import { CompileContext, inputHolder, ownerTag, playerInitObjective } from "./compile-context.mjs";
 import {
   cleanupLines, compileVanillaActorLoad, compileVanillaActorUpdates, compileVanillaCameraLoad,
@@ -100,6 +101,7 @@ export function compileDatapack(program, namespace, outputRoot) {
   compileSelectionLoad(program, load, ctx);
   compileFormLoad(program, load, ctx);
   compilePlayerLoad(program, load, ctx);
+  compileInteractionControllerLoad(program, load, ctx);
   compileGridLoad(program, load, ctx);
   if (ctx.usesNegate) load.push(`scoreboard players set #neg1 ${ctx.objective} -1`);
   for (const [raw, holder] of ctx.constants.entries()) load.push(`scoreboard players set ${holder} ${ctx.objective} ${raw}`);
@@ -145,7 +147,7 @@ export function compileDatapack(program, namespace, outputRoot) {
   const functionRoot = path.join(outputRoot, "data", namespace, "function", "portable");
   write(path.join(functionRoot, "load.mcfunction"), `${load.join("\n")}\n`);
   write(path.join(functionRoot, "tick.mcfunction"), `${tick.join("\n")}\n`);
-  write(path.join(functionRoot, "cleanup.mcfunction"), `${[...gridCleanupLines(program, ctx), ...selectionCleanupLines(program, ctx), ...formCleanupLines(program, ctx), ...cleanupLines(program, ctx)].join("\n")}\n`);
+  write(path.join(functionRoot, "cleanup.mcfunction"), `${[...gridCleanupLines(program, ctx), ...selectionCleanupLines(program, ctx), ...formCleanupLines(program, ctx), ...interactionControllerCleanupLines(program, ctx), ...cleanupLines(program, ctx)].join("\n")}\n`);
   for (const [name, body] of ctx.functions.entries()) write(path.join(functionRoot, `${name}.mcfunction`), `${body.join("\n")}\n`);
 
   let marker = `namespace=${namespace}\nobjective=${ctx.objective}\nportable_version=${program.version}\nfixed_point=${program.fixedPoint}\n`;
@@ -161,6 +163,9 @@ export function compileDatapack(program, namespace, outputRoot) {
   }
   if (program.version >= 21) {
     for (const form of [...program.forms].sort((a, b) => a.id.localeCompare(b.id))) marker += `form.${form.id}.transport=${ctx.formTransportObjective(form.id)};result=${ctx.formResultObjective(form.id)}\n`;
+  }
+  if (program.version >= 24) {
+    for (const id of interactionControllerIds(program)) marker += `interaction.${id}.controller=${ctx.interactionControllerObjective(id)};generation=${ctx.interactionControllerGenerationHolder(id)}\n`;
   }
   for (const name of Object.keys(program.initialInputs)) marker += `input.${name}=${inputHolder(name)}\n`;
   if (program.version >= 12) {
@@ -210,6 +215,7 @@ export function compileDatapack(program, namespace, outputRoot) {
     textCount: program.texts.length,
     actorCount: program.actors.length,
     interactionCount: program.interactions.length,
+    interactionControllerCount: interactionControllerIds(program).length,
     worldBatchCount: program.worldBatches.length,
     cameraCount: program.cameras.length,
     particleCount: program.particles.length,

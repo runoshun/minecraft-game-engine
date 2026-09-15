@@ -988,6 +988,7 @@ test("representative checked-in examples compile deterministically", () => {
     ["examples/portable-dialog-ui/datapack/data/portable_dialog_ui/mcgame/main.ts", "portable_dialog_ui", 21],
     ["examples/portable-actor-presentation/datapack/data/portable_actor_v22/mcgame/main.ts", "portable_actor_v22", 22],
     ["examples/portable-interaction/datapack/data/portable_interaction/mcgame/main.ts", "portable_interaction", 23],
+    ["examples/portable-interaction-controller/datapack/data/portable_interaction_controller/mcgame/main.ts", "portable_interaction_controller", 24],
   ];
   for (const [relative, namespace, expectedVersion] of cases) {
     const program = parseProgram(extractPortableSource(path.join(root, relative), root));

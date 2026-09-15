@@ -13,6 +13,12 @@ export function projectionTag(namespace, id) { return `mcg_v_${hashBase36(namesp
 export function textTag(namespace, id) { return `mcg_t_${hashBase36(namespace)}_${id}`; }
 export function actorTag(namespace, id) { return `mcg_a_${hashBase36(namespace)}_${id}`; }
 export function interactionTag(namespace, id) { return `mcg_i_${hashBase36(namespace)}_${id}`; }
+export function interactionControllerObjective(namespace, index) { return `mic${hashHex8(namespace)}${slot(index)}`; }
+export function fullInteractionControllerObjectiveBank(namespace) {
+  const out = [];
+  for (let i = 0; i < LIMITS.interactions; i++) out.push(interactionControllerObjective(namespace, i));
+  return out;
+}
 export function cameraTag(namespace, id) { return `mcg_c_${hashBase36(namespace)}_${id}`; }
 export function particleTag(namespace, id) { return `mcg_p_${hashBase36(namespace)}_${id}`; }
 export function soundTag(namespace, id) { return `mcg_s_${hashBase36(namespace)}_${id}`; }
@@ -100,6 +106,8 @@ export class CompileContext {
     [...(program.persistentGrids || [])].map(grid => grid.id).sort().forEach(id => registerPersistentGrid(`global:${id}`));
     this.playerStateObjectives = new Map();
     Object.keys(program.initialPlayerState || {}).sort().forEach((name, index) => this.playerStateObjectives.set(name, playerStateObjective(namespace, index)));
+    this.interactionControllerSlots = new Map();
+    [...(program.interactions || [])].map(value => value.id).sort().forEach((id, index) => this.interactionControllerSlots.set(id, index));
     this.selectionObjectives = new Map();
     [...(program.selections || [])].map(selection => selection.id).sort().forEach((id, index) => this.selectionObjectives.set(id, selectionObjectiveName(namespace, index)));
     this.formTransportObjectives = new Map();
@@ -159,6 +167,16 @@ export class CompileContext {
     return objective;
   }
   playerInputObjective(name) { return playerInputObjective(this.namespace, name); }
+  interactionControllerObjective(id) {
+    const index = this.interactionControllerSlots.get(id);
+    if (index === undefined) fail(`unknown interaction controller objective: ${id}`);
+    return interactionControllerObjective(this.namespace, index);
+  }
+  interactionControllerGenerationHolder(id) {
+    const index = this.interactionControllerSlots.get(id);
+    if (index === undefined) fail(`unknown interaction controller generation: ${id}`);
+    return `#ic${slot(index)}`;
+  }
   selectionObjective(id) {
     const objective = this.selectionObjectives.get(id);
     if (!objective) fail(`unknown selection objective: ${id}`);

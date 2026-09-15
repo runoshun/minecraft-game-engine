@@ -71,7 +71,25 @@ export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }
       if (!counter.interactionUses) counter.interactionUses = new Set();
       if (counter.interactionUses.has(interaction)) fail(`${p} duplicate use handler for interaction ${interaction}`);
       counter.interactionUses.add(interaction);
-      out.push({ op, interaction, actions: parseActions(requiredArray(a, "actions", p), childContext(ctx, "single"), `${p}.actions`, depth + 1, counter) });
+      const useCtx = { ...childContext(ctx, "single"), interactionUse: interaction };
+      out.push({ op, interaction, actions: parseActions(requiredArray(a, "actions", p), useCtx, `${p}.actions`, depth + 1, counter) });
+      continue;
+    }
+    if (op === "interaction_controller_claim") {
+      if (ctx.version < 24) fail(`${p}.op requires portable version 24`);
+      const interaction = requiredString(a, "interaction", p);
+      if (!ctx.interactions?.has(interaction)) fail(`${p}.interaction references unknown interaction ${interaction}`);
+      if (!ctx.playerScope || ctx.interactionUse !== interaction) fail(`${p}.op is only valid inside the matching interaction_use callback`);
+      out.push({ op, interaction });
+      continue;
+    }
+    if (op === "interaction_controller_player") {
+      if (ctx.version < 24) fail(`${p}.op requires portable version 24`);
+      if (depth !== 0 || ctx.playerScope || ctx.sessionScope) fail(`${p}.op must be declared directly in the root tick action list`);
+      const interaction = requiredString(a, "interaction", p);
+      if (!ctx.interactions?.has(interaction)) fail(`${p}.interaction references unknown interaction ${interaction}`);
+      const controllerCtx = { ...childContext(ctx, "single"), interactionUse: null };
+      out.push({ op, interaction, actions: parseActions(requiredArray(a, "actions", p), controllerCtx, `${p}.actions`, depth + 1, counter) });
       continue;
     }
     if (op === "for_session") {

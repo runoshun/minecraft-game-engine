@@ -52,7 +52,7 @@ export const LIMITS = Object.freeze({
   depth: 16,
 });
 
-export const CURRENT_VERSION = 23;
+export const CURRENT_VERSION = 24;
 
 export function fail(message) { throw new Error(message); }
 export function has(object, member) { return Object.prototype.hasOwnProperty.call(object, member); }

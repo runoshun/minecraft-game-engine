@@ -143,6 +143,7 @@ export function parseProgram(spec, api = "portable.define") {
     forms: new Set(forms.map(form => form.id)),
     gridWorlds: new Set(),
     playerScope: false,
+    interactionUse: null,
   };
   let vanilla = { inputs: {}, projections: [], texts: [], actors: [], interactions: [], worldBatches: [], gridWorlds: [], cameras: [], particles: [], sounds: [], huds: [], playerHuds: [], sidebars: [], ownership: null };
   if (has(spec, "vanilla")) {

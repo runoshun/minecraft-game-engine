@@ -9,6 +9,7 @@
   const FLIPPER = Symbol("mcgame.portableDsl.flipper");
   const PLAYER_SET = Symbol("mcgame.portableDsl.playerSet");
   const PLAYER_SCOPE = Symbol("mcgame.portableDsl.playerScope");
+  const PLAYER_CONTEXT = Symbol("mcgame.portableDsl.playerContext");
   const SESSION_SCOPE = Symbol("mcgame.portableDsl.sessionScope");
   const GRID = Symbol("mcgame.portableDsl.grid");
   const PERSISTENT_GRID = Symbol("mcgame.portableDsl.persistentGrid");
@@ -122,6 +123,7 @@
     let activePlayerScope = null;
     let activePlayerMode = null;
     let playerRootSink = null;
+    let activeInteractionUseId = null;
     let nextPlayerScope = 0;
     let activeSessionScope = null;
     let activeSessionId = null;
@@ -139,6 +141,7 @@
     let usesV21 = false;
     let usesV22 = false;
     let usesV23 = false;
+    let usesV24 = false;
 
     function assertUnique(name) {
       if (Object.prototype.hasOwnProperty.call(stateValues, name) || Object.prototype.hasOwnProperty.call(persistentStateValues, name) || Object.prototype.hasOwnProperty.call(inputValues, name)) {
@@ -1356,6 +1359,7 @@
           Object.defineProperty(input, name, { enumerable: true, get() { return playerInputRef(name, scope); } });
         }
         const player = Object.freeze({
+          [PLAYER_CONTEXT]: scope,
           state(name, initial) {
             if (activePlayerScope !== scope) fail("player.state(...) is only valid in its interaction onUse PlayerContext");
             return makePlayerState(name, initial, scope);
@@ -1365,16 +1369,54 @@
           form(value) { return playerFormRef(scope, value); },
           hud() { fail("player.hud(...) is not supported inside interaction onUse; HUD audiences must be statically declared"); },
         });
-        const previousSink = actionSink, previousScope = activePlayerScope, previousMode = activePlayerMode, previousRoot = playerRootSink;
+        const previousSink = actionSink, previousScope = activePlayerScope, previousMode = activePlayerMode, previousRoot = playerRootSink, previousInteractionUse = activeInteractionUseId;
         const captured = [];
-        actionSink = captured; activePlayerScope = scope; activePlayerMode = "single"; playerRootSink = captured;
+        actionSink = captured; activePlayerScope = scope; activePlayerMode = "single"; playerRootSink = captured; activeInteractionUseId = id;
         try { callback(player); } finally {
-          actionSink = previousSink; activePlayerScope = previousScope; activePlayerMode = previousMode; playerRootSink = previousRoot;
+          actionSink = previousSink; activePlayerScope = previousScope; activePlayerMode = previousMode; playerRootSink = previousRoot; activeInteractionUseId = previousInteractionUse;
         }
         emit({ op: "interaction_use", interaction: id, actions: captured });
       }
 
-      return Object.freeze({ [INTERACTION]: true, id, onUse });
+      const controller = Object.freeze({
+        claim(player) {
+          if (activeInteractionUseId !== id || activePlayerScope === null) fail("interaction " + id + ".controller.claim(...) is only valid inside this interaction's onUse callback");
+          if (!player || player[PLAYER_CONTEXT] !== activePlayerScope) fail("interaction " + id + ".controller.claim(...) requires the current onUse player");
+          usesV24 = true;
+          emit({ op: "interaction_controller_claim", interaction: id });
+        },
+        forPlayer(callback) {
+          if (actionSink === null) fail("interaction " + id + ".controller.forPlayer(...) is only valid inside tick(...)");
+          if (actionSink !== tickRootSink || activePlayerScope !== null || activeSessionScope !== null) fail("interaction " + id + ".controller.forPlayer(...) must be declared directly in the root tick scope");
+          if (typeof callback !== "function") fail("interaction " + id + ".controller.forPlayer(...) callback is required");
+          usesV24 = true; usesPlayerApi = true;
+          const scope = ++nextPlayerScope;
+          const input = {};
+          for (const name of ["hotbarSlot", "forward", "backward", "left", "right", "jump", "sneak", "sprint"]) {
+            Object.defineProperty(input, name, { enumerable: true, get() { return playerInputRef(name, scope); } });
+          }
+          const player = Object.freeze({
+            [PLAYER_CONTEXT]: scope,
+            state(name, initial) {
+              if (activePlayerScope !== scope) fail("player.state(...) is only valid in its interaction controller PlayerContext");
+              return makePlayerState(name, initial, scope);
+            },
+            input: Object.freeze(input),
+            selection(value) { return playerSelectionRef(scope, value); },
+            form(value) { return playerFormRef(scope, value); },
+            hud() { fail("player.hud(...) is not supported inside interaction controller context; HUD audiences must be statically declared"); },
+          });
+          const previousSink = actionSink, previousScope = activePlayerScope, previousMode = activePlayerMode, previousRoot = playerRootSink;
+          const captured = [];
+          actionSink = captured; activePlayerScope = scope; activePlayerMode = "single"; playerRootSink = captured;
+          try { callback(player); } finally {
+            actionSink = previousSink; activePlayerScope = previousScope; activePlayerMode = previousMode; playerRootSink = previousRoot;
+          }
+          emit({ op: "interaction_controller_player", interaction: id, actions: captured });
+        },
+      });
+
+      return Object.freeze({ [INTERACTION]: true, id, onUse, controller });
     }
 
     function actorProjection(id, spec) {
@@ -1655,7 +1697,7 @@
 
     const usesSpectateCamera = cameras.some(camera => camera.mode === "spectate");
     const spec = {
-      version: usesV23 ? 23 : usesV22 ? 22 : usesV21 ? 21 : usesV20 ? 20 : usesV19 ? 19 : usesV18 ? 18 : usesV17 ? 17 : usesV16 ? 16 : usesV15 ? 15 : usesV14 ? 14 : usesV13 ? 13 : usesPlayerApi ? 12 : usesSpectateCamera ? 11 : ownership === null ? 9 : 10,
+      version: usesV24 ? 24 : usesV23 ? 23 : usesV22 ? 22 : usesV21 ? 21 : usesV20 ? 20 : usesV19 ? 19 : usesV18 ? 18 : usesV17 ? 17 : usesV16 ? 16 : usesV15 ? 15 : usesV14 ? 14 : usesV13 ? 13 : usesPlayerApi ? 12 : usesSpectateCamera ? 11 : ownership === null ? 9 : 10,
       fixedPoint,
       state: stateValues,
       tick: tickActions,

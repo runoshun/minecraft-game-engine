@@ -48,7 +48,7 @@ Each handle permits at most one `onUse(...)` handler. The handler must be declar
 
 `player.hud(...)` is not available in the interaction callback because the existing HUD declaration model requires a static PlayerSet audience. A use event identifies one runtime player rather than declaring a stable audience set.
 
-The event does not create a durable controller/session binding. If a game needs the player who clicked a cabinet to remain its controller over later ticks, that identity/lifecycle is a separate capability. v23 only provides the discrete right-click event and the clicking player's context at dispatch time.
+The v23 event does not create a controller/session binding. If a game needs the player who clicked a cabinet to remain its controller over later ticks, that identity/lifecycle is a separate capability. v23 only provides the discrete right-click event and the clicking player's context at dispatch time. ADR 0035 subsequently adds a bounded **active-instance** controller binding in Portable v24; it does not retroactively change the v23 contract or make controller identity persistent across reload.
 
 ## Vanilla lowering and consumption
 
@@ -81,11 +81,11 @@ Portable v23 does not add:
 - dynamic width, height, or response;
 - a queued/high-frequency click stream beyond vanilla's latest interaction record;
 - automatic proximity prompts or line-of-sight queries;
-- durable player identity/controller binding after the callback;
+- controller binding after the callback (later added, active-instance-only, by Portable v24 / ADR 0035);
 - session-local interaction declarations or automatic cabinet/session allocation;
 - player-private interaction visibility.
 
-These require separate decisions if a retained game demonstrates the need.
+The items above remain outside v23. Portable v24 / ADR 0035 is the later decision for the bounded active-instance controller-binding item only; the other items remain future work.
 
 ## Compatibility
 

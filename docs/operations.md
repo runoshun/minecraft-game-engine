@@ -344,3 +344,38 @@ Acceptance must verify:
 - `portable/cleanup` removes objectives, interaction/Display entities, scheduled initialization, and owned force-loads before pack deletion.
 
 The accepted reference run used real client `Camera`. Starting from raw shared/player-local values `0/0`, one physical right click produced `1000/1000`; the generated event-consumption command left no `interaction` compound. A second distinct click produced `2000/2000`. Ordinary `/reload` returned both values to `0`, recreated exactly one interaction entity, and left no pending record. Cleanup removed every objective/entity and reduced four ownership force-loaded chunks to zero. The acceptance pack and temporary floor were removed; the final world had no objectives or force-loads, only vanilla enabled, and the pre-existing `video_breakout` / `video_pinball` packs still disabled/available. Node regression was 50/50 green and all 18 pre-existing retained example outputs matched `ed4673e` byte-for-byte.
+
+## Interaction controller v24 acceptance
+
+ADR 0035 defines Portable v24 active-instance controller binding on top of v23 world interactions. Use `examples/portable-interaction-controller` on mod-free Minecraft 26.1 `second` with both real clients `Camera` and `Camera2`. V24 adds only ordinary scoreboard/function state, so no server restart is required. `/reload` is deliberately the controller reset boundary.
+
+Compile the acceptance pack with:
+
+```bash
+npm run compile:portable -- \
+  --source examples/portable-interaction-controller/datapack/data/portable_interaction_controller/mcgame/main.ts \
+  --namespace portable_interaction_controller \
+  --output build/portable/portable_interaction_controller
+```
+
+The generated marker must report `portable_version=24` and one `interaction.cabinet.controller=...;generation=...` mapping. The reference source calls `cabinet.controller.claim(player)` from the matching `cabinet.onUse(...)` callback, then uses `cabinet.controller.forPlayer(...)` for later player-local tick/input work.
+
+Acceptance must verify:
+
+- real client A right-clicks to claim generation `1`; A's controller callback advances while B's does not;
+- B's real Space/Jump input does not run controller actions while A owns the cabinet, while A's input does;
+- B right-clicks to reclaim; generation advances, A retains a stale old token, B receives the current token, and only B's later input executes controller actions;
+- disconnecting and reconnecting the current controller without an intervening claim resumes controller execution in the same active instance;
+- if the controller disconnects and another player claims before reconnect, the offline old token stays stale after reconnect and does not execute controller actions;
+- `/reload` recreates the controller objective bank, resets generation to zero, clears online/offline controller scores, resets active-instance player state, and recreates exactly one interaction entity;
+- generated claim lowering guards signed-32-bit generation exhaustion by clearing/recreating that interaction's controller objective before token reuse;
+- all pre-existing retained v1-v23 examples are byte-for-byte identical to parent compiler commit `8af93f4`;
+- `portable/cleanup` removes controller objectives plus ordinary generated objectives/entities/force-loads before deleting the pack.
+
+The accepted reference run used Camera then Camera2. Camera claimed generation `1`; Camera2's Space did nothing, while Camera's Space changed shared raw `controlUses` from `0 -> 3000` and Camera-local `personalUses` to `3000`. Camera2 reclaimed generation `2`, leaving Camera token `1` and assigning Camera2 token `2`; Camera's controller tick counter stopped while Camera2's advanced. Camera's subsequent Space left `controlUses=3000`; Camera2's Space advanced it to `9000` and Camera2-local `personalUses` to `6000`.
+
+Camera2 was disconnected and reconnected without another claim; token `2` remained current and its controller tick counter resumed. Camera2 was then disconnected again, Camera claimed generation `3`, and Camera2 remained offline with stale token `2`. After reconnect, Camera2's controller tick counter remained exactly raw `1209000` while Camera's continued advancing, proving stale offline ownership does not resurrect.
+
+Ordinary `/reload` reset `claims`, `controlUses`, and generation to `0`, removed both players' controller scores entirely, reset both controller tick states to `0`, and recreated one interaction entity. The final signed-32-bit wrap path was then tested by forcing generation to `2147483647`, seeding `StaleController` with that same token, and issuing a real cabinet click. The click recreated the controller objective, returned generation and Camera2's token to `1`, and left `StaleController` with no score. Cleanup removed every objective/entity and all owned force-loads. The acceptance pack and temporary floor were removed and `/reload` left zero objectives, zero force-loaded chunks, only vanilla enabled, with the pre-existing `video_breakout` and `video_pinball` packs still disabled/available. Node regression was 54/54 green and all 19 pre-existing retained example outputs matched `8af93f4` byte-for-byte.
+
+Controller state is not persistent. For ordinary v24-to-v24 changes, `/reload` is sufficient and intentionally releases every controller. If an installed v24 namespace is being replaced by source that no longer uses controller binding and therefore compiles back to v23 or earlier, run the installed v24 `portable/cleanup` **before** replacing/reloading the pack; historical v1-v23 output intentionally has no v24 controller-objective cleanup bank.
