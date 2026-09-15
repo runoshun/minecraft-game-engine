@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { compileDatapack } from "../compiler.mjs";
-import { extractPortableSpec, transpileTypeScript } from "../extract.mjs";
+import { extractPortableSource, extractPortableSpec, transpileTypeScript } from "../extract.mjs";
 import { parseProgram } from "../program.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -989,8 +989,7 @@ test("representative checked-in examples compile deterministically", () => {
     ["examples/portable-actor-presentation/datapack/data/portable_actor_v22/mcgame/main.ts", "portable_actor_v22", 22],
   ];
   for (const [relative, namespace, expectedVersion] of cases) {
-    const source = fs.readFileSync(path.join(root, relative), "utf8");
-    const program = parseProgram(extractPortableSpec(relative, transpileTypeScript(relative, source, root), root));
+    const program = parseProgram(extractPortableSource(path.join(root, relative), root));
     assert.equal(program.version, expectedVersion, relative);
     const a = fs.mkdtempSync(path.join(os.tmpdir(), "mcgame-a-"));
     const b = fs.mkdtempSync(path.join(os.tmpdir(), "mcgame-b-"));

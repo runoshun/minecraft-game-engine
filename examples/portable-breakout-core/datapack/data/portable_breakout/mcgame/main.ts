@@ -1,18 +1,10 @@
+import { BRICK_COUNT, createBricks } from "./bricks";
+
 const BOARD_X = 88;
 const BOARD_Y = 112;
 const BOARD_Z = 0.6;
 const PADDLE_Y = -5.0;
 const SERVE_Y = -4.35;
-const BRICK_ROWS = 5;
-const BRICK_COLS = 8;
-const BRICK_COUNT = BRICK_ROWS * BRICK_COLS;
-const BRICK_COLORS = [
-  "minecraft:red_concrete",
-  "minecraft:orange_concrete",
-  "minecraft:yellow_concrete",
-  "minecraft:lime_concrete",
-  "minecraft:light_blue_concrete",
-];
 
 portableDsl({ fixedPoint: 1000, ownership: { minX: 80, minZ: -24, maxX: 96, maxZ: 4 } }, game => {
   const left = game.input("left", 0, { source: "first_player_left" });
@@ -46,31 +38,7 @@ portableDsl({ fixedPoint: 1000, ownership: { minX: 80, minZ: -24, maxX: 96, maxZ
     height: 0.45,
   });
 
-  const bricks = game.repeat(BRICK_COUNT, index => {
-    const row = Math.floor(index / BRICK_COLS);
-    const col = index % BRICK_COLS;
-    const x = -5.25 + col * 1.5;
-    const y = 5.5 - row * 0.8;
-    const alive = game.state("brick" + index, 1);
-    const collider = game.box("brick_" + index, {
-      x,
-      y,
-      width: 1.35,
-      height: 0.55,
-    });
-
-    game.block("brick_" + String(index).padStart(2, "0"), {
-      block: BRICK_COLORS[row],
-      x: BOARD_X + x,
-      y: BOARD_Y + y,
-      z: BOARD_Z - 0.05,
-      scale: { x: 1.35, y: 0.55, z: 0.3 },
-      translation: { x: -0.675, y: -0.275, z: -0.15 },
-      when: alive.eq(1),
-    });
-
-    return { alive, collider, points: BRICK_ROWS - row };
-  });
+  const bricks = createBricks(game, BOARD_X, BOARD_Y, BOARD_Z);
 
   game.camera("main", {
     x: BOARD_X,

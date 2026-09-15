@@ -7,7 +7,7 @@ Minecraft Game Engine is a TypeScript-to-vanilla-datapack game compiler. Minecra
 The canonical workflow is:
 
 ```text
-edit main.ts -> npm run compile:portable -> deploy/reload datapack -> play/test/capture -> edit main.ts
+edit main.ts/local .ts modules -> npm run compile:portable -> deploy/reload datapack -> play/test/capture -> edit source
 ```
 
 There is no Java/Fabric runtime in the repository. ADR 0021 records the compiler migration and retirement order.
@@ -22,7 +22,7 @@ Owns game-specific state, rules, collision response, progression, UI values, and
 
 Owns build-time TypeScript transpilation, `portableDsl` evaluation, Portable IR validation, and datapack generation. The implementation lives under `tools/portable-compiler/`.
 
-The compiler accepts one TypeScript source, namespace, and output directory. Module/import resolution is not implemented; portable sources are currently single-file programs.
+The compiler accepts one entry TypeScript source, namespace, and output directory. ADR 0033 adds bounded local module authoring: static relative imports/re-exports may resolve `.ts` files inside the entry source directory, while host/package/dynamic module access remains unavailable.
 
 ### Portable IR
 
@@ -48,16 +48,17 @@ Minecraft executes generated mcfunctions and supplies vanilla-observable player 
 
 `tools/portable-compiler/cli.mjs` performs:
 
-1. read `main.ts`, with a 1 MB source limit;
-2. transpile through bundled TypeScript 5.9.2 targeting ES2022;
-3. create an isolated Node `vm` context;
-4. install the bundled `portableDsl` frontend plus registration-only host stubs;
-5. evaluate initialization and capture exactly one `portable.define(...)` result;
-6. parse and validate Portable IR for the declared version;
-7. lower the IR to a standalone datapack;
-8. write `.mcgame-portable-generated` so later compiler runs may safely replace the generated directory.
+1. resolve the entry `main.ts` plus static local TypeScript imports/re-exports, bounded to 64 modules and 1,000,000 aggregate source bytes;
+2. reject non-relative/package/host/non-TypeScript/dynamic/cyclic or source-root-escaping module dependencies, including real-path symlink escapes;
+3. transpile each accepted module through bundled TypeScript 5.9.2 targeting ES2022 with CommonJS-shaped module output;
+4. create an isolated Node `vm` context and install the bundled `portableDsl` frontend plus registration-only host stubs;
+5. evaluate the validated module graph with a compiler-owned in-context loader that has no host `require`, package resolver, filesystem, or network access;
+6. capture exactly one `portable.define(...)` result;
+7. parse and validate Portable IR for the declared version;
+8. lower the IR to a standalone datapack;
+9. write `.mcgame-portable-generated` so later compiler runs may safely replace the generated directory.
 
-Live Minecraft host capabilities are unavailable during extraction. A source that calls runtime-only host inspection APIs cannot compile; `game.players()` in v12 is a declarative `PlayerSet` constructor, not live player enumeration during compilation. The `vm` boundary is a build-tool containment measure and has not been audited as a hostile-code security boundary.
+Live Minecraft host capabilities are unavailable during extraction. A source that calls runtime-only host inspection APIs cannot compile; `game.players()` in v12 is a declarative `PlayerSet` constructor, not live player enumeration during compilation. Local modules are build inputs only: game source cannot call Node `require`, resolve npm packages, dynamically import files, or access arbitrary filesystem/network APIs. The host compiler reads only the validated `.ts` graph below the entry source directory. The `vm` boundary is a build-tool containment measure and has not been audited as a hostile-code security boundary.
 
 Compiler assets live under `tools/portable-compiler/assets/`:
 
@@ -306,13 +307,13 @@ The roadmap order is:
 
 ADR 0032 completes item 4 by extending rather than replacing the v7 lifecycle: actor carriers remain bounded compiler-owned mannequins with state-backed transforms/lifetime and zombie/skeleton mob-head intents, now with the v22 presentation fields described above. Runtime-created or unbounded entity collections remain out of scope.
 
-Automatic arena allocation, per-session ownership/dynamic chunk leasing, dynamic matchmaking, session-local presentation declarations, per-player vanilla sidebars, and module/import support remain useful but lower priority because current prototypes have explicit workarounds. Client-private scene visibility is still a genuine missing isolation feature, but spatially separate footprints are sufficient for current acceptance games, so privacy work is also behind the four capability priorities unless a retained game makes it a blocker.
+Automatic arena allocation, per-session ownership/dynamic chunk leasing, dynamic matchmaking, session-local presentation declarations, and per-player vanilla sidebars remain useful but lower priority because current prototypes have explicit workarounds. Bounded local TypeScript module/import authoring is implemented by ADR 0033 without changing Portable IR. Client-private scene visibility is still a genuine missing isolation feature, but spatially separate footprints are sufficient for current acceptance games, so privacy work is also behind the four capability priorities unless a retained game makes it a blocker.
 
 After those priorities, additional capability gaps include 3D/swept collision, deliberately scoped Minecraft world/entity queries, pathfinding/topology helpers, and generic runtime collections where existing Grid/fixed-slot patterns prove insufficient.
 
 ## Current limitations
 
-- single-file TypeScript; no import/module resolution;
+- TypeScript modules are local build-time composition only: at most 64 `.ts` files / 1,000,000 aggregate source bytes under the entry directory; Node built-ins, npm/bare packages, non-TypeScript assets, dynamic import, authored `require`, and circular imports are unsupported;
 - v1-v11 remain single-controller-oriented for compatibility; v12 is the multiplayer model;
 - fixed-point arithmetic relies on Minecraft scoreboard 32-bit behavior; generated commands do not add generic overflow guards;
 - no runtime generic arrays/collections, arbitrary packet-event dispatch, arbitrary inventory/form/dialog API, arbitrary NBT/storage API, or arbitrary Minecraft queries; v21 provides bounded static rich native-dialog content, confirmation, and boolean/option/integer-range single-input forms, and v22 provides bounded static mannequin profile/pose/equipment presentation without exposing arbitrary entity NBT; free-form text input, generic multi-field/dynamic forms, arbitrary clicks/commands, inventory GUI ownership, generic entity mutation, and runtime actor collections remain unsupported;
@@ -322,6 +323,12 @@ After those priorities, additional capability gaps include 3D/swept collision, d
 - v15 adds independent team-bound logical sessions; v16 adds explicit session-local Grid-to-world footprints inside one shared ownership rectangle; v17 adds bounded cross-player/session reductions; v18 adds persistent scalars, v19 adds persistent Grids, v20 adds player-local native-dialog selection, v21 adds bounded rich/typed native-dialog UI, and v22 expands bounded mannequin actor presentation. Automatic arena allocation, per-session ownership/private visibility scenes, dynamic matchmaking, independent per-player vanilla sidebars, player/offline persistent state, richer generic persistent collections, free-form/multi-field forms, and inventory UI are not implemented.
 
 ## Validation baseline
+
+### Bounded local TypeScript module validation
+
+ADR 0033 adds compiler-frontend module composition without changing Portable IR or vanilla lowering. Node coverage exercises relative extensionless/explicit `.ts` imports, nested imports, named/default exports and re-exports, plus rejection of Node built-ins, npm packages, non-TypeScript files, dynamic import, authored/CommonJS `require`, source-root/symlink escape, cycles, and graph bounds. `examples/portable-breakout-core` imports its brick-field builder from `./bricks` and generates byte-for-byte identical output to the former single-file source. The full regression suite is 45/45 green, and all 18 retained example datapacks are byte-for-byte identical to pre-change commit `d091570`.
+
+Because this feature changes only build-time source loading, Minecraft runtime acceptance is inherited from the unchanged generated datapack semantics; compiler regression and byte-parity validation are the acceptance evidence.
 
 Portable v1-v22 compiler behavior is covered by the Node regression suite; generated milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
 

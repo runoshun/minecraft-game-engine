@@ -67,7 +67,7 @@ The following are intentionally not the immediate roadmap despite being document
 - dynamic matchmaking/session creation: external vanilla-team/session orchestration remains usable;
 - session-local block/text/actor declarations: bounded global declarations can currently be statically expanded per known session, although this is verbose;
 - independent per-player vanilla sidebars: player actionbar HUDs provide a portable per-player UI surface for current games;
-- module/import support: single-file authoring is inconvenient but does not remove runtime game semantics.
+- module/import support: single-file authoring is inconvenient but does not remove runtime game semantics; this was later implemented as bounded compiler-front-end composition by ADR 0033 without consuming a Portable IR version.
 
 Client-private scene visibility remains a real capability gap when strict visual privacy is required, but spatial separation is sufficient for current prototype acceptance. It therefore stays behind the four priorities above until a retained game requires privacy rather than merely separate world footprints.
 
@@ -82,4 +82,4 @@ Client-private scene visibility remains a real capability gap when strict visual
 
 ## Progress
 
-ADR 0027 completes Priority 1 with Portable IR v17 bounded player/session reductions. ADR 0028 adds bounded global/session scalar persistence in Portable IR v18, and ADR 0029 extends Priority 2 with bounded global/session persistent Grid state in Portable IR v19 without exposing raw storage. ADR 0030 completes the first slice of Priority 3 in Portable IR v20 and ADR 0031 expands it in v21 with rich/typed native-dialog UI. ADR 0032 completes Priority 4 in Portable IR v22 with bounded mannequin profile, skin-layer, pose, handedness, static equipment, and state-backed pitch presentation. The four ordered capability priorities are therefore complete; player/offline persistence and the lower-priority gaps remain deferred.
+ADR 0027 completes Priority 1 with Portable IR v17 bounded player/session reductions. ADR 0028 adds bounded global/session scalar persistence in Portable IR v18, and ADR 0029 extends Priority 2 with bounded global/session persistent Grid state in Portable IR v19 without exposing raw storage. ADR 0030 completes the first slice of Priority 3 in Portable IR v20 and ADR 0031 expands it in v21 with rich/typed native-dialog UI. ADR 0032 completes Priority 4 in Portable IR v22 with bounded mannequin profile, skin-layer, pose, handedness, static equipment, and state-backed pitch presentation. The four ordered capability priorities are therefore complete; player/offline persistence and the lower-priority gaps remain deferred. ADR 0033 additionally closes the local module/import ergonomics item at the compiler frontend without changing Portable IR.

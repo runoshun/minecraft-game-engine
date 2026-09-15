@@ -51,6 +51,14 @@ npm run compile:portable -- \
 
 The output contains `.mcgame-portable-generated`. Re-running the compiler may replace a directory carrying that marker; it refuses to delete an unrelated non-empty directory.
 
+### Local TypeScript modules
+
+The `--source` file is the module-graph root. Static relative ES imports/re-exports are resolved automatically, so no bundling flag or additional deployment artifact is required. Supported examples are `./bricks`, `./bricks.ts`, and `./rules/combat`; a `../shared` import is allowed only when its real path still remains under the entry file's directory. Extensionless imports append `.ts`.
+
+The source graph is limited to 64 modules and 1,000,000 bytes total. Node built-ins, npm/bare packages, JSON/JavaScript/CSS or other non-`.ts` files, dynamic `import()`, authored `require(...)`, TypeScript `import = require(...)`, cycles, and real-path/symlink escapes are rejected. The compiler itself reads the validated module graph, but evaluated game code receives no filesystem/package/network loader capability.
+
+`examples/portable-breakout-core` is the reference modular source: `main.ts` imports `./bricks`, and compiling the same entry command includes that helper automatically.
+
 ## Compiler validation
 
 Every compiler change must run:

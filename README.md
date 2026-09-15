@@ -5,7 +5,7 @@ A TypeScript DSL and Node.js compiler for building game prototypes as **vanilla 
 The repository no longer contains a Fabric runtime. The supported path is:
 
 ```text
-main.ts -> Node.js compiler -> Portable IR -> generated datapack -> Minecraft 26.1
+main.ts + local .ts modules -> Node.js compiler -> Portable IR -> generated datapack -> Minecraft 26.1
 ```
 
 ## Status
@@ -15,6 +15,8 @@ Early PoC targeting Minecraft Java Edition 26.1. Portable IR v1-v22 is implement
 Current capabilities include fixed-point state, held input and hotbar input, state-authored rising edges, block/text Display projection, bounded actor projection, world batches/fills, particles, sounds, shared and player-local actionbar HUD, one global vanilla sidebar, AABB/circle/capsule collision primitives, triggers, two-pose flippers, compile-time `repeat`, bounded ownership lifecycle, `position_lock` / opt-in `spectate` camera modes, v12 player-local execution, v13 bounded grids/RNG/grid-world projection, v14 external-team PlayerSet filtering with disjoint team HUD/camera audiences, v15 team-bound logical sessions with session-local scalar/Grid/RNG state, v16 session-local GridWorld projection with compile-time footprint isolation, v17 bounded player/session reductions, v18 schema-aware global/session persistent scalar state, v19 bounded persistent Grids without exposing raw storage, v20 static native-dialog selection choices, v21 rich confirmation plus typed single-input native forms, and v22 richer bounded mannequin actor appearance/equipment/pose with state-backed pitch. v1-v11 `first_player_*` input remains supported for compatibility.
 
 Post-v16 roadmap policy is recorded in ADR 0026. Bounded reductions are complete in v17; bounded global/session scalar persistence is complete in v18, bounded persistent Grid state in v19, interactive selection UI in v20, bounded rich/typed native-dialog UI in v21, and mannequin/actor presentation expansion in v22. The four ordered capability priorities are complete; arena allocation and related session infrastructure remain lower priority while explicit-coordinate/team-based workarounds are sufficient.
+
+The compiler frontend also supports bounded static relative imports between local `.ts` files under the entry source directory (ADR 0033); this is authoring-time composition and does not consume a Portable IR version.
 
 ## Requirements
 
@@ -31,7 +33,7 @@ npm run compile:portable -- \
   --output build/portable/portable_breakout
 ```
 
-The output directory is the deployment artifact. Copy it into a Minecraft world's `datapacks/` directory. Ordinary function/predicate changes may be reloaded; a v20+ pack whose generated dialog registry resources are being added, changed, or removed requires a server/world restart after file replacement so Minecraft 26.1 bootstraps the dialog registry deterministically. Generated directories carry `.mcgame-portable-generated`; the CLI refuses to overwrite a non-empty directory without that marker.
+The entry source may use bounded static relative imports such as `./bricks` or `./bricks.ts`; the compiler resolves local `.ts` modules below the entry directory automatically. Node built-ins, npm packages, dynamic imports, and non-TypeScript imports are rejected. The output directory is the deployment artifact. Copy it into a Minecraft world's `datapacks/` directory. Ordinary function/predicate changes may be reloaded; a v20+ pack whose generated dialog registry resources are being added, changed, or removed requires a server/world restart after file replacement so Minecraft 26.1 bootstraps the dialog registry deterministically. Generated directories carry `.mcgame-portable-generated`; the CLI refuses to overwrite a non-empty directory without that marker.
 
 Run compiler tests with:
 
@@ -85,7 +87,7 @@ Legacy host-runtime-only examples were removed when the Java/Fabric runtime was 
 
 ## Compiler architecture
 
-The compiler uses the bundled TypeScript 5.9.2 distribution to transpile a single `main.ts` to ES2022. It evaluates initialization plus the bundled `portableDsl` frontend in a Node `vm` context whose Minecraft host capabilities are unavailable, captures `portable.define(...)`, validates the resulting Portable IR, then emits ordinary datapack files.
+The compiler uses the bundled TypeScript 5.9.2 distribution to load a bounded local `.ts` module graph rooted at `main.ts`, transpile it to ES2022, and evaluate it with a compiler-owned module loader plus the bundled `portableDsl` frontend in an isolated Node `vm` context. Minecraft host capabilities, Node built-ins, package resolution, and unrestricted filesystem/network access are unavailable to game modules. The compiler captures `portable.define(...)`, validates the resulting Portable IR, then emits ordinary datapack files.
 
 This extraction step is intentionally not a general TypeScript runtime. Game code must express deployable behavior through portable IR/DSL declarations; live Minecraft state, filesystem/network access, arbitrary runtime callbacks, and host objects are not compiler capabilities.
 

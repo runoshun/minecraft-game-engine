@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileDatapack } from "./compiler.mjs";
-import { extractPortableSpec, transpileTypeScript } from "./extract.mjs";
+import { extractPortableSource } from "./extract.mjs";
 import { parseProgram } from "./program.mjs";
 
 function parseArgs(argv) {
@@ -37,11 +37,8 @@ function findRepoRoot() {
 export function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv), root = findRepoRoot();
   const source = path.resolve(args.source), output = path.resolve(args.output);
-  const bytes = fs.readFileSync(source);
-  if (bytes.length > 1_000_000) throw new Error("portable source exceeds 1 MB PoC limit");
   cleanGeneratedOutput(output);
-  const js = transpileTypeScript(source, bytes.toString("utf8"), root);
-  const spec = extractPortableSpec(source, js, root);
+  const spec = extractPortableSource(source, root);
   const program = parseProgram(spec);
   const result = compileDatapack(program, args.namespace, output);
   console.log("Compiled portable program");
