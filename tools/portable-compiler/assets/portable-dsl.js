@@ -18,6 +18,8 @@
   const SELECTION = Symbol("mcgame.portableDsl.selection");
   const FORM = Symbol("mcgame.portableDsl.form");
   const INTERACTION = Symbol("mcgame.portableDsl.interaction");
+  const ITEM = Symbol("mcgame.portableDsl.item");
+  const PLACEABLE_SCOPE = Symbol("mcgame.portableDsl.placeableScope");
 
   function fail(message) {
     throw new Error("portableDsl: " + message);
@@ -103,6 +105,15 @@
     const texts = [];
     const actorProjections = [];
     const interactions = [];
+    const itemDisplays = [];
+    const items = [];
+    const itemIds = new Set();
+    const placeables = [];
+    const placeableIds = new Set();
+    let placeableSlotCount = 0;
+    let placeableStateCellCount = 0;
+    let placeableChildCount = 0;
+    let nextPlaceableChildId = 0;
     const interactionIds = new Set();
     const interactionUseIds = new Set();
     const worldBatches = [];
@@ -118,12 +129,15 @@
     const forms = [];
     const formIds = new Set();
     let tickActions = null;
+    const placeableTickActions = [];
     let tickRootSink = null;
     let actionSink = null;
     let activePlayerScope = null;
     let activePlayerMode = null;
     let playerRootSink = null;
     let activeInteractionUseId = null;
+    let activePlaceableScope = null;
+    let placeableTickRootSink = null;
     let nextPlayerScope = 0;
     let activeSessionScope = null;
     let activeSessionId = null;
@@ -142,6 +156,7 @@
     let usesV22 = false;
     let usesV23 = false;
     let usesV24 = false;
+    let usesV25 = false;
 
     function assertUnique(name) {
       if (Object.prototype.hasOwnProperty.call(stateValues, name) || Object.prototype.hasOwnProperty.call(persistentStateValues, name) || Object.prototype.hasOwnProperty.call(inputValues, name)) {
@@ -157,6 +172,9 @@
       return value && (value[REF] === "session_state" || value[REF] === "session_persistent_state" || (value[REF] === "grid_world_ready" && value.session !== null));
     }
 
+    function isPlaceableRef(value) { return value && value[REF] === "placeable_state"; }
+    function samePlaceableScope(a, b) { return a !== null && b !== null && a.id === b.id && a.slot === b.slot; }
+
     function unwrapValue(value) {
       if (typeof value === "number") return finiteNumber(value, "value");
       if (value && value[REF] === "state") return { state: value.name };
@@ -171,6 +189,10 @@
           fail("session state reference escaped its SessionContext");
         }
         return { sessionState: { session: value.session, state: value.name } };
+      }
+      if (value && value[REF] === "placeable_state") {
+        if (!samePlaceableScope(value[PLACEABLE_SCOPE], activePlaceableScope)) fail("placeable state reference escaped its PlaceableInstanceContext");
+        return { placeableState: { placeable: value.placeable, slot: value.slot, state: value.name } };
       }
       if (value && value[REF] === "player_state") {
         if (activePlayerScope === null || value[PLAYER_SCOPE] !== activePlayerScope) fail("player state reference escaped its PlayerContext");
@@ -203,21 +225,24 @@
     function comparison(op, left, right) {
       const playerScope = isPlayerRef(left) || isPlayerRef(right) ? activePlayerScope : null;
       const sessionScope = isSessionRef(left) || isSessionRef(right) ? activeSessionScope : null;
+      const placeableScope = isPlaceableRef(left) || isPlaceableRef(right) ? activePlaceableScope : null;
       return Object.freeze({
         [CONDITION]: true,
         [PLAYER_SCOPE]: playerScope,
         [SESSION_SCOPE]: sessionScope,
+        [PLACEABLE_SCOPE]: placeableScope,
         op,
         left: unwrapValue(left),
         right: unwrapValue(right),
       });
     }
 
-    function comparable(kind, name, scope = null, sessionScope = null, sessionId = null) {
+    function comparable(kind, name, scope = null, sessionScope = null, sessionId = null, placeableScope = null) {
       const ref = {
         [REF]: kind,
         [PLAYER_SCOPE]: scope,
         [SESSION_SCOPE]: sessionScope,
+        [PLACEABLE_SCOPE]: placeableScope,
         session: sessionId,
         name,
         eq(value) { return comparison("eq", ref, value); },
@@ -311,6 +336,7 @@
       if (!condition || condition[CONDITION] !== true) fail(label + " must be created by eq/ne/lt/lte/gt/gte");
       if (condition[PLAYER_SCOPE] !== null && condition[PLAYER_SCOPE] !== activePlayerScope) fail(label + " escaped its PlayerContext");
       if (condition[SESSION_SCOPE] !== null && condition[SESSION_SCOPE] !== activeSessionScope) fail(label + " escaped its SessionContext");
+      if (condition[PLACEABLE_SCOPE] !== null && !samePlaceableScope(condition[PLACEABLE_SCOPE], activePlaceableScope)) fail(label + " escaped its PlaceableInstanceContext");
       return { op: condition.op, left: condition.left, right: condition.right };
     }
 
@@ -589,6 +615,7 @@
         Object.defineProperty(input, name, { enumerable: true, get() { return playerInputRef(name, scope); } });
       }
       const player = Object.freeze({
+        [PLAYER_CONTEXT]: scope,
         state(name, initial) {
           if (activePlayerScope !== scope) fail("player.state(...) is only valid in its PlayerContext");
           return makePlayerState(name, initial, scope);
@@ -641,6 +668,7 @@
           Object.defineProperty(input, name, { enumerable: true, get() { return playerInputRef(name, scope); } });
         }
         const player = Object.freeze({
+          [PLAYER_CONTEXT]: scope,
           state(name, initial) {
             if (activePlayerScope !== scope) fail("player.state(...) is only valid in its PlayerContext");
             return makePlayerState(name, initial, scope);
@@ -927,15 +955,17 @@
 
     function normalizeBoxValue(value, label) {
       if (typeof value === "number") return finiteNumber(value, label);
-      if (value && (value[REF] === "state" || value[REF] === "persistent_state" || value[REF] === "input" || value[REF] === "session_state" || value[REF] === "session_persistent_state" || value[REF] === "player_state" || value[REF] === "player_input")) return unwrapValue(value);
+      if (value && (value[REF] === "state" || value[REF] === "persistent_state" || value[REF] === "input" || value[REF] === "session_state" || value[REF] === "session_persistent_state" || value[REF] === "player_state" || value[REF] === "player_input" || value[REF] === "placeable_state")) return unwrapValue(value);
       fail(label + " must be a number or portable state/input reference");
     }
 
     function valuePlayerScope(value) { return isPlayerRef(value) ? value[PLAYER_SCOPE] : null; }
     function valueSessionScope(value) { return isSessionRef(value) ? value[SESSION_SCOPE] : null; }
+    function valuePlaceableScope(value) { return isPlaceableRef(value) ? value[PLACEABLE_SCOPE] : null; }
     function requireShapeScope(value, label) {
       if (value && value[PLAYER_SCOPE] !== null && value[PLAYER_SCOPE] !== activePlayerScope) fail(label + " escaped its PlayerContext");
       if (value && value[SESSION_SCOPE] !== null && value[SESSION_SCOPE] !== activeSessionScope) fail(label + " escaped its SessionContext");
+      if (value && value[PLACEABLE_SCOPE] !== null && !samePlaceableScope(value[PLACEABLE_SCOPE], activePlaceableScope)) fail(label + " escaped its PlaceableInstanceContext");
     }
 
     function box(id, spec) {
@@ -947,10 +977,12 @@
       if (height <= 0 || height > 1000) fail("box " + id + " height must be > 0 and <= 1000");
       const scope = valuePlayerScope(spec.x) || valuePlayerScope(spec.y);
       const sessionScope = valueSessionScope(spec.x) || valueSessionScope(spec.y);
+      const placeableScope = valuePlaceableScope(spec.x) || valuePlaceableScope(spec.y);
       return Object.freeze({
         [BOX]: true,
         [PLAYER_SCOPE]: scope,
         [SESSION_SCOPE]: sessionScope,
+        [PLACEABLE_SCOPE]: placeableScope,
         id,
         x: normalizeBoxValue(spec.x, "box " + id + " x"),
         y: normalizeBoxValue(spec.y, "box " + id + " y"),
@@ -966,10 +998,12 @@
       if (radius <= 0 || radius > 1000) fail("circle " + id + " radius must be > 0 and <= 1000");
       const scope = valuePlayerScope(spec.x) || valuePlayerScope(spec.y);
       const sessionScope = valueSessionScope(spec.x) || valueSessionScope(spec.y);
+      const placeableScope = valuePlaceableScope(spec.x) || valuePlaceableScope(spec.y);
       return Object.freeze({
         [CIRCLE]: true,
         [PLAYER_SCOPE]: scope,
         [SESSION_SCOPE]: sessionScope,
+        [PLACEABLE_SCOPE]: placeableScope,
         id,
         x: normalizeBoxValue(spec.x, "circle " + id + " x"),
         y: normalizeBoxValue(spec.y, "circle " + id + " y"),
@@ -1261,19 +1295,181 @@
       });
     }
 
+    function placeableChildId(kind, localId) {
+      if (typeof localId !== "string" || !/^[a-z][a-z0-9_]{0,23}$/.test(localId)) fail("placeable child id must match [a-z][a-z0-9_]{0,23}");
+      if (placeableChildCount >= 256) fail("portable v25 supports at most 256 expanded placeable child presentation declarations");
+      placeableChildCount++;
+      return "p" + kind + (nextPlaceableChildId++).toString(36);
+    }
+
+    function localCoordinate(value, label) {
+      if (typeof value === "number") return finiteNumber(value, label);
+      if (value && value[REF] === "placeable_state" && samePlaceableScope(value[PLACEABLE_SCOPE], activePlaceableScope)) return unwrapValue(value);
+      fail(label + " must be a number or state from the active PlaceableInstanceContext");
+    }
+
+    function itemDeclaration(id, spec) {
+      if (activePlayerScope !== null || activeSessionScope !== null || activePlaceableScope !== null) fail("item(...) is a global static declaration");
+      if (typeof id !== "string" || !/^[a-z][a-z0-9_]{0,23}$/.test(id)) fail("item id must match [a-z][a-z0-9_]{0,23}");
+      if (itemIds.has(id)) fail("duplicate item id: " + id);
+      if (items.length >= 32) fail("portable v25 supports at most 32 item(...) declarations");
+      if (spec == null || typeof spec !== "object") fail("item " + id + " spec must be an object");
+      for (const key of Object.keys(spec)) if (!["name", "appearance", "maxStackSize"].includes(key)) fail("item " + id + " " + key + " is not supported");
+      if (typeof spec.name !== "string" || spec.name.length < 1 || spec.name.length > 128) fail("item " + id + " name must contain 1..128 characters");
+      if (spec.appearance == null || typeof spec.appearance !== "object") fail("item " + id + " appearance must be an object");
+      const appearance = { kind: spec.appearance.kind };
+      const allowedAppearanceKeys = appearance.kind === "head" ? ["kind", "textureUrl"] : ["kind", "model"];
+      for (const key of Object.keys(spec.appearance)) if (!allowedAppearanceKeys.includes(key)) fail("item " + id + " appearance." + key + " is not supported");
+      if (appearance.kind === "head") {
+        if (typeof spec.appearance.textureUrl !== "string" || !/^https:\/\/textures\.minecraft\.net\/texture\/[0-9a-f]{32,128}$/.test(spec.appearance.textureUrl)) fail("item " + id + " head textureUrl must be an https://textures.minecraft.net/texture/<hex> URL");
+        appearance.textureUrl = spec.appearance.textureUrl;
+      } else if (appearance.kind === "model") {
+        if (typeof spec.appearance.model !== "string" || !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(spec.appearance.model)) fail("item " + id + " appearance.model must be a resource id");
+        appearance.model = spec.appearance.model;
+      } else fail("item " + id + " appearance.kind must be head or model");
+      const maxStackSize = finiteInteger(spec.maxStackSize === undefined ? 1 : spec.maxStackSize, "item " + id + " maxStackSize", 1, 64);
+      const declaration = { id, name: spec.name, appearance, maxStackSize };
+      items.push(declaration); itemIds.add(id); usesV25 = true;
+      const handle = {
+        [ITEM]: true, id,
+        give(player, count = 1) {
+          if (activePlayerScope === null || activePlayerMode === "reduce") fail("item " + id + ".give(...) is only valid inside mutable PlayerContext");
+          if (!player || player[PLAYER_CONTEXT] !== activePlayerScope) fail("item " + id + ".give(...) requires the current PlayerContext");
+          emit({ op: "item_give", item: id, count: finiteInteger(count, "item give count", 1, 64) });
+        },
+      };
+      return Object.freeze(handle);
+    }
+
+    function makePlaceableState(placeable, slot, name, initial, slotNames) {
+      if (typeof name !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,31}$/.test(name)) fail("placeable state name must match [A-Za-z][A-Za-z0-9_]{0,31}");
+      const value = finiteNumber(initial, "placeable " + placeable.id + " state " + name + " initial value");
+      if (slotNames.has(name)) fail("duplicate placeable state in one slot: " + name);
+      slotNames.add(name);
+      if (slot === 0) {
+        if (Object.keys(placeable.state).length >= 16 && !Object.prototype.hasOwnProperty.call(placeable.state, name)) fail("portable v25 supports at most 16 state fields per placeable type");
+        placeable.state[name] = value;
+      } else if (!Object.prototype.hasOwnProperty.call(placeable.state, name) || placeable.state[name] !== value) {
+        fail("placeable template state declarations must be identical for every slot: " + placeable.id + "." + name);
+      }
+      const scope = Object.freeze({ id: placeable.id, slot });
+      const ref = comparable("placeable_state", name, null, null, null, scope);
+      ref.placeable = placeable.id; ref.slot = slot;
+      const assertWrite = () => {
+        if (!samePlaceableScope(activePlaceableScope, scope)) fail("placeable state mutation escaped its PlaceableInstanceContext");
+        if (activePlayerMode === "multi") fail("placeable state mutation is not allowed inside multi-player PlayerContext");
+      };
+      ref.set = value => { assertWrite(); emit({ op: "placeable_set", placeable: placeable.id, slot, target: name, value: unwrapValue(value) }); };
+      ref.add = value => { assertWrite(); emit({ op: "placeable_add", placeable: placeable.id, slot, target: name, value: unwrapValue(value) }); };
+      ref.sub = value => { assertWrite(); emit({ op: "placeable_sub", placeable: placeable.id, slot, target: name, value: unwrapValue(value) }); };
+      ref.negate = () => { assertWrite(); emit({ op: "placeable_negate", placeable: placeable.id, slot, target: name }); };
+      return Object.freeze(ref);
+    }
+
+    function placeableDeclaration(id, spec, template) {
+      if (activePlayerScope !== null || activeSessionScope !== null || activePlaceableScope !== null || actionSink !== null) fail("placeable(...) is a top-level static declaration");
+      if (ownership === null) fail("placeable(...) requires portable ownership");
+      if (typeof id !== "string" || !/^[a-z][a-z0-9_]{0,23}$/.test(id)) fail("placeable id must match [a-z][a-z0-9_]{0,23}");
+      if (placeableIds.has(id)) fail("duplicate placeable id: " + id);
+      if (placeables.length >= 8) fail("portable v25 supports at most 8 placeable(...) declarations");
+      if (spec == null || typeof spec !== "object") fail("placeable " + id + " spec must be an object");
+      for (const key of Object.keys(spec)) if (!["item", "maxInstances", "orientation"].includes(key)) fail("placeable " + id + " " + key + " is not supported");
+      if (!spec.item || spec.item[ITEM] !== true || !itemIds.has(spec.item.id)) fail("placeable " + id + " item must be returned by game.item(...)");
+      if (placeables.some(value => value.item === spec.item.id)) fail("item " + spec.item.id + " is already bound to another placeable type");
+      const maxInstances = finiteInteger(spec.maxInstances, "placeable " + id + " maxInstances", 1, 16);
+      if (placeableSlotCount + maxInstances > 32) fail("portable v25 supports at most 32 aggregate placeable slots");
+      const orientation = spec.orientation === undefined ? "cardinal" : spec.orientation;
+      if (orientation !== "cardinal") fail("placeable " + id + " orientation must be cardinal");
+      if (typeof template !== "function") fail("placeable " + id + " template callback is required");
+      const declaration = { id, item: spec.item.id, maxInstances, orientation, state: {} };
+      placeables.push(declaration); placeableIds.add(id); placeableSlotCount += maxInstances; usesV25 = true;
+
+      for (let slot = 0; slot < maxInstances; slot++) {
+        const scope = Object.freeze({ id, slot });
+        const slotNames = new Set();
+        const previousPlaceable = activePlaceableScope;
+        activePlaceableScope = scope;
+        const childDimension = ownership.dimension;
+        function localBlock(localId, childSpec) {
+          const generated = placeableChildId("b", localId);
+          block(generated, { ...childSpec, dimension: childSpec?.dimension ?? childDimension, __placeable: scope });
+        }
+        function localText(localId, childSpec) {
+          const generated = placeableChildId("t", localId);
+          textProjection(generated, { ...childSpec, dimension: childSpec?.dimension ?? childDimension, __placeable: scope });
+        }
+        function localInteraction(localId, childSpec) {
+          const generated = placeableChildId("i", localId);
+          return interactionDeclaration(generated, { ...childSpec, dimension: childSpec?.dimension ?? childDimension, __placeable: scope });
+        }
+        function localItemDisplay(localId, childSpec) {
+          const generated = placeableChildId("m", localId);
+          if (childSpec == null || typeof childSpec !== "object") fail("placeable itemDisplay " + localId + " spec must be an object");
+          if (!childSpec.item || childSpec.item[ITEM] !== true || !itemIds.has(childSpec.item.id)) fail("placeable itemDisplay " + localId + " item must be returned by game.item(...)");
+          const declaration = {
+            id: generated, dimension: childSpec.dimension ?? childDimension, item: childSpec.item.id,
+            x: localCoordinate(childSpec.x, "itemDisplay " + generated + " x"),
+            y: localCoordinate(childSpec.y, "itemDisplay " + generated + " y"),
+            z: localCoordinate(childSpec.z, "itemDisplay " + generated + " z"),
+            scale: normalizeVec3(childSpec.scale, { x: 1, y: 1, z: 1 }, "itemDisplay " + generated + " scale"),
+            translation: normalizeVec3(childSpec.translation, { x: 0, y: 0, z: 0 }, "itemDisplay " + generated + " translation", false),
+            placeable: { id: scope.id, slot: scope.slot },
+          };
+          if (declaration.scale.x <= 0 || declaration.scale.y <= 0 || declaration.scale.z <= 0) fail("itemDisplay " + generated + " scale components must be > 0");
+          if (childSpec.when !== undefined) declaration.when = serializedCondition(childSpec.when, "itemDisplay " + generated + " when");
+          itemDisplays.push(declaration);
+        }
+        function localTick(callback) {
+          if (typeof callback !== "function") fail("placeable " + id + " tick callback is required");
+          const previousSink = actionSink, previousRoot = placeableTickRootSink, previousScope = activePlaceableScope;
+          const captured = [];
+          actionSink = captured; placeableTickRootSink = captured; activePlaceableScope = scope;
+          try { callback(); } finally { actionSink = previousSink; placeableTickRootSink = previousRoot; activePlaceableScope = previousScope; }
+          placeableTickActions.push({ op: "placeable_tick", placeable: id, slot, actions: captured });
+        }
+        const table = Object.freeze({
+          state(name, initial) { return makePlaceableState(declaration, slot, name, initial, slotNames); },
+          block: localBlock,
+          text: localText,
+          interaction: localInteraction,
+          itemDisplay: localItemDisplay,
+          circle, segment, capsule, trigger, flipper,
+          tick: localTick,
+          remove() { emit({ op: "placeable_remove", placeable: id, slot }); },
+          pickUp(player) {
+            if (activePlayerScope === null || activePlayerMode === "reduce") fail("placeable.pickUp(...) is only valid inside mutable PlayerContext");
+            spec.item.give(player, 1);
+            emit({ op: "placeable_remove", placeable: id, slot });
+          },
+        });
+        try { template(table); } finally { activePlaceableScope = previousPlaceable; }
+        if (slot === 0) {
+          placeableStateCellCount += slotNames.size * maxInstances;
+          if (placeableStateCellCount > 256) fail("portable v25 supports at most 256 aggregate expanded placeable state cells");
+        } else {
+          const expected = Object.keys(declaration.state).sort().join("|");
+          const actual = [...slotNames].sort().join("|");
+          if (expected !== actual) fail("placeable template state declarations must be identical for every slot: " + id);
+        }
+      }
+    }
+
     function block(id, spec) {
       assertSharedPresentation("block(...)");
       if (typeof id !== "string" || id.length === 0) fail("block id must be a non-empty string");
       if (spec == null || typeof spec !== "object") fail("block " + id + " spec must be an object");
       if (typeof spec.block !== "string") fail("block " + id + " requires a block resource id");
+      const binding = spec.__placeable || null;
+      if (binding && !samePlaceableScope(binding, activePlaceableScope)) fail("block " + id + " escaped its PlaceableInstanceContext");
       const projection = {
         id,
         dimension: spec.dimension === undefined ? "minecraft:overworld" : spec.dimension,
         block: spec.block,
-        x: normalizeCoordinate(spec.x, "block " + id + " x"),
-        y: normalizeCoordinate(spec.y, "block " + id + " y"),
-        z: normalizeCoordinate(spec.z, "block " + id + " z"),
+        x: binding ? localCoordinate(spec.x, "block " + id + " x") : normalizeCoordinate(spec.x, "block " + id + " x"),
+        y: binding ? localCoordinate(spec.y, "block " + id + " y") : normalizeCoordinate(spec.y, "block " + id + " y"),
+        z: binding ? localCoordinate(spec.z, "block " + id + " z") : normalizeCoordinate(spec.z, "block " + id + " z"),
       };
+      if (binding) projection.placeable = { id: binding.id, slot: binding.slot };
       if (spec.scale !== undefined) projection.scale = spec.scale;
       if (spec.translation !== undefined) projection.translation = spec.translation;
       if (spec.when !== undefined) projection.when = serializedCondition(spec.when, "block " + id + " when");
@@ -1294,22 +1490,25 @@
             if (token.length > 128) fail("text " + id + " token " + index + " exceeds 128 characters");
             return { text: token };
           }
-          if (token && (token[REF] === "state" || token[REF] === "persistent_state" || token[REF] === "input")) return { value: unwrapValue(token) };
+          if (token && (token[REF] === "state" || token[REF] === "persistent_state" || token[REF] === "input" || token[REF] === "placeable_state")) return { value: unwrapValue(token) };
           fail("text " + id + " token " + index + " must be a string, state, or input reference");
         });
       } else {
         fail("text " + id + " requires a string or an array with 1..32 string/state/input tokens");
       }
+      const binding = spec.__placeable || null;
+      if (binding && !samePlaceableScope(binding, activePlaceableScope)) fail("text " + id + " escaped its PlaceableInstanceContext");
       const projection = {
         id,
         dimension: spec.dimension === undefined ? "minecraft:overworld" : spec.dimension,
         text: content,
-        x: normalizeCoordinate(spec.x, "text " + id + " x"),
-        y: normalizeCoordinate(spec.y, "text " + id + " y"),
-        z: normalizeCoordinate(spec.z, "text " + id + " z"),
+        x: binding ? localCoordinate(spec.x, "text " + id + " x") : normalizeCoordinate(spec.x, "text " + id + " x"),
+        y: binding ? localCoordinate(spec.y, "text " + id + " y") : normalizeCoordinate(spec.y, "text " + id + " y"),
+        z: binding ? localCoordinate(spec.z, "text " + id + " z") : normalizeCoordinate(spec.z, "text " + id + " z"),
         scale: normalizeVec3(spec.scale, { x: 1, y: 1, z: 1 }, "text " + id + " scale"),
         billboard: spec.billboard === undefined ? "center" : spec.billboard,
       };
+      if (binding) projection.placeable = { id: binding.id, slot: binding.slot };
       if (!["fixed", "vertical", "horizontal", "center"].includes(projection.billboard)) {
         fail("text " + id + " billboard must be fixed, vertical, horizontal, or center");
       }
@@ -1332,14 +1531,17 @@
       if (height < 0.01 || height > 64) fail("interaction " + id + " height must be between 0.01 and 64");
       const response = spec.response === undefined ? true : spec.response;
       if (typeof response !== "boolean") fail("interaction " + id + " response must be boolean");
+      const binding = spec.__placeable || null;
+      if (binding && !samePlaceableScope(binding, activePlaceableScope)) fail("interaction " + id + " escaped its PlaceableInstanceContext");
       const declaration = {
         id,
         dimension: spec.dimension === undefined ? "minecraft:overworld" : spec.dimension,
-        x: normalizeCoordinate(spec.x, "interaction " + id + " x"),
-        y: normalizeCoordinate(spec.y, "interaction " + id + " y"),
-        z: normalizeCoordinate(spec.z, "interaction " + id + " z"),
+        x: binding ? localCoordinate(spec.x, "interaction " + id + " x") : normalizeCoordinate(spec.x, "interaction " + id + " x"),
+        y: binding ? localCoordinate(spec.y, "interaction " + id + " y") : normalizeCoordinate(spec.y, "interaction " + id + " y"),
+        z: binding ? localCoordinate(spec.z, "interaction " + id + " z") : normalizeCoordinate(spec.z, "interaction " + id + " z"),
         width, height, response,
       };
+      if (binding) declaration.placeable = { id: binding.id, slot: binding.slot };
       if (typeof declaration.dimension !== "string" || declaration.dimension.length === 0) fail("interaction " + id + " dimension must be a resource id string");
       if (spec.when !== undefined) declaration.when = serializedCondition(spec.when, "interaction " + id + " when");
       interactions.push(declaration);
@@ -1349,7 +1551,8 @@
 
       function onUse(callback) {
         if (actionSink === null) fail("interaction " + id + ".onUse(...) is only valid inside tick(...)");
-        if (actionSink !== tickRootSink || activePlayerScope !== null || activeSessionScope !== null) fail("interaction " + id + ".onUse(...) must be declared directly in the root tick scope");
+        const placeableRoot = binding && actionSink === placeableTickRootSink && samePlaceableScope(binding, activePlaceableScope);
+        if ((actionSink !== tickRootSink && !placeableRoot) || activePlayerScope !== null || activeSessionScope !== null) fail("interaction " + id + ".onUse(...) must be declared directly in the root tick scope or matching placeable tick scope");
         if (interactionUseIds.has(id)) fail("interaction " + id + " may declare only one onUse(...) handler");
         if (typeof callback !== "function") fail("interaction " + id + ".onUse(...) callback is required");
         interactionUseIds.add(id);
@@ -1387,7 +1590,8 @@
         },
         forPlayer(callback) {
           if (actionSink === null) fail("interaction " + id + ".controller.forPlayer(...) is only valid inside tick(...)");
-          if (actionSink !== tickRootSink || activePlayerScope !== null || activeSessionScope !== null) fail("interaction " + id + ".controller.forPlayer(...) must be declared directly in the root tick scope");
+          const placeableRoot = binding && actionSink === placeableTickRootSink && samePlaceableScope(binding, activePlaceableScope);
+          if ((actionSink !== tickRootSink && !placeableRoot) || activePlayerScope !== null || activeSessionScope !== null) fail("interaction " + id + ".controller.forPlayer(...) must be declared directly in the root tick scope or matching placeable tick scope");
           if (typeof callback !== "function") fail("interaction " + id + ".controller.forPlayer(...) callback is required");
           usesV24 = true; usesPlayerApi = true;
           const scope = ++nextPlayerScope;
@@ -1668,6 +1872,8 @@
       capsule,
       trigger,
       flipper,
+      item: itemDeclaration,
+      placeable: placeableDeclaration,
       block,
       text: textProjection,
       actor: actorProjection,
@@ -1683,7 +1889,13 @@
 
     build(dsl);
     if (tickActions === null) fail("tick(...) must be declared exactly once");
-    if (Object.keys(stateValues).length === 0 && Object.keys(persistentStateValues).length === 0 && Object.keys(playerStateValues).length === 0 && grids.length === 0 && persistentGrids.length === 0 && sessions.length === 0 && selections.length === 0 && forms.length === 0) fail("at least one shared state, player-local state, grid, session, selection, or form is required");
+    if (items.length !== placeables.length) {
+      const usedItems = new Set(placeables.map(value => value.item));
+      const unused = items.map(value => value.id).filter(id => !usedItems.has(id));
+      if (unused.length) fail("every item(...) must be bound to exactly one placeable(...); unused: " + unused.join(", "));
+    }
+    tickActions.push(...placeableTickActions);
+    if (Object.keys(stateValues).length === 0 && Object.keys(persistentStateValues).length === 0 && Object.keys(playerStateValues).length === 0 && grids.length === 0 && persistentGrids.length === 0 && sessions.length === 0 && selections.length === 0 && forms.length === 0 && placeables.length === 0) fail("at least one shared state, player-local state, grid, session, selection, form, or placeable is required");
 
     if (usesPlayerApi) {
       if (Object.keys(inputValues).length > 0 || Object.keys(vanillaInputs).length > 0) fail("game.input(...) is v1-v11 compatibility only; use player.input.* in multiplayer v12");
@@ -1697,7 +1909,7 @@
 
     const usesSpectateCamera = cameras.some(camera => camera.mode === "spectate");
     const spec = {
-      version: usesV24 ? 24 : usesV23 ? 23 : usesV22 ? 22 : usesV21 ? 21 : usesV20 ? 20 : usesV19 ? 19 : usesV18 ? 18 : usesV17 ? 17 : usesV16 ? 16 : usesV15 ? 15 : usesV14 ? 14 : usesV13 ? 13 : usesPlayerApi ? 12 : usesSpectateCamera ? 11 : ownership === null ? 9 : 10,
+      version: usesV25 ? 25 : usesV24 ? 24 : usesV23 ? 23 : usesV22 ? 22 : usesV21 ? 21 : usesV20 ? 20 : usesV19 ? 19 : usesV18 ? 18 : usesV17 ? 17 : usesV16 ? 16 : usesV15 ? 15 : usesV14 ? 14 : usesV13 ? 13 : usesPlayerApi ? 12 : usesSpectateCamera ? 11 : ownership === null ? 9 : 10,
       fixedPoint,
       state: stateValues,
       tick: tickActions,
@@ -1706,6 +1918,8 @@
     if (persistentGrids.length > 0) spec.persistentGrids = persistentGrids;
     if (selections.length > 0) spec.selections = selections;
     if (forms.length > 0) spec.forms = forms;
+    if (items.length > 0) spec.items = items;
+    if (placeables.length > 0) spec.placeables = placeables;
     if (Object.keys(inputValues).length > 0) spec.inputs = inputValues;
     if (playerTeams.size > 0) spec.playerSets = Array.from(playerTeams).sort().map(team => ({ team }));
     if (sessions.length > 0) spec.sessions = sessions.map(session => {
@@ -1721,7 +1935,7 @@
       spec.playerState = playerStateValues;
       spec.playerInputs = Array.from(playerInputs);
     }
-    if (ownership !== null || Object.keys(vanillaInputs).length > 0 || projections.length > 0 || texts.length > 0 || actorProjections.length > 0 || interactions.length > 0 || worldBatches.length > 0 || gridWorlds.length > 0 || cameras.length > 0 || particles.length > 0 || sounds.length > 0 || huds.length > 0 || playerHuds.length > 0 || sidebars.length > 0) {
+    if (ownership !== null || Object.keys(vanillaInputs).length > 0 || projections.length > 0 || texts.length > 0 || actorProjections.length > 0 || interactions.length > 0 || itemDisplays.length > 0 || worldBatches.length > 0 || gridWorlds.length > 0 || cameras.length > 0 || particles.length > 0 || sounds.length > 0 || huds.length > 0 || playerHuds.length > 0 || sidebars.length > 0) {
       spec.vanilla = {};
       if (ownership !== null) spec.vanilla.ownership = ownership;
       if (Object.keys(vanillaInputs).length > 0) spec.vanilla.inputs = vanillaInputs;
@@ -1729,6 +1943,7 @@
       if (texts.length > 0) spec.vanilla.texts = texts;
       if (actorProjections.length > 0) spec.vanilla.actors = actorProjections;
       if (interactions.length > 0) spec.vanilla.interactions = interactions;
+      if (itemDisplays.length > 0) spec.vanilla.itemDisplays = itemDisplays;
       if (worldBatches.length > 0) spec.vanilla.worldBatches = worldBatches;
       if (gridWorlds.length > 0) spec.vanilla.gridWorlds = gridWorlds;
       if (cameras.length > 0) spec.vanilla.cameras = cameras;

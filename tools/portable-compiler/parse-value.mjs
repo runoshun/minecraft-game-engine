@@ -39,6 +39,22 @@ export function parseValue(value, ctx, path) {
     if (!declaration || !declaration.states.has(name)) fail(`${path} references unknown session state ${session}.${name}`);
     return { kind: "session_state", session, name };
   }
+  if (has(value, "placeableState")) {
+    if (ctx.version < 25) fail(`${path}.placeableState requires portable version 25`);
+    if (!isObject(value.placeableState)) fail(`${path}.placeableState must be an object`);
+    const placeable = requiredString(value.placeableState, "placeable", `${path}.placeableState`);
+    const slot = value.placeableState.slot;
+    if (!Number.isInteger(slot)) fail(`${path}.placeableState.slot must be an integer`);
+    const name = requiredString(value.placeableState, "state", `${path}.placeableState`);
+    const declaration = ctx.placeables?.get(placeable);
+    if (!declaration) fail(`${path} references unknown placeable ${placeable}`);
+    if (slot < 0 || slot >= declaration.maxInstances) fail(`${path}.placeableState.slot is outside ${placeable} slot range`);
+    if (!declaration.states.has(name)) fail(`${path} references unknown placeable state ${placeable}.${name}`);
+    if (!ctx.placeableScope || ctx.placeableScope.id !== placeable || ctx.placeableScope.slot !== slot) {
+      fail(`${path} uses placeable state outside its PlaceableInstanceContext`);
+    }
+    return { kind: "placeable_state", placeable, slot, name };
+  }
   if (has(value, "playerState")) {
     if (!ctx.playerScope) fail(`${path} uses player-local state outside PlayerContext`);
     if (typeof value.playerState !== "string") fail(`${path}.playerState must be a string`);

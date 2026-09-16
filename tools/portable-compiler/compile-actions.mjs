@@ -6,6 +6,8 @@ import { compilePersistentGridAction } from "./compile-persistent.mjs";
 import { compileSelectionAction } from "./compile-selection.mjs";
 import { compileFormAction } from "./compile-form.mjs";
 import { playerSetSelector } from "./compile-player.mjs";
+import { compileControllerAdvance } from "./compile-interaction-controller.mjs";
+import { compileItemGive, compilePlaceableRemove } from "./compile-placeable.mjs";
 
 function score(value, ctx) { return ctx.score(value); }
 function operation(targetHolder, targetObjective, operator, value, ctx) {
@@ -78,6 +80,27 @@ export function compileActions(actions, lines, ctx) {
         ctx.usesNegate = true;
         lines.push(`scoreboard players operation @s ${ctx.playerStateObjective(action.target)} *= #neg1 ${ctx.objective}`);
         break;
+      case "placeable_tick": {
+        const fn = ctx.nextBranchFunctionName(), body = [];
+        compileActions(action.actions, body, ctx);
+        ctx.functions.set(fn, body);
+        lines.push(`execute if score ${ctx.placeableActiveHolder(action.placeable, action.slot)} ${ctx.objective} matches ${ctx.program.fixedPoint} run function ${ctx.namespace}:portable/${fn}`);
+        break;
+      }
+      case "placeable_set": {
+        const target = ctx.placeableStateHolder(action.placeable, action.slot, action.target);
+        if (action.value.kind === "constant") lines.push(`scoreboard players set ${target} ${ctx.objective} ${action.value.raw}`);
+        else lines.push(operation(target, ctx.objective, "=", action.value, ctx));
+        break;
+      }
+      case "placeable_add": lines.push(operation(ctx.placeableStateHolder(action.placeable, action.slot, action.target), ctx.objective, "+=", action.value, ctx)); break;
+      case "placeable_sub": lines.push(operation(ctx.placeableStateHolder(action.placeable, action.slot, action.target), ctx.objective, "-=", action.value, ctx)); break;
+      case "placeable_negate":
+        ctx.usesNegate = true;
+        lines.push(`scoreboard players operation ${ctx.placeableStateHolder(action.placeable, action.slot, action.target)} ${ctx.objective} *= #neg1 ${ctx.objective}`);
+        break;
+      case "placeable_remove": compilePlaceableRemove(action, lines, ctx); break;
+      case "item_give": compileItemGive(action, lines, ctx); break;
       case "interaction_use": {
         const interaction = ctx.program.interactions.find(value => value.id === action.interaction);
         if (!interaction) fail(`unknown interaction use target: ${action.interaction}`);
@@ -89,16 +112,9 @@ export function compileActions(actions, lines, ctx) {
         lines.push(`execute in ${interaction.dimension} as ${selector} run data remove entity @s interaction`);
         break;
       }
-      case "interaction_controller_claim": {
-        const generation = ctx.interactionControllerGenerationHolder(action.interaction);
-        const objective = ctx.interactionControllerObjective(action.interaction);
-        lines.push(`execute if score ${generation} ${ctx.objective} matches 2147483647 run scoreboard objectives remove ${objective}`);
-        lines.push(`execute if score ${generation} ${ctx.objective} matches 2147483647 run scoreboard objectives add ${objective} dummy`);
-        lines.push(`execute if score ${generation} ${ctx.objective} matches 2147483647 run scoreboard players set ${generation} ${ctx.objective} 0`);
-        lines.push(`scoreboard players add ${generation} ${ctx.objective} 1`);
-        lines.push(`scoreboard players operation @s ${objective} = ${generation} ${ctx.objective}`);
+      case "interaction_controller_claim":
+        compileControllerAdvance(action.interaction, lines, ctx, true);
         break;
-      }
       case "interaction_controller_player": {
         const fn = ctx.nextPlayerFunctionName(), body = [];
         compileActions(action.actions, body, ctx);

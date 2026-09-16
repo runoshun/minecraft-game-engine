@@ -44,6 +44,11 @@ npm run compile:portable -- \
   --output build/portable/portable_pinball
 
 npm run compile:portable -- \
+  --source examples/portable-pinball-cabinet/datapack/data/portable_pinball_cabinet/mcgame/main.ts \
+  --namespace portable_pinball_cabinet \
+  --output build/portable/portable_pinball_cabinet
+
+npm run compile:portable -- \
   --source examples/jrpg-demo/datapack/data/jrpg_demo/mcgame/main.ts \
   --namespace jrpg_demo \
   --output build/portable/jrpg_demo
@@ -379,3 +384,44 @@ Camera2 was disconnected and reconnected without another claim; token `2` remain
 Ordinary `/reload` reset `claims`, `controlUses`, and generation to `0`, removed both players' controller scores entirely, reset both controller tick states to `0`, and recreated one interaction entity. The final signed-32-bit wrap path was then tested by forcing generation to `2147483647`, seeding `StaleController` with that same token, and issuing a real cabinet click. The click recreated the controller objective, returned generation and Camera2's token to `1`, and left `StaleController` with no score. Cleanup removed every objective/entity and all owned force-loads. The acceptance pack and temporary floor were removed and `/reload` left zero objectives, zero force-loaded chunks, only vanilla enabled, with the pre-existing `video_breakout` and `video_pinball` packs still disabled/available. Node regression was 54/54 green and all 19 pre-existing retained example outputs matched `8af93f4` byte-for-byte.
 
 Controller state is not persistent. For ordinary v24-to-v24 changes, `/reload` is sufficient and intentionally releases every controller. If an installed v24 namespace is being replaced by source that no longer uses controller binding and therefore compiles back to v23 or earlier, run the installed v24 `portable/cleanup` **before** replacing/reloading the pack; historical v1-v23 output intentionally has no v24 controller-objective cleanup bank.
+
+
+## Item-backed placeable objects v25 acceptance
+
+ADR 0036 defines Portable v25 bounded item-backed placeable objects. Use `examples/portable-pinball-cabinet` on mod-free Minecraft 26.1 `second` with real clients for placement/input checks. V25 uses ordinary functions/entities/scoreboards and does not add a registry resource, so install/replacement can use the normal `/reload` path. A custom `appearance.kind: "model"` can depend on an external resource pack, but the checked-in acceptance example uses `appearance.kind: "head"` and needs no resource pack or client mod.
+
+Compile and package the reference pack with:
+
+```bash
+npm run compile:portable -- \
+  --source examples/portable-pinball-cabinet/datapack/data/portable_pinball_cabinet/mcgame/main.ts \
+  --namespace portable_pinball_cabinet \
+  --output build/portable/portable_pinball_cabinet
+
+tar -C build/portable/portable_pinball_cabinet \
+  -czf build/portable_pinball_cabinet.tar.gz .
+sha256sum build/portable_pinball_cabinet.tar.gz
+```
+
+Deploy through the normal devcontainer `publish_file` -> `mc-mcp.write_datapack_files` path. Keep a real client online while interpreting placement/tick behavior. Validate the generated marker reports `portable_version=25`, item appearance/placeable slot metadata, and controller mappings for controller-enabled child interactions.
+
+Acceptance must verify all of the following through generated behavior rather than by editing scoreboard state as a substitute for the player path:
+
+- a Survival player receives the compiler-generated carrier, places two cabinets, consumes the item, and the two active slots capture exact placement anchors/cardinal orientation;
+- the placed carrier is the compiler-authored Armor Stand Marker path (`Invisible`, `Marker`, `NoGravity`, owner/pending tags) and pending markers are consumed/retagged by allocation;
+- two active slots keep independent local state and controller ownership with two real clients;
+- pickup/replacement exercises all four cardinal orientations and local Display/interaction coordinates rotate around the slot anchor; inspect at least one live Display quaternion in addition to position changes;
+- the checked-in head-backed `itemDisplay` exists without a custom resource pack; if testing a namespaced `kind: "model"`, treat the resource pack as an external visual dependency rather than a datapack/compiler artifact;
+- Sneak + use pickup returns the carrier, frees/resets the slot, removes children, and advances controller generation; after the same slot is reused, a stale old controller token must not drive the new instance;
+- placing with every slot full and placing outside the ownership rectangle both reject the Marker and leave one matching refund item at the attempted anchor in Survival;
+- ordinary `/reload` clears every active/pending placeable instance, slot-local state, controller generation/token, and child entity by design;
+- all retained v1-v24 examples remain byte-identical to the parent compiler output;
+- final `portable/cleanup` leaves zero generated objectives, namespace-owned/pending entities, and force-loads.
+
+The accepted 2026-09-16 run used `Camera` and `Camera2`. Two real Survival placements allocated `[731.5,65,732.5]` and `[741.5,65,742.5]`; the clients independently claimed and launched their own pinball state. Reusing slot 1 produced orientations `0/1/2/3` with the controls offset rotating to each expected cardinal side, and a live orientation-3 block Display used left rotation `[0.0f,0.7071068f,0.0f,0.7071068f]`. Pickup/reallocation advanced generation while the old Camera2 token stayed stale and could not launch the new instance. Full-capacity and outside-ownership placement each returned the same carrier stack. `/reload` cleared slots/tokens/entities, and cleanup left zero objectives/entities/force-loads. The acceptance pack and temporary floors were then removed, leaving only vanilla enabled; `video_breakout` / `video_pinball` remained disabled/available.
+
+The final Node suite was 59/59 green, and all 20 retained v1-v24 examples matched parent commit `37b4b70` byte-for-byte.
+
+V25 placeables are active-instance state. Do not rely on a placed cabinet surviving `/reload`, same-namespace replacement, or server-side pack reinstallation. Persistent placed furniture requires a separate design. Also remember that rejection refunds are dropped item entities; acceptance queries should be executed `at` the attempted placement/player position rather than from the RCON command origin.
+
+Before removing or replacing a v25 pack, run its installed `portable/cleanup` while it is still enabled. Clear or restore any temporary test terrain separately; as with other ownership programs, cleanup owns generated runtime resources, not arbitrary test blocks. Player inventory items granted during acceptance are test state and should also be cleared explicitly during teardown.

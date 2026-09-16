@@ -1,10 +1,11 @@
 import { condition } from "./compile-actions.mjs";
 import {
-  actorTag, cameraTag, inputHolder, interactionTag, ownerTag, particleTag, projectionTag,
+  actorTag, cameraTag, inputHolder, interactionTag, itemDisplayTag, ownerTag, particleTag, projectionTag,
   sidebarObjectiveName, sidebarRowHolder, soundTag, stateHolder, textTag,
 } from "./compile-context.mjs";
 import { floatLiteral, floorDiv, format3, format6, numberLiteral, scale, snbtQuoted, storeScale } from "./utils.mjs";
 import { playerCleanupLines, playerSetSelector } from "./compile-player.mjs";
+import { placeableItemRenderNbt } from "./compile-placeable.mjs";
 
 const MAX_SIDEBAR_SCORE = 15;
 
@@ -89,8 +90,110 @@ function compileVisibility(dimension, tag, entityScale, visibility, lines, ctx) 
   lines.push(`execute ${condition(visibility, false, ctx)} in ${dimension} run data modify entity ${selector} transformation.scale set value [0f,0f,0f]`);
 }
 
+function placeableScoreWithBase(value, base, lines, ctx) {
+  let source = ctx.score(value);
+  if (!base) return source;
+  const temp = ctx.nextProjectionTemp();
+  lines.push(`scoreboard players operation ${temp} ${ctx.objective} = ${source.holder} ${source.objective}`);
+  lines.push(`scoreboard players operation ${temp} ${ctx.objective} += ${ctx.constantHolder(scale(base, ctx.program.fixedPoint, "placeable translation"))} ${ctx.objective}`);
+  return { holder: temp, objective: ctx.objective };
+}
+
+function compilePlaceableEntityAxis(entity, axis, nbtPath, lines, ctx) {
+  const binding = entity.placeable;
+  if (!binding) return false;
+  const target = ctx.nextProjectionTemp();
+  const anchorAxis = axis === "y" ? "y" : axis;
+  lines.push(`scoreboard players operation ${target} ${ctx.objective} = ${ctx.placeableAnchorHolder(binding.id, binding.slot, anchorAxis)} ${ctx.objective}`);
+  if (axis === "y") {
+    const source = placeableScoreWithBase(binding.y, entity.translation?.y || 0, lines, ctx);
+    lines.push(`scoreboard players operation ${target} ${ctx.objective} += ${source.holder} ${source.objective}`);
+  } else {
+    const localX = placeableScoreWithBase(binding.x, entity.translation?.x || 0, lines, ctx);
+    const localZ = placeableScoreWithBase(binding.z, entity.translation?.z || 0, lines, ctx);
+    const orientation = ctx.placeableAnchorHolder(binding.id, binding.slot, "orientation");
+    const ops = axis === "x"
+      ? [[0, "+=", localX], [1, "-=", localZ], [2, "-=", localX], [3, "+=", localZ]]
+      : [[0, "+=", localZ], [1, "+=", localX], [2, "-=", localZ], [3, "-=", localX]];
+    for (const [value, op, source] of ops) {
+      lines.push(`execute if score ${orientation} ${ctx.objective} matches ${value} run scoreboard players operation ${target} ${ctx.objective} ${op} ${source.holder} ${source.objective}`);
+    }
+  }
+  lines.push(`execute in ${entity.dimension} store result entity @e[tag=${entity._portableTag},limit=1] ${nbtPath} double ${storeScale(ctx.program.fixedPoint)} run scoreboard players get ${target} ${ctx.objective}`);
+  return true;
+}
+
+function placeableRotationLines(entity, tag, lines, ctx) {
+  if (!entity.placeable) return;
+  const orientation = ctx.placeableAnchorHolder(entity.placeable.id, entity.placeable.slot, "orientation");
+  const quaternions = [
+    "[0f,0f,0f,1f]",
+    "[0f,-0.7071068f,0f,0.7071068f]",
+    "[0f,1f,0f,0f]",
+    "[0f,0.7071068f,0f,0.7071068f]",
+  ];
+  quaternions.forEach((value, index) => lines.push(`execute if score ${orientation} ${ctx.objective} matches ${index} in ${entity.dimension} run data modify entity @e[tag=${tag},limit=1] transformation.left_rotation set value ${value}`));
+}
+
+function placeableActive(entity, positive, ctx) {
+  const binding = entity.placeable;
+  return `${positive ? "if" : "unless"} score ${ctx.placeableActiveHolder(binding.id, binding.slot)} ${ctx.objective} matches ${ctx.program.fixedPoint}`;
+}
+
+function placeableSummonPrefix(entity, ctx) {
+  return `execute in ${entity.dimension} at @e[type=minecraft:armor_stand,tag=${ctx.placeableAnchorTag(entity.placeable.id, entity.placeable.slot)},limit=1] run`;
+}
+
+function compilePlaceablePosition(entity, tag, lines, ctx) {
+  entity._portableTag = tag;
+  compilePlaceableEntityAxis(entity, "x", "Pos[0]", lines, ctx);
+  compilePlaceableEntityAxis(entity, "y", "Pos[1]", lines, ctx);
+  compilePlaceableEntityAxis(entity, "z", "Pos[2]", lines, ctx);
+  delete entity._portableTag;
+}
+
+function ensurePlaceableProjectionSpawnFunction(projection, ctx) {
+  const name = `placeable_projection_${projection.id}_spawn`;
+  if (ctx.functions.has(name)) return name;
+  const tag = projectionTag(ctx.namespace, projection.id), body = [];
+  const s = projection.scale;
+  const snbt = `{${entityTagsSnbt(ctx, tag)},block_state:{Name:"${projection.block}"},transformation:{translation:[0f,0f,0f],left_rotation:[0f,0f,0f,1f],scale:[${floatLiteral(s.x)},${floatLiteral(s.y)},${floatLiteral(s.z)}],right_rotation:[0f,0f,0f,1f]}}`;
+  body.push(`${placeableSummonPrefix(projection, ctx)} summon minecraft:block_display ~ ~ ~ ${snbt}`);
+  compilePlaceablePosition(projection, tag, body, ctx);
+  placeableRotationLines(projection, tag, body, ctx);
+  ctx.functions.set(name, body);
+  return name;
+}
+
+function ensurePlaceableTextSpawnFunction(text, ctx) {
+  const name = `placeable_text_${text.id}_spawn`;
+  if (ctx.functions.has(name)) return name;
+  const tag = textTag(ctx.namespace, text.id), body = [], s = text.scale;
+  prepareTextValues(ctx.program, text, body, ctx);
+  const snbt = `{${entityTagsSnbt(ctx, tag)},text:${textComponentSnbt(text, ctx)},billboard:"${text.billboard}",transformation:{translation:[0f,0f,0f],left_rotation:[0f,0f,0f,1f],scale:[${floatLiteral(s.x)},${floatLiteral(s.y)},${floatLiteral(s.z)}],right_rotation:[0f,0f,0f,1f]}}`;
+  body.push(`${placeableSummonPrefix(text, ctx)} summon minecraft:text_display ~ ~ ~ ${snbt}`);
+  compilePlaceablePosition(text, tag, body, ctx);
+  placeableRotationLines(text, tag, body, ctx);
+  ctx.functions.set(name, body);
+  return name;
+}
+
+function ensurePlaceableItemDisplaySpawnFunction(display, ctx) {
+  const name = `placeable_item_${display.id}_spawn`;
+  if (ctx.functions.has(name)) return name;
+  const tag = itemDisplayTag(ctx.namespace, display.id), body = [], s = display.scale;
+  const item = placeableItemRenderNbt(ctx.program, display.item, 1);
+  const snbt = `{${entityTagsSnbt(ctx, tag)},item:${item},item_display:"fixed",transformation:{translation:[0f,0f,0f],left_rotation:[0f,0f,0f,1f],scale:[${floatLiteral(s.x)},${floatLiteral(s.y)},${floatLiteral(s.z)}],right_rotation:[0f,0f,0f,1f]}}`;
+  body.push(`${placeableSummonPrefix(display, ctx)} summon minecraft:item_display ~ ~ ~ ${snbt}`);
+  compilePlaceablePosition(display, tag, body, ctx);
+  placeableRotationLines(display, tag, body, ctx);
+  ctx.functions.set(name, body);
+  return name;
+}
+
 export function compileVanillaProjectionLoad(program, lines, ctx) {
   for (const projection of program.projections) {
+    if (projection.placeable) continue;
     const tag = projectionTag(ctx.namespace, projection.id), x = logicalCoordinate(program, projection.x), y = logicalCoordinate(program, projection.y), z = logicalCoordinate(program, projection.z);
     const bx = Math.floor(x), bz = Math.floor(z);
     if (!program.ownership) lines.push(`execute in ${projection.dimension} run forceload add ${bx} ${bz}`);
@@ -105,6 +208,7 @@ export function compileVanillaProjectionLoad(program, lines, ctx) {
 
 export function compileVanillaTextLoad(program, lines, ctx) {
   for (const text of program.texts) {
+    if (text.placeable) continue;
     const tag = textTag(ctx.namespace, text.id), x = logicalCoordinate(program, text.x), y = logicalCoordinate(program, text.y), z = logicalCoordinate(program, text.z);
     const bx = Math.floor(x), bz = Math.floor(z), s = text.scale;
     prepareTextValues(program, text, lines, ctx);
@@ -149,6 +253,12 @@ function ensureActorSpawnFunction(program, actor, ctx) {
   ctx.functions.set(name, body);
 }
 
+export function compileVanillaItemDisplayLoad(program, lines, ctx) {
+  for (const display of program.itemDisplays || []) {
+    if (!display.placeable) throw new Error(`item display ${display.id} must be placeable-scoped in v25`);
+  }
+}
+
 export function compileVanillaActorLoad(program, lines, ctx) {
   for (const actor of program.actors) {
     const tag = actorTag(ctx.namespace, actor.id), x = logicalCoordinate(program, actor.x), z = logicalCoordinate(program, actor.z), bx = Math.floor(x), bz = Math.floor(z);
@@ -164,18 +274,24 @@ export function compileVanillaActorLoad(program, lines, ctx) {
 function ensureInteractionSpawnFunction(program, interaction, ctx) {
   const name = `interaction_${interaction.id}_spawn`;
   if (ctx.functions.has(name)) return;
-  const tag = interactionTag(ctx.namespace, interaction.id);
-  const x = logicalCoordinate(program, interaction.x), y = logicalCoordinate(program, interaction.y), z = logicalCoordinate(program, interaction.z);
-  const bx = Math.floor(x), bz = Math.floor(z), body = [];
-  if (!program.ownership) body.push(`execute in ${interaction.dimension} run forceload add ${bx} ${bz}`);
+  const tag = interactionTag(ctx.namespace, interaction.id), body = [];
   const snbt = `{${entityTagsSnbt(ctx, tag)},width:${floatLiteral(interaction.width)},height:${floatLiteral(interaction.height)},response:${interaction.response ? "1b" : "0b"}}`;
-  body.push(`execute in ${interaction.dimension} run summon minecraft:interaction ${format6(x)} ${format6(y)} ${format6(z)} ${snbt}`);
-  if (!program.ownership) body.push(`execute in ${interaction.dimension} run forceload remove ${bx} ${bz}`);
+  if (interaction.placeable) {
+    body.push(`${placeableSummonPrefix(interaction, ctx)} summon minecraft:interaction ~ ~ ~ ${snbt}`);
+    compilePlaceablePosition(interaction, tag, body, ctx);
+  } else {
+    const x = logicalCoordinate(program, interaction.x), y = logicalCoordinate(program, interaction.y), z = logicalCoordinate(program, interaction.z);
+    const bx = Math.floor(x), bz = Math.floor(z);
+    if (!program.ownership) body.push(`execute in ${interaction.dimension} run forceload add ${bx} ${bz}`);
+    body.push(`execute in ${interaction.dimension} run summon minecraft:interaction ${format6(x)} ${format6(y)} ${format6(z)} ${snbt}`);
+    if (!program.ownership) body.push(`execute in ${interaction.dimension} run forceload remove ${bx} ${bz}`);
+  }
   ctx.functions.set(name, body);
 }
 
 export function compileVanillaInteractionLoad(program, lines, ctx) {
   for (const interaction of program.interactions) {
+    if (interaction.placeable) continue;
     const tag = interactionTag(ctx.namespace, interaction.id), x = logicalCoordinate(program, interaction.x), z = logicalCoordinate(program, interaction.z), bx = Math.floor(x), bz = Math.floor(z);
     ensureInteractionSpawnFunction(program, interaction, ctx);
     if (!program.ownership) lines.push(`execute in ${interaction.dimension} run forceload add ${bx} ${bz}`);
@@ -277,7 +393,14 @@ export function compileVanillaProjections(program, lines, ctx) {
   const s = storeScale(program.fixedPoint);
   for (const p of program.projections) {
     const tag = projectionTag(ctx.namespace, p.id);
-    compileEntityAxis(p.dimension, tag, "Pos[0]", p.x, s, lines, ctx); compileEntityAxis(p.dimension, tag, "Pos[1]", p.y, s, lines, ctx); compileEntityAxis(p.dimension, tag, "Pos[2]", p.z, s, lines, ctx);
+    if (p.placeable) {
+      const spawn = ensurePlaceableProjectionSpawnFunction(p, ctx);
+      lines.push(`execute ${placeableActive(p, true, ctx)} in ${p.dimension} unless entity @e[tag=${tag},limit=1] run function ${ctx.namespace}:portable/${spawn}`);
+      lines.push(`execute ${placeableActive(p, false, ctx)} in ${p.dimension} if entity @e[tag=${tag},limit=1] run kill @e[tag=${tag}]`);
+      compilePlaceablePosition(p, tag, lines, ctx);
+    } else {
+      compileEntityAxis(p.dimension, tag, "Pos[0]", p.x, s, lines, ctx); compileEntityAxis(p.dimension, tag, "Pos[1]", p.y, s, lines, ctx); compileEntityAxis(p.dimension, tag, "Pos[2]", p.z, s, lines, ctx);
+    }
     compileVisibility(p.dimension, tag, p.scale, p.condition, lines, ctx);
   }
 }
@@ -286,12 +409,30 @@ export function compileVanillaTextUpdates(program, lines, ctx) {
   const s = storeScale(program.fixedPoint);
   for (const text of program.texts) {
     const tag = textTag(ctx.namespace, text.id);
-    compileEntityAxis(text.dimension, tag, "Pos[0]", text.x, s, lines, ctx); compileEntityAxis(text.dimension, tag, "Pos[1]", text.y, s, lines, ctx); compileEntityAxis(text.dimension, tag, "Pos[2]", text.z, s, lines, ctx);
+    if (text.placeable) {
+      const spawn = ensurePlaceableTextSpawnFunction(text, ctx);
+      lines.push(`execute ${placeableActive(text, true, ctx)} in ${text.dimension} unless entity @e[tag=${tag},limit=1] run function ${ctx.namespace}:portable/${spawn}`);
+      lines.push(`execute ${placeableActive(text, false, ctx)} in ${text.dimension} if entity @e[tag=${tag},limit=1] run kill @e[tag=${tag}]`);
+      compilePlaceablePosition(text, tag, lines, ctx);
+    } else {
+      compileEntityAxis(text.dimension, tag, "Pos[0]", text.x, s, lines, ctx); compileEntityAxis(text.dimension, tag, "Pos[1]", text.y, s, lines, ctx); compileEntityAxis(text.dimension, tag, "Pos[2]", text.z, s, lines, ctx);
+    }
     if (text.tokens.some(t => t.kind === "value")) {
       prepareTextValues(program, text, lines, ctx);
       lines.push(`execute in ${text.dimension} if entity @e[tag=${tag},limit=1] run data modify entity @e[tag=${tag},limit=1] text set value ${textComponentSnbt(text, ctx)}`);
     }
     compileVisibility(text.dimension, tag, text.scale, text.condition, lines, ctx);
+  }
+}
+
+export function compileVanillaItemDisplayUpdates(program, lines, ctx) {
+  for (const display of program.itemDisplays || []) {
+    const tag = itemDisplayTag(ctx.namespace, display.id);
+    const spawn = ensurePlaceableItemDisplaySpawnFunction(display, ctx);
+    lines.push(`execute ${placeableActive(display, true, ctx)} in ${display.dimension} unless entity @e[tag=${tag},limit=1] run function ${ctx.namespace}:portable/${spawn}`);
+    lines.push(`execute ${placeableActive(display, false, ctx)} in ${display.dimension} if entity @e[tag=${tag},limit=1] run kill @e[tag=${tag}]`);
+    compilePlaceablePosition(display, tag, lines, ctx);
+    compileVisibility(display.dimension, tag, display.scale, display.condition, lines, ctx);
   }
 }
 
@@ -314,13 +455,26 @@ export function compileVanillaInteractionUpdates(program, lines, ctx) {
     const tag = interactionTag(ctx.namespace, interaction.id);
     ensureInteractionSpawnFunction(program, interaction, ctx);
     const spawn = `${ctx.namespace}:portable/interaction_${interaction.id}_spawn`;
-    if (interaction.condition) {
-      lines.push(`execute ${condition(interaction.condition, true, ctx)} in ${interaction.dimension} unless entity @e[tag=${tag},limit=1] run function ${spawn}`);
-      lines.push(`execute ${condition(interaction.condition, false, ctx)} in ${interaction.dimension} if entity @e[tag=${tag},limit=1] run kill @e[tag=${tag}]`);
+    if (interaction.placeable) {
+      const activeTrue = placeableActive(interaction, true, ctx), activeFalse = placeableActive(interaction, false, ctx);
+      if (interaction.condition) {
+        lines.push(`execute ${activeTrue} ${condition(interaction.condition, true, ctx)} in ${interaction.dimension} unless entity @e[tag=${tag},limit=1] run function ${spawn}`);
+        lines.push(`execute ${activeFalse} in ${interaction.dimension} if entity @e[tag=${tag},limit=1] run kill @e[tag=${tag}]`);
+        lines.push(`execute ${activeTrue} ${condition(interaction.condition, false, ctx)} in ${interaction.dimension} if entity @e[tag=${tag},limit=1] run kill @e[tag=${tag}]`);
+      } else {
+        lines.push(`execute ${activeTrue} in ${interaction.dimension} unless entity @e[tag=${tag},limit=1] run function ${spawn}`);
+        lines.push(`execute ${activeFalse} in ${interaction.dimension} if entity @e[tag=${tag},limit=1] run kill @e[tag=${tag}]`);
+      }
+      compilePlaceablePosition(interaction, tag, lines, ctx);
+    } else {
+      if (interaction.condition) {
+        lines.push(`execute ${condition(interaction.condition, true, ctx)} in ${interaction.dimension} unless entity @e[tag=${tag},limit=1] run function ${spawn}`);
+        lines.push(`execute ${condition(interaction.condition, false, ctx)} in ${interaction.dimension} if entity @e[tag=${tag},limit=1] run kill @e[tag=${tag}]`);
+      }
+      compileEntityAxis(interaction.dimension, tag, "Pos[0]", interaction.x, s, lines, ctx);
+      compileEntityAxis(interaction.dimension, tag, "Pos[1]", interaction.y, s, lines, ctx);
+      compileEntityAxis(interaction.dimension, tag, "Pos[2]", interaction.z, s, lines, ctx);
     }
-    compileEntityAxis(interaction.dimension, tag, "Pos[0]", interaction.x, s, lines, ctx);
-    compileEntityAxis(interaction.dimension, tag, "Pos[1]", interaction.y, s, lines, ctx);
-    compileEntityAxis(interaction.dimension, tag, "Pos[2]", interaction.z, s, lines, ctx);
   }
 }
 
@@ -452,10 +606,11 @@ export function validateOwnershipCoverage(program) {
     const px = logicalCoordinate(program, x), pz = logicalCoordinate(program, z);
     if (px < o.minX || px > o.maxX || pz < o.minZ || pz > o.maxZ) throw new Error(`${label} initial position is outside portable ownership region`);
   };
-  for (const p of program.projections) check(p.dimension, p.x, p.z, `projection ${p.id}`);
-  for (const t of program.texts) check(t.dimension, t.x, t.z, `text ${t.id}`);
+  for (const p of program.projections) p.placeable ? (p.dimension !== o.dimension && (() => { throw new Error(`projection ${p.id} dimension is outside portable ownership region: ${p.dimension}`); })()) : check(p.dimension, p.x, p.z, `projection ${p.id}`);
+  for (const t of program.texts) t.placeable ? (t.dimension !== o.dimension && (() => { throw new Error(`text ${t.id} dimension is outside portable ownership region: ${t.dimension}`); })()) : check(t.dimension, t.x, t.z, `text ${t.id}`);
   for (const a of program.actors) check(a.dimension, a.x, a.z, `actor ${a.id}`);
-  for (const i of program.interactions) check(i.dimension, i.x, i.z, `interaction ${i.id}`);
+  for (const i of program.interactions) i.placeable ? (i.dimension !== o.dimension && (() => { throw new Error(`interaction ${i.id} dimension is outside portable ownership region: ${i.dimension}`); })()) : check(i.dimension, i.x, i.z, `interaction ${i.id}`);
+  for (const d of program.itemDisplays || []) if (d.dimension !== o.dimension) throw new Error(`item display ${d.id} dimension is outside portable ownership region: ${d.dimension}`);
   for (const c of program.cameras) check(c.dimension, c.x, c.z, `camera ${c.id}`);
   for (const p of program.particles) if (dynamic(p.x, p.y, p.z)) check(p.dimension, p.x, p.z, `particle ${p.id}`);
   for (const s of program.sounds) if (dynamic(s.x, s.y, s.z)) check(s.dimension, s.x, s.z, `sound ${s.id}`);

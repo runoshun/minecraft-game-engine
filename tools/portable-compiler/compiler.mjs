@@ -5,7 +5,7 @@ import { compileInteractionControllerLoad, interactionControllerCleanupLines, in
 import { CompileContext, inputHolder, ownerTag, playerInitObjective } from "./compile-context.mjs";
 import {
   cleanupLines, compileVanillaActorLoad, compileVanillaActorUpdates, compileVanillaCameraLoad,
-  compileVanillaInteractionLoad, compileVanillaInteractionUpdates,
+  compileVanillaInteractionLoad, compileVanillaInteractionUpdates, compileVanillaItemDisplayLoad, compileVanillaItemDisplayUpdates,
   compileVanillaCameraLock, compileVanillaCameraUpdates, compileVanillaHuds, compileVanillaInputs,
   compileVanillaParticleLoad, compileVanillaParticles, compileVanillaProjectionLoad,
   compileVanillaProjections, compileVanillaSidebarLoad, compileVanillaSidebars,
@@ -19,6 +19,7 @@ import { compileGridLoad, compileGridWorldServices, gridCleanupLines } from "./c
 import { compilePersistentLoad, hasPersistentData, persistentPurgeLines, persistentResetLines } from "./compile-persistent.mjs";
 import { compileSelectionLoad, selectionCleanupLines, selectionDialogJson } from "./compile-selection.mjs";
 import { compileFormLoad, compileFormTickPrelude, formCleanupLines, formDialogJson } from "./compile-form.mjs";
+import { compilePlaceableLoad, compilePlaceableServices, placeableCleanupLines } from "./compile-placeable.mjs";
 
 function write(file, content) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -70,12 +71,14 @@ export function compileDatapack(program, namespace, outputRoot) {
   compileVanillaInputs(program, tick, ctx);
   compilePlayerTickPrelude(program, tick, ctx);
   compileFormTickPrelude(program, tick, ctx);
+  compilePlaceableServices(program, tick, ctx);
   compileActions(program.tickActions, tick, ctx);
   compileGridWorldServices(program, tick, ctx);
   compileVanillaProjections(program, tick, ctx);
   compileVanillaTextUpdates(program, tick, ctx);
   compileVanillaActorUpdates(program, tick, ctx);
   compileVanillaInteractionUpdates(program, tick, ctx);
+  compileVanillaItemDisplayUpdates(program, tick, ctx);
   prepareVanillaWorldBatches(program, tick, ctx);
   compileVanillaCameraUpdates(program, tick, ctx);
   compileVanillaCameraLock(program, tick, ctx);
@@ -102,6 +105,7 @@ export function compileDatapack(program, namespace, outputRoot) {
   compileFormLoad(program, load, ctx);
   compilePlayerLoad(program, load, ctx);
   compileInteractionControllerLoad(program, load, ctx);
+  compilePlaceableLoad(program, load, ctx);
   compileGridLoad(program, load, ctx);
   if (ctx.usesNegate) load.push(`scoreboard players set #neg1 ${ctx.objective} -1`);
   for (const [raw, holder] of ctx.constants.entries()) load.push(`scoreboard players set ${holder} ${ctx.objective} ${raw}`);
@@ -115,6 +119,7 @@ export function compileDatapack(program, namespace, outputRoot) {
     compileVanillaTextLoad(program, ownedInit, ctx);
     compileVanillaActorLoad(program, ownedInit, ctx);
     compileVanillaInteractionLoad(program, ownedInit, ctx);
+    compileVanillaItemDisplayLoad(program, ownedInit, ctx);
     compileVanillaCameraLoad(program, ownedInit, ctx);
     compileVanillaParticleLoad(program, ownedInit, ctx);
     compileVanillaSoundLoad(program, ownedInit, ctx);
@@ -126,6 +131,7 @@ export function compileDatapack(program, namespace, outputRoot) {
     compileVanillaTextLoad(program, load, ctx);
     compileVanillaActorLoad(program, load, ctx);
     compileVanillaInteractionLoad(program, load, ctx);
+    compileVanillaItemDisplayLoad(program, load, ctx);
     compileVanillaCameraLoad(program, load, ctx);
     compileVanillaParticleLoad(program, load, ctx);
     compileVanillaSoundLoad(program, load, ctx);
@@ -147,7 +153,7 @@ export function compileDatapack(program, namespace, outputRoot) {
   const functionRoot = path.join(outputRoot, "data", namespace, "function", "portable");
   write(path.join(functionRoot, "load.mcfunction"), `${load.join("\n")}\n`);
   write(path.join(functionRoot, "tick.mcfunction"), `${tick.join("\n")}\n`);
-  write(path.join(functionRoot, "cleanup.mcfunction"), `${[...gridCleanupLines(program, ctx), ...selectionCleanupLines(program, ctx), ...formCleanupLines(program, ctx), ...interactionControllerCleanupLines(program, ctx), ...cleanupLines(program, ctx)].join("\n")}\n`);
+  write(path.join(functionRoot, "cleanup.mcfunction"), `${[...gridCleanupLines(program, ctx), ...selectionCleanupLines(program, ctx), ...formCleanupLines(program, ctx), ...interactionControllerCleanupLines(program, ctx), ...placeableCleanupLines(program, ctx), ...cleanupLines(program, ctx)].join("\n")}\n`);
   for (const [name, body] of ctx.functions.entries()) write(path.join(functionRoot, `${name}.mcfunction`), `${body.join("\n")}\n`);
 
   let marker = `namespace=${namespace}\nobjective=${ctx.objective}\nportable_version=${program.version}\nfixed_point=${program.fixedPoint}\n`;
@@ -166,6 +172,10 @@ export function compileDatapack(program, namespace, outputRoot) {
   }
   if (program.version >= 24) {
     for (const id of interactionControllerIds(program)) marker += `interaction.${id}.controller=${ctx.interactionControllerObjective(id)};generation=${ctx.interactionControllerGenerationHolder(id)}\n`;
+  }
+  if (program.version >= 25) {
+    for (const item of [...(program.items || [])].sort((a, b) => a.id.localeCompare(b.id))) marker += `item.${item.id}.appearance=${item.appearance.kind}\n`;
+    for (const placeable of [...(program.placeables || [])].sort((a, b) => a.id.localeCompare(b.id))) marker += `placeable.${placeable.id}.item=${placeable.item};slots=${placeable.maxInstances}\n`;
   }
   for (const name of Object.keys(program.initialInputs)) marker += `input.${name}=${inputHolder(name)}\n`;
   if (program.version >= 12) {
@@ -211,10 +221,14 @@ export function compileDatapack(program, namespace, outputRoot) {
     gridCount: program.grids?.length ?? 0,
     rngCount: program.rngs?.length ?? 0,
     gridWorldCount: program.gridWorlds?.length ?? 0,
+    itemCount: program.items?.length ?? 0,
+    placeableCount: program.placeables?.length ?? 0,
+    placeableSlotCount: (program.placeables || []).reduce((sum, value) => sum + value.maxInstances, 0),
     projectionCount: program.projections.length,
     textCount: program.texts.length,
     actorCount: program.actors.length,
     interactionCount: program.interactions.length,
+    itemDisplayCount: program.itemDisplays?.length ?? 0,
     interactionControllerCount: interactionControllerIds(program).length,
     worldBatchCount: program.worldBatches.length,
     cameraCount: program.cameras.length,

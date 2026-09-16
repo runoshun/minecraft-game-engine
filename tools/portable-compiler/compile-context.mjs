@@ -13,6 +13,9 @@ export function projectionTag(namespace, id) { return `mcg_v_${hashBase36(namesp
 export function textTag(namespace, id) { return `mcg_t_${hashBase36(namespace)}_${id}`; }
 export function actorTag(namespace, id) { return `mcg_a_${hashBase36(namespace)}_${id}`; }
 export function interactionTag(namespace, id) { return `mcg_i_${hashBase36(namespace)}_${id}`; }
+export function itemDisplayTag(namespace, id) { return `mcg_m_${hashBase36(namespace)}_${id}`; }
+export function placeablePendingTag(namespace, id) { return `mcg_pp_${hashBase36(namespace)}_${id}`; }
+export function placeableAnchorTag(namespace, id, index) { return `mcg_pa_${hashBase36(namespace)}_${id}_${slot(index)}`; }
 export function interactionControllerObjective(namespace, index) { return `mic${hashHex8(namespace)}${slot(index)}`; }
 export function fullInteractionControllerObjectiveBank(namespace) {
   const out = [];
@@ -106,6 +109,13 @@ export class CompileContext {
     [...(program.persistentGrids || [])].map(grid => grid.id).sort().forEach(id => registerPersistentGrid(`global:${id}`));
     this.playerStateObjectives = new Map();
     Object.keys(program.initialPlayerState || {}).sort().forEach((name, index) => this.playerStateObjectives.set(name, playerStateObjective(namespace, index)));
+    this.placeableSlots = new Map();
+    this.placeableStateSlots = new Map();
+    let placeableSlotIndex = 0;
+    [...(program.placeables || [])].sort((a, b) => a.id.localeCompare(b.id)).forEach(placeable => {
+      Object.keys(placeable.initialState || {}).sort().forEach((name, stateIndex) => this.placeableStateSlots.set(`${placeable.id}:${name}`, stateIndex));
+      for (let i = 0; i < placeable.maxInstances; i++) this.placeableSlots.set(`${placeable.id}:${i}`, placeableSlotIndex++);
+    });
     this.interactionControllerSlots = new Map();
     [...(program.interactions || [])].map(value => value.id).sort().forEach((id, index) => this.interactionControllerSlots.set(id, index));
     this.selectionObjectives = new Map();
@@ -167,6 +177,23 @@ export class CompileContext {
     return objective;
   }
   playerInputObjective(name) { return playerInputObjective(this.namespace, name); }
+  placeableSlot(id, slotValue) {
+    const index = this.placeableSlots.get(`${id}:${slotValue}`);
+    if (index === undefined) fail(`unknown placeable slot: ${id}[${slotValue}]`);
+    return index;
+  }
+  placeableActiveHolder(id, slotValue) { return `#pa${slot(this.placeableSlot(id, slotValue))}`; }
+  placeableAnchorHolder(id, slotValue, axis) {
+    const prefix = ({ x: "px", y: "py", z: "pz", orientation: "po" })[axis];
+    if (!prefix) fail(`unknown placeable anchor axis: ${axis}`);
+    return `#${prefix}${slot(this.placeableSlot(id, slotValue))}`;
+  }
+  placeableStateHolder(id, slotValue, name) {
+    const stateIndex = this.placeableStateSlots.get(`${id}:${name}`);
+    if (stateIndex === undefined) fail(`unknown placeable state holder: ${id}.${name}`);
+    return `#ps${slot(this.placeableSlot(id, slotValue))}${slot(stateIndex)}`;
+  }
+  placeableAnchorTag(id, slotValue) { return placeableAnchorTag(this.namespace, id, this.placeableSlot(id, slotValue)); }
   interactionControllerObjective(id) {
     const index = this.interactionControllerSlots.get(id);
     if (index === undefined) fail(`unknown interaction controller objective: ${id}`);
@@ -261,6 +288,7 @@ export class CompileContext {
   score(value) {
     switch (value.kind) {
       case "state": return { holder: stateHolder(value.name), objective: this.objective };
+      case "placeable_state": return { holder: this.placeableStateHolder(value.placeable, value.slot, value.name), objective: this.objective };
       case "persistent_state": return { holder: this.persistentStateHolder(value.name, value.session ?? null), objective: this.persistentObjective };
       case "session_state": return { holder: this.sessionStateHolder(value.session, value.name), objective: this.objective };
       case "input": return { holder: inputHolder(value.name), objective: this.objective };

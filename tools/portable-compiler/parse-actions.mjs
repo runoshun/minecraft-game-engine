@@ -5,6 +5,7 @@ import { parsePlayerSetRef, playerSetKey } from "./player-set.mjs";
 
 function childContext(ctx, playerScope) { return { ...ctx, playerScope }; }
 function sessionChildContext(ctx, sessionScope) { return { ...ctx, sessionScope }; }
+function placeableChildContext(ctx, id, slot) { return { ...ctx, placeableScope: { id, slot } }; }
 function currentSession(ctx, path) {
   const session = ctx.sessions?.get(ctx.sessionScope);
   if (!session) fail(`${path} references unknown active session ${ctx.sessionScope}`);
@@ -63,15 +64,60 @@ export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }
       out.push(op === "player_negate" ? { op, target } : { op, target, value: parseValue(requiredMember(a, "value", p), ctx, `${p}.value`) });
       continue;
     }
+    if (op === "placeable_tick") {
+      if (ctx.version < 25) fail(`${p}.op requires portable version 25`);
+      if (depth !== 0 || ctx.playerScope || ctx.sessionScope || ctx.placeableScope) fail(`${p}.op must be declared directly in the root tick action list`);
+      const placeable = requiredString(a, "placeable", p);
+      const declaration = ctx.placeables?.get(placeable);
+      if (!declaration) fail(`${p}.placeable references unknown placeable ${placeable}`);
+      const slot = boundedInteger(requiredMember(a, "slot", p), 0, declaration.maxInstances - 1, `${p}.slot`);
+      out.push({ op, placeable, slot, actions: parseActions(requiredArray(a, "actions", p), placeableChildContext(ctx, placeable, slot), `${p}.actions`, depth + 1, counter) });
+      continue;
+    }
+    if (["placeable_set", "placeable_add", "placeable_sub", "placeable_negate"].includes(op)) {
+      if (ctx.version < 25) fail(`${p}.op requires portable version 25`);
+      if (!ctx.placeableScope) fail(`${p}.op is only valid inside PlaceableInstanceContext`);
+      if (ctx.playerScope === "multi") fail(`${p} placeable state mutation is not allowed inside multi-player PlayerContext`);
+      const placeable = requiredString(a, "placeable", p);
+      const slot = boundedInteger(requiredMember(a, "slot", p), 0, 2147483647, `${p}.slot`);
+      if (ctx.placeableScope.id !== placeable || ctx.placeableScope.slot !== slot) fail(`${p}.op targets a different placeable slot`);
+      const declaration = ctx.placeables?.get(placeable);
+      const target = requiredString(a, "target", p);
+      if (!declaration?.states.has(target)) fail(`${p}.target references unknown placeable state ${placeable}.${target}`);
+      out.push(op === "placeable_negate" ? { op, placeable, slot, target } : { op, placeable, slot, target, value: parseValue(requiredMember(a, "value", p), ctx, `${p}.value`) });
+      continue;
+    }
+    if (op === "placeable_remove") {
+      if (ctx.version < 25) fail(`${p}.op requires portable version 25`);
+      if (!ctx.placeableScope) fail(`${p}.op is only valid inside PlaceableInstanceContext`);
+      if (ctx.playerScope === "multi") fail(`${p}.op is not allowed inside multi-player PlayerContext`);
+      const placeable = requiredString(a, "placeable", p);
+      const slot = boundedInteger(requiredMember(a, "slot", p), 0, 2147483647, `${p}.slot`);
+      if (ctx.placeableScope.id !== placeable || ctx.placeableScope.slot !== slot) fail(`${p}.op targets a different placeable slot`);
+      out.push({ op, placeable, slot });
+      continue;
+    }
+    if (op === "item_give") {
+      if (ctx.version < 25) fail(`${p}.op requires portable version 25`);
+      if (!ctx.playerScope || ctx.playerScope === "reduce") fail(`${p}.op is only valid inside mutable PlayerContext`);
+      const item = requiredString(a, "item", p);
+      if (!ctx.items?.has(item)) fail(`${p}.item references unknown item ${item}`);
+      const count = has(a, "count") ? boundedInteger(a.count, 1, 64, `${p}.count`) : 1;
+      out.push({ op, item, count });
+      continue;
+    }
     if (op === "interaction_use") {
       if (ctx.version < 23) fail(`${p}.op requires portable version 23`);
-      if (depth !== 0 || ctx.playerScope || ctx.sessionScope) fail(`${p}.op must be declared directly in the root tick action list`);
       const interaction = requiredString(a, "interaction", p);
       if (!ctx.interactions?.has(interaction)) fail(`${p}.interaction references unknown interaction ${interaction}`);
+      const mapped = ctx.interactionPlaceables?.get(interaction) ?? null;
+      const directPlaceable = depth === 1 && ctx.placeableScope && mapped && mapped.id === ctx.placeableScope.id && mapped.slot === ctx.placeableScope.slot;
+      if ((depth !== 0 && !directPlaceable) || ctx.playerScope || ctx.sessionScope) fail(`${p}.op must be declared directly in the root tick action list or matching placeable tick action list`);
       if (!counter.interactionUses) counter.interactionUses = new Set();
       if (counter.interactionUses.has(interaction)) fail(`${p} duplicate use handler for interaction ${interaction}`);
       counter.interactionUses.add(interaction);
-      const useCtx = { ...childContext(ctx, "single"), interactionUse: interaction };
+      const placeableScope = ctx.interactionPlaceables?.get(interaction) ?? null;
+      const useCtx = { ...childContext(ctx, "single"), interactionUse: interaction, placeableScope };
       out.push({ op, interaction, actions: parseActions(requiredArray(a, "actions", p), useCtx, `${p}.actions`, depth + 1, counter) });
       continue;
     }
@@ -85,10 +131,13 @@ export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }
     }
     if (op === "interaction_controller_player") {
       if (ctx.version < 24) fail(`${p}.op requires portable version 24`);
-      if (depth !== 0 || ctx.playerScope || ctx.sessionScope) fail(`${p}.op must be declared directly in the root tick action list`);
       const interaction = requiredString(a, "interaction", p);
       if (!ctx.interactions?.has(interaction)) fail(`${p}.interaction references unknown interaction ${interaction}`);
-      const controllerCtx = { ...childContext(ctx, "single"), interactionUse: null };
+      const mapped = ctx.interactionPlaceables?.get(interaction) ?? null;
+      const directPlaceable = depth === 1 && ctx.placeableScope && mapped && mapped.id === ctx.placeableScope.id && mapped.slot === ctx.placeableScope.slot;
+      if ((depth !== 0 && !directPlaceable) || ctx.playerScope || ctx.sessionScope) fail(`${p}.op must be declared directly in the root tick action list or matching placeable tick action list`);
+      const placeableScope = ctx.interactionPlaceables?.get(interaction) ?? null;
+      const controllerCtx = { ...childContext(ctx, "single"), interactionUse: null, placeableScope };
       out.push({ op, interaction, actions: parseActions(requiredArray(a, "actions", p), controllerCtx, `${p}.actions`, depth + 1, counter) });
       continue;
     }

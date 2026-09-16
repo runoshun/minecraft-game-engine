@@ -7,6 +7,7 @@ import { parsePlayerSetDeclarations } from "./player-set.mjs";
 import { parseSessions, sessionContextMap } from "./session.mjs";
 import { parseSelections } from "./parse-selection.mjs";
 import { parseForms } from "./parse-form.mjs";
+import { parseItems, parsePlaceables, placeableContextMap } from "./parse-placeable.mjs";
 
 function parsePersistentState(spec, version, fixedPoint, api) {
   if (!has(spec, "persistentState")) return {};
@@ -70,6 +71,9 @@ export function parseProgram(spec, api = "portable.define") {
   const version = has(spec, "version") ? boundedInteger(spec.version, 1, CURRENT_VERSION, `${api}.version`) : 1;
   const fixedPoint = has(spec, "fixedPoint") ? boundedInteger(spec.fixedPoint, 1, 1000000, `${api}.fixedPoint`) : 1000;
 
+  const items = parseItems(spec, version, api);
+  const placeables = parsePlaceables(spec, version, fixedPoint, items, api);
+
   const rawState = requiredObject(spec, "state", api), initialState = {};
   if (Object.keys(rawState).length > LIMITS.states) fail(`${api}.state exceeds max state count ${LIMITS.states}`);
   for (const name of sortedKeys(rawState)) {
@@ -103,8 +107,8 @@ export function parseProgram(spec, api = "portable.define") {
   const persistentGridCells = persistentGrids.reduce((sum, grid) => sum + grid.width * grid.height, 0) + sessions.reduce((sum, session) => sum + (session.persistentGrids || []).reduce((inner, grid) => inner + grid.width * grid.height, 0), 0);
   if (persistentGridCount > LIMITS.persistentGrids) fail(`${api} exceeds max persistent-grid count ${LIMITS.persistentGrids}`);
   if (persistentGridCells > LIMITS.persistentGridCellsTotal) fail(`${api} exceeds aggregate persistent-grid cell count ${LIMITS.persistentGridCellsTotal}`);
-  if (Object.keys(initialState).length === 0 && Object.keys(persistentState).length === 0 && Object.keys(initialPlayerState).length === 0 && grids.length === 0 && persistentGrids.length === 0 && sessions.length === 0 && selections.length === 0 && forms.length === 0) {
-    fail(`${api} must define at least one shared state, player-local state, grid, session, selection, or form`);
+  if (Object.keys(initialState).length === 0 && Object.keys(persistentState).length === 0 && Object.keys(initialPlayerState).length === 0 && grids.length === 0 && persistentGrids.length === 0 && sessions.length === 0 && selections.length === 0 && forms.length === 0 && placeables.length === 0) {
+    fail(`${api} must define at least one shared state, player-local state, grid, session, selection, form, or placeable`);
   }
 
   const initialInputs = {};
@@ -141,6 +145,8 @@ export function parseProgram(spec, api = "portable.define") {
     rngs: new Set(rngs.map(rng => rng.id)),
     selections: new Set(selections.map(selection => selection.id)),
     forms: new Set(forms.map(form => form.id)),
+    items: new Set(items.map(item => item.id)),
+    placeables: placeableContextMap(placeables), placeableScope: null,
     gridWorlds: new Set(),
     playerScope: false,
     interactionUse: null,
@@ -151,17 +157,19 @@ export function parseProgram(spec, api = "portable.define") {
     const raw = requiredObject(spec, "vanilla", api);
     vanilla = { ...vanilla, ...parseVanillaScene(raw, ctx, api), ...parseVanillaUi(raw, ctx, api) };
   }
+  if (placeables.length && !vanilla.ownership) fail(`${api}.placeables requires vanilla.ownership`);
   if (version >= 12 && Object.keys(vanilla.inputs).length) fail(`${api}.vanilla.inputs first_player_* bindings are v1-v11 compatibility only; use player.input.* in v12`);
   if (version >= 12 && vanilla.huds.length) fail(`${api}.vanilla.huds is single-controller v1-v11 presentation; use player.hud(...) in v12`);
   ctx.gridWorlds = new Set(vanilla.gridWorlds.map(value => value.id));
   ctx.interactions = new Set(vanilla.interactions.map(value => value.id));
+  ctx.interactionPlaceables = new Map(vanilla.interactions.filter(value => value.placeable).map(value => [value.id, { id: value.placeable.id, slot: value.placeable.slot }]));
   if (version >= 16) validateSessionGridWorldFootprints(grids, sessions, vanilla.gridWorlds, vanilla.ownership, api);
 
   const tickActions = parseActions(requiredArray(spec, "tick", api), ctx, `${api}.tick`);
   return {
-    version, fixedPoint, initialState, persistentState, initialPlayerState, initialInputs, playerInputs, playerTeams, sessions, grids, persistentGrids, rngs, selections, forms,
+    version, fixedPoint, initialState, persistentState, initialPlayerState, initialInputs, playerInputs, playerTeams, sessions, grids, persistentGrids, rngs, selections, forms, items, placeables,
     vanillaInputs: vanilla.inputs, projections: vanilla.projections, texts: vanilla.texts,
-    actors: vanilla.actors, interactions: vanilla.interactions, worldBatches: vanilla.worldBatches, gridWorlds: vanilla.gridWorlds, cameras: vanilla.cameras,
+    actors: vanilla.actors, interactions: vanilla.interactions, itemDisplays: vanilla.itemDisplays, worldBatches: vanilla.worldBatches, gridWorlds: vanilla.gridWorlds, cameras: vanilla.cameras,
     particles: vanilla.particles, sounds: vanilla.sounds, huds: vanilla.huds, playerHuds: vanilla.playerHuds,
     sidebars: vanilla.sidebars, ownership: vanilla.ownership, tickActions,
     collisionDivisor: Math.max(1, Math.floor((fixedPoint + 99) / 100)),

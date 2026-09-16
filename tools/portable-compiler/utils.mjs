@@ -48,11 +48,18 @@ export const LIMITS = Object.freeze({
   selectionOptions: 16,
   forms: 8,
   formOptions: 16,
+  items: 32,
+  placeableTypes: 8,
+  placeableInstancesPerType: 16,
+  placeableSlotsTotal: 32,
+  placeableStates: 16,
+  placeableStateCellsTotal: 256,
+  placeableChildrenTotal: 256,
   actions: 2048,
   depth: 16,
 });
 
-export const CURRENT_VERSION = 24;
+export const CURRENT_VERSION = 25;
 
 export function fail(message) { throw new Error(message); }
 export function has(object, member) { return Object.prototype.hasOwnProperty.call(object, member); }

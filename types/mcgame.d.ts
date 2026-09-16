@@ -653,7 +653,65 @@ type PortableV24Action =
   | { op: "interaction_use"; interaction: string; actions: PortableV24PlayerAction[] }
   | { op: "interaction_controller_player"; interaction: string; actions: PortableV21Action[] };
 type PortableProgramSpecV24 = Omit<PortableProgramSpecV23, "version" | "tick"> & { version: 24; tick: PortableV24Action[] };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14 | PortableProgramSpecV15 | PortableProgramSpecV16 | PortableProgramSpecV17 | PortableProgramSpecV18 | PortableProgramSpecV19 | PortableProgramSpecV20 | PortableProgramSpecV21 | PortableProgramSpecV22 | PortableProgramSpecV23 | PortableProgramSpecV24;
+type PortablePlaceableStateRefV25 = { placeableState: { placeable: string; slot: number; state: string } };
+type PortableV25Value = PortableV21Value | PortablePlaceableStateRefV25;
+type PortableItemTemplateV25 = {
+  id: string; name: string; maxStackSize?: number;
+  appearance:
+    | { kind: "head"; textureUrl: string }
+    | { kind: "model"; model: string };
+};
+type PortablePlaceableSpecV25 = {
+  id: string; item: string; maxInstances: number; orientation?: "cardinal"; state?: Record<string, number>;
+};
+type PortablePlaceableBindingV25 = { placeable: { id: string; slot: number } };
+type PortableVanillaBlockProjectionV25 = Omit<PortableVanillaBlockProjection, "x" | "y" | "z" | "when"> & PortablePlaceableBindingV25 & {
+  x: PortableV25Value; y: PortableV25Value; z: PortableV25Value; when?: PortableV25Comparison;
+};
+type PortableVanillaTextProjectionV25 = Omit<PortableVanillaTextProjection, "text" | "x" | "y" | "z" | "when"> & PortablePlaceableBindingV25 & {
+  text: string | Array<{ text: string } | { value: PortableV25Value }>;
+  x: PortableV25Value; y: PortableV25Value; z: PortableV25Value; when?: PortableV25Comparison;
+};
+type PortableVanillaInteractionV25 = Omit<PortableVanillaInteractionV23, "x" | "y" | "z" | "when"> & PortablePlaceableBindingV25 & {
+  x: PortableV25Value; y: PortableV25Value; z: PortableV25Value; when?: PortableV25Comparison;
+};
+type PortableVanillaItemDisplayV25 = PortablePlaceableBindingV25 & {
+  id: string; dimension?: string; item: string;
+  x: PortableV25Value; y: PortableV25Value; z: PortableV25Value;
+  scale?: number | { x: number; y: number; z: number };
+  translation?: { x: number; y: number; z: number };
+  when?: PortableV25Comparison;
+};
+type PortableV25Comparison = { op: "eq" | "ne" | "lt" | "lte" | "gt" | "gte"; left: PortableV25Value; right: PortableV25Value };
+type PortableV25PlayerAction =
+  | PortableV24PlayerAction
+  | { op: "item_give"; item: string; count?: number }
+  | { op: "placeable_set" | "placeable_add" | "placeable_sub"; placeable: string; slot: number; target: string; value: PortableV25Value }
+  | { op: "placeable_negate"; placeable: string; slot: number; target: string }
+  | { op: "placeable_remove"; placeable: string; slot: number }
+  | { op: "if"; condition: PortableV25Comparison; then: PortableV25PlayerAction[]; else?: PortableV25PlayerAction[] };
+type PortableV25Action =
+  | PortableV24Action
+  | { op: "item_give"; item: string; count?: number }
+  | { op: "placeable_set" | "placeable_add" | "placeable_sub"; placeable: string; slot: number; target: string; value: PortableV25Value }
+  | { op: "placeable_negate"; placeable: string; slot: number; target: string }
+  | { op: "placeable_remove"; placeable: string; slot: number }
+  | { op: "placeable_tick"; placeable: string; slot: number; actions: PortableV25Action[] }
+  | { op: "interaction_use"; interaction: string; actions: PortableV25PlayerAction[] }
+  | { op: "interaction_controller_player"; interaction: string; actions: PortableV25PlayerAction[] };
+type PortableProgramSpecV25 = Omit<PortableProgramSpecV24, "version" | "tick" | "vanilla"> & {
+  version: 25;
+  items: PortableItemTemplateV25[];
+  placeables: PortablePlaceableSpecV25[];
+  tick: PortableV25Action[];
+  vanilla?: Omit<NonNullable<PortableProgramSpecV23["vanilla"]>, "projections" | "texts" | "interactions"> & {
+    projections?: Array<PortableVanillaBlockProjection | PortableVanillaBlockProjectionV25>;
+    texts?: Array<PortableVanillaTextProjection | PortableVanillaTextProjectionV25>;
+    interactions?: Array<PortableVanillaInteractionV23 | PortableVanillaInteractionV25>;
+    itemDisplays?: PortableVanillaItemDisplayV25[];
+  };
+};
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14 | PortableProgramSpecV15 | PortableProgramSpecV16 | PortableProgramSpecV17 | PortableProgramSpecV18 | PortableProgramSpecV19 | PortableProgramSpecV20 | PortableProgramSpecV21 | PortableProgramSpecV22 | PortableProgramSpecV23 | PortableProgramSpecV24 | PortableProgramSpecV25;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -729,7 +787,8 @@ type PortableDslForm = { readonly __portableDslForm?: never };
 type PortableDslPlayerForm = PortableDslComparable & { open(): void; clear(): void };
 type PortableDslGridWorldReady = PortableDslComparable & { readonly name: string };
 type PortableDslSharedValue = number | PortableDslState | PortableDslPersistentState | PortableDslInput | PortableDslGridWorldReady;
-type PortableDslValue = PortableDslSharedValue | PortableDslSessionState | PortableDslSessionPersistentState | PortableDslPlayerState | PortableDslPlayerInput | PortableDslPlayerSelection | PortableDslPlayerForm;
+type PortableDslPlaceableState = PortableDslComparable & { readonly name: string; set(value: PortableDslValue): void; add(value: PortableDslValue): void; sub(value: PortableDslValue): void; negate(): void };
+type PortableDslValue = PortableDslSharedValue | PortableDslSessionState | PortableDslSessionPersistentState | PortableDslPlayerState | PortableDslPlayerInput | PortableDslPlayerSelection | PortableDslPlayerForm | PortableDslPlaceableState;
 type PortableDslCondition = { readonly __portableDslCondition?: never };
 type PortableDslCoordinate = number | PortableDslState | { readonly __portableDslCoordinate?: never };
 type PortableDslInputBinding = { source: PortableVanillaInputSource };
@@ -839,6 +898,46 @@ type PortableDslActorSpec = {
   equipment?: PortableVanillaActorEquipmentV22;
   when?: PortableDslCondition;
 };
+type PortableDslItemAppearance =
+  | { kind: "head"; textureUrl: string }
+  | { kind: "model"; model: string };
+type PortableDslItem = {
+  readonly id: string;
+  give(player: PortableDslInteractionPlayerContext | PortableDslPlayerContext, count?: number): void;
+};
+type PortableDslItemSpec = { name: string; appearance: PortableDslItemAppearance; maxStackSize?: number };
+type PortableDslPlaceableLocalValue = number | PortableDslPlaceableState;
+type PortableDslPlaceableBlockSpec = Omit<PortableDslBlockSpec, "x" | "y" | "z"> & { x: PortableDslPlaceableLocalValue; y: PortableDslPlaceableLocalValue; z: PortableDslPlaceableLocalValue };
+type PortableDslPlaceableTextSpec = Omit<PortableDslTextSpec, "text" | "x" | "y" | "z"> & {
+  text: string | Array<string | PortableDslPlaceableState>;
+  x: PortableDslPlaceableLocalValue; y: PortableDslPlaceableLocalValue; z: PortableDslPlaceableLocalValue;
+};
+type PortableDslPlaceableInteractionSpec = Omit<PortableDslInteractionSpec, "x" | "y" | "z"> & {
+  x: PortableDslPlaceableLocalValue; y: PortableDslPlaceableLocalValue; z: PortableDslPlaceableLocalValue;
+};
+type PortableDslPlaceableItemDisplaySpec = {
+  dimension?: string; item: PortableDslItem;
+  x: PortableDslPlaceableLocalValue; y: PortableDslPlaceableLocalValue; z: PortableDslPlaceableLocalValue;
+  scale?: number | { x: number; y: number; z: number };
+  translation?: { x: number; y: number; z: number };
+  when?: PortableDslCondition;
+};
+type PortableDslPlaceableContext = {
+  state(name: string, initial: number): PortableDslPlaceableState;
+  block(id: string, spec: PortableDslPlaceableBlockSpec): void;
+  text(id: string, spec: PortableDslPlaceableTextSpec): void;
+  interaction(id: string, spec: PortableDslPlaceableInteractionSpec): PortableDslInteraction;
+  itemDisplay(id: string, spec: PortableDslPlaceableItemDisplaySpec): void;
+  circle(id: string, spec: PortableDslCircleSpec): PortableDslCircle;
+  segment(id: string, spec: PortableDslSegmentSpec): PortableDslSegment;
+  capsule(id: string, spec: PortableDslCapsuleSpec): PortableDslCapsule;
+  trigger(id: string, spec: PortableDslBoxSpec): PortableDslTrigger;
+  flipper(id: string, spec: PortableDslFlipperSpec): PortableDslFlipper;
+  tick(callback: () => void): void;
+  remove(): void;
+  pickUp(player: PortableDslInteractionPlayerContext | PortableDslPlayerContext): void;
+};
+type PortableDslPlaceableSpec = { item: PortableDslItem; maxInstances: number; orientation?: "cardinal" };
 type PortableDslInteractionSpec = {
   dimension?: string;
   x: PortableDslCoordinate;
@@ -980,6 +1079,8 @@ type PortableDsl = {
   persistentGrid(id: string, spec: PortableDslPersistentGridSpec): PortableDslPersistentGrid;
   rng(id: string, spec: { seed: number }): PortableDslRng;
   gridWorld(id: string, spec: PortableDslGridWorldSpec): PortableDslGridWorld;
+  item(id: string, spec: PortableDslItemSpec): PortableDslItem;
+  placeable(id: string, spec: PortableDslPlaceableSpec, template: (instance: PortableDslPlaceableContext) => void): void;
   tick(callback: () => void): void;
   repeat<T>(count: number, callback: (index: number) => T): readonly T[];
   when(condition: PortableDslCondition, thenCallback: () => void, elseCallback?: () => void): void;

@@ -1,5 +1,5 @@
 import { LIMITS, fail, has, isObject, requiredArray, requiredMember, requiredObject, requiredString, memberString, memberNumber, memberBoolean, boundedInteger, memberResource, portableId, sortedKeys } from "./utils.mjs";
-import { parseCondition, parseCoordinate, parseTokens } from "./parse-value.mjs";
+import { parseCondition, parseCoordinate, parseTokens, parseValue } from "./parse-value.mjs";
 import { parseVec3 } from "./parse-shapes.mjs";
 import { parseGridWorlds } from "./parse-runtime.mjs";
 
@@ -14,7 +14,41 @@ function uniqueIds(values, path) {
 }
 
 export function parseVanillaScene(vanilla, ctx, api) {
-  const out = { inputs: {}, projections: [], texts: [], actors: [], interactions: [], worldBatches: [], gridWorlds: [] };
+  const out = { inputs: {}, projections: [], texts: [], actors: [], interactions: [], itemDisplays: [], worldBatches: [], gridWorlds: [] };
+  let placeableChildren = 0;
+  function binding(value, path) {
+    if (!has(value, "placeable")) return null;
+    if (ctx.version < 25) fail(`${path}.placeable requires portable version 25`);
+    const raw = requiredObject(value, "placeable", path);
+    const id = requiredString(raw, "id", `${path}.placeable`);
+    const declaration = ctx.placeables?.get(id);
+    if (!declaration) fail(`${path}.placeable references unknown placeable ${id}`);
+    const slot = boundedInteger(requiredMember(raw, "slot", `${path}.placeable`), 0, declaration.maxInstances - 1, `${path}.placeable.slot`);
+    return { id, slot, ctx: { ...ctx, placeableScope: { id, slot } } };
+  }
+  function child(bindingValue, path) {
+    if (!bindingValue) return;
+    placeableChildren++;
+    if (placeableChildren > LIMITS.placeableChildrenTotal) fail(`${api}.vanilla placeable children exceed aggregate count ${LIMITS.placeableChildrenTotal}`);
+  }
+  function positions(value, path, bindingValue) {
+    if (!bindingValue) return {
+      x: parseCoordinate(requiredMember(value, "x", path), ctx, `${path}.x`),
+      y: parseCoordinate(requiredMember(value, "y", path), ctx, `${path}.y`),
+      z: parseCoordinate(requiredMember(value, "z", path), ctx, `${path}.z`),
+      placeable: null,
+    };
+    const scope = bindingValue.ctx;
+    return {
+      x: null, y: null, z: null,
+      placeable: {
+        id: bindingValue.id, slot: bindingValue.slot,
+        x: parseValue(requiredMember(value, "x", path), scope, `${path}.x`),
+        y: parseValue(requiredMember(value, "y", path), scope, `${path}.y`),
+        z: parseValue(requiredMember(value, "z", path), scope, `${path}.z`),
+      },
+    };
+  }
   if (has(vanilla, "inputs")) {
     const bindings = requiredObject(vanilla, "inputs", `${api}.vanilla`);
     const allowed = ["first_player_hotbar_slot", "first_player_forward", "first_player_backward", "first_player_left", "first_player_right", "first_player_jump", "first_player_sneak", "first_player_sprint"];
@@ -30,29 +64,31 @@ export function parseVanillaScene(vanilla, ctx, api) {
   }
   if (has(vanilla, "projections")) {
     const values = requiredArray(vanilla, "projections", `${api}.vanilla`);
-    if (values.length > LIMITS.projections) fail(`${api}.vanilla.projections exceeds max projection count ${LIMITS.projections}`);
+    const regularCount = values.filter(value => !isObject(value) || !has(value, "placeable")).length;
+    if (regularCount > LIMITS.projections) fail(`${api}.vanilla.projections exceeds max non-placeable projection count ${LIMITS.projections}`);
     uniqueIds(values, `${api}.vanilla.projections`);
     out.projections = values.map((v, i) => {
-      const p = `${api}.vanilla.projections[${i}]`;
-      const result = { id: v.id, dimension: memberResource(v, "dimension", "minecraft:overworld", p), block: memberResource(v, "block", null, p), x: parseCoordinate(requiredMember(v, "x", p), ctx, `${p}.x`), y: parseCoordinate(requiredMember(v, "y", p), ctx, `${p}.y`), z: parseCoordinate(requiredMember(v, "z", p), ctx, `${p}.z`), scale: parseVec3(v, "scale", { x: 1, y: 1, z: 1 }, p, true), translation: parseVec3(v, "translation", { x: 0, y: 0, z: 0 }, p, false), condition: null };
-      if (has(v, "when")) { if (ctx.version < 5) fail(`${p}.when requires portable version 5`); result.condition = parseCondition(requiredObject(v, "when", p), ctx, `${p}.when`); }
+      const p = `${api}.vanilla.projections[${i}]`, b = binding(v, p), pos = positions(v, p, b); child(b, p);
+      const result = { id: v.id, dimension: memberResource(v, "dimension", "minecraft:overworld", p), block: memberResource(v, "block", null, p), ...pos, scale: parseVec3(v, "scale", { x: 1, y: 1, z: 1 }, p, true), translation: parseVec3(v, "translation", { x: 0, y: 0, z: 0 }, p, false), condition: null };
+      if (has(v, "when")) { if (ctx.version < 5) fail(`${p}.when requires portable version 5`); result.condition = parseCondition(requiredObject(v, "when", p), b ? b.ctx : ctx, `${p}.when`); }
       return result;
     });
   }
   if (has(vanilla, "texts")) {
     if (ctx.version < 4) fail(`${api}.vanilla.texts requires portable version 4`);
     const values = requiredArray(vanilla, "texts", `${api}.vanilla`);
-    if (values.length > LIMITS.texts) fail(`${api}.vanilla.texts exceeds max text count ${LIMITS.texts}`);
+    const regularCount = values.filter(value => !isObject(value) || !has(value, "placeable")).length;
+    if (regularCount > LIMITS.texts) fail(`${api}.vanilla.texts exceeds max non-placeable text count ${LIMITS.texts}`);
     uniqueIds(values, `${api}.vanilla.texts`);
     out.texts = values.map((v, i) => {
-      const p = `${api}.vanilla.texts[${i}]`;
+      const p = `${api}.vanilla.texts[${i}]`, b = binding(v, p), pos = positions(v, p, b); child(b, p);
       let tokens;
       if (typeof v.text === "string") { if (v.text.length > 256) fail(`${p}.text exceeds 256 characters`); tokens = [{ kind: "literal", text: v.text }]; }
-      else { if (ctx.version < 7) fail(`${p}.text token arrays require portable version 7`); tokens = parseTokens(requiredMember(v, "text", p), ctx, `${p}.text`); }
+      else { if (ctx.version < 7) fail(`${p}.text token arrays require portable version 7`); tokens = parseTokens(requiredMember(v, "text", p), b ? b.ctx : ctx, `${p}.text`); }
       const billboard = memberString(v, "billboard", "center", p);
       if (!["fixed", "vertical", "horizontal", "center"].includes(billboard)) fail(`${p}.billboard must be fixed, vertical, horizontal, or center`);
-      const result = { id: v.id, dimension: memberResource(v, "dimension", "minecraft:overworld", p), tokens, x: parseCoordinate(requiredMember(v, "x", p), ctx, `${p}.x`), y: parseCoordinate(requiredMember(v, "y", p), ctx, `${p}.y`), z: parseCoordinate(requiredMember(v, "z", p), ctx, `${p}.z`), scale: parseVec3(v, "scale", { x: 1, y: 1, z: 1 }, p, true), billboard, condition: null };
-      if (has(v, "when")) { if (ctx.version < 5) fail(`${p}.when requires portable version 5`); result.condition = parseCondition(requiredObject(v, "when", p), ctx, `${p}.when`); }
+      const result = { id: v.id, dimension: memberResource(v, "dimension", "minecraft:overworld", p), tokens, ...pos, scale: parseVec3(v, "scale", { x: 1, y: 1, z: 1 }, p, true), billboard, condition: null };
+      if (has(v, "when")) { if (ctx.version < 5) fail(`${p}.when requires portable version 5`); result.condition = parseCondition(requiredObject(v, "when", p), b ? b.ctx : ctx, `${p}.when`); }
       return result;
     });
   }
@@ -100,16 +136,39 @@ export function parseVanillaScene(vanilla, ctx, api) {
       const width = memberNumber(v, "width", 1, p), height = memberNumber(v, "height", 1, p);
       if (width < 0.01 || width > 64) fail(`${p}.width must be between 0.01 and 64`);
       if (height < 0.01 || height > 64) fail(`${p}.height must be between 0.01 and 64`);
+      const b = binding(v, p), pos = positions(v, p, b); child(b, p);
       return {
         id: v.id,
         dimension: memberResource(v, "dimension", "minecraft:overworld", p),
-        x: parseCoordinate(requiredMember(v, "x", p), ctx, `${p}.x`),
-        y: parseCoordinate(requiredMember(v, "y", p), ctx, `${p}.y`),
-        z: parseCoordinate(requiredMember(v, "z", p), ctx, `${p}.z`),
+        ...pos,
         width, height,
         response: memberBoolean(v, "response", true, p),
-        condition: has(v, "when") ? parseCondition(requiredObject(v, "when", p), ctx, `${p}.when`) : null,
+        condition: has(v, "when") ? parseCondition(requiredObject(v, "when", p), b ? b.ctx : ctx, `${p}.when`) : null,
       };
+    });
+  }
+  if (has(vanilla, "itemDisplays")) {
+    if (ctx.version < 25) fail(`${api}.vanilla.itemDisplays requires portable version 25`);
+    const values = requiredArray(vanilla, "itemDisplays", `${api}.vanilla`);
+    uniqueIds(values, `${api}.vanilla.itemDisplays`);
+    out.itemDisplays = values.map((v, i) => {
+      const p = `${api}.vanilla.itemDisplays[${i}]`;
+      if (!isObject(v)) fail(`${p} must be an object`);
+      const b = binding(v, p);
+      if (!b) fail(`${p}.placeable is required`);
+      child(b, p);
+      const pos = positions(v, p, b);
+      const item = requiredString(v, "item", p);
+      if (!ctx.items?.has(item)) fail(`${p}.item references unknown item ${item}`);
+      const result = {
+        id: v.id, dimension: memberResource(v, "dimension", "minecraft:overworld", p), item, ...pos,
+        scale: parseVec3(v, "scale", { x: 1, y: 1, z: 1 }, p, true),
+        translation: parseVec3(v, "translation", { x: 0, y: 0, z: 0 }, p, false),
+        condition: null,
+      };
+      if (result.scale.x <= 0 || result.scale.y <= 0 || result.scale.z <= 0) fail(`${p}.scale components must be > 0`);
+      if (has(v, "when")) result.condition = parseCondition(requiredObject(v, "when", p), b.ctx, `${p}.when`);
+      return result;
     });
   }
   if (has(vanilla, "worldBatches")) {

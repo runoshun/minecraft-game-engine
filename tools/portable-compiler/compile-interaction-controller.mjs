@@ -15,6 +15,16 @@ export function interactionControllerIds(program) {
   return [...ids].sort();
 }
 
+export function compileControllerAdvance(interaction, lines, ctx, assignCurrentPlayer = false) {
+  const generation = ctx.interactionControllerGenerationHolder(interaction);
+  const objective = ctx.interactionControllerObjective(interaction);
+  lines.push(`execute if score ${generation} ${ctx.objective} matches 2147483647 run scoreboard objectives remove ${objective}`);
+  lines.push(`execute if score ${generation} ${ctx.objective} matches 2147483647 run scoreboard objectives add ${objective} dummy`);
+  lines.push(`execute if score ${generation} ${ctx.objective} matches 2147483647 run scoreboard players set ${generation} ${ctx.objective} 0`);
+  lines.push(`scoreboard players add ${generation} ${ctx.objective} 1`);
+  if (assignCurrentPlayer) lines.push(`scoreboard players operation @s ${objective} = ${generation} ${ctx.objective}`);
+}
+
 export function compileInteractionControllerLoad(program, lines, ctx) {
   if (program.version < 24) return;
   const ids = interactionControllerIds(program);
