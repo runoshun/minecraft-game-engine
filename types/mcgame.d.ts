@@ -120,6 +120,7 @@ type PortableVanillaCameraV11 = PortableVanillaCamera & { mode?: "position_lock"
 type PortableVanillaCameraV12 = PortableVanillaCameraV11 & { audience?: "all_online" };
 type PortablePlayerSetRefV14 = "all_online" | { team: string };
 type PortableVanillaCameraV14 = PortableVanillaCameraV11 & { audience?: PortablePlayerSetRefV14 };
+type PortableVanillaCameraV26 = Omit<PortableVanillaCameraV14, "audience"> & { audience?: PortablePlayerSetRefV14 | { interactionController: string } };
 type PortableVanillaParticleEmitter = {
   id: string;
   dimension?: string;
@@ -711,7 +712,22 @@ type PortableProgramSpecV25 = Omit<PortableProgramSpecV24, "version" | "tick" | 
     itemDisplays?: PortableVanillaItemDisplayV25[];
   };
 };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14 | PortableProgramSpecV15 | PortableProgramSpecV16 | PortableProgramSpecV17 | PortableProgramSpecV18 | PortableProgramSpecV19 | PortableProgramSpecV20 | PortableProgramSpecV21 | PortableProgramSpecV22 | PortableProgramSpecV23 | PortableProgramSpecV24 | PortableProgramSpecV25;
+type PortableV26PlayerAction =
+  | Exclude<PortableV25PlayerAction, { op: "if" }>
+  | { op: "interaction_controller_return"; interaction: string }
+  | { op: "if"; condition: PortableV25Comparison; then: PortableV26PlayerAction[]; else?: PortableV26PlayerAction[] };
+type PortableV26Action =
+  | Exclude<PortableV25Action, { op: "interaction_controller_player" } | { op: "placeable_tick" }>
+  | { op: "interaction_controller_player"; interaction: string; actions: PortableV26PlayerAction[] }
+  | { op: "placeable_tick"; placeable: string; slot: number; actions: PortableV26Action[] };
+type PortableProgramSpecV26 = Omit<PortableProgramSpecV25, "version" | "items" | "placeables" | "tick" | "vanilla"> & {
+  version: 26;
+  items?: PortableItemTemplateV25[];
+  placeables?: PortablePlaceableSpecV25[];
+  tick: PortableV26Action[];
+  vanilla?: Omit<NonNullable<PortableProgramSpecV25["vanilla"]>, "cameras"> & { cameras?: PortableVanillaCameraV26[] };
+};
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14 | PortableProgramSpecV15 | PortableProgramSpecV16 | PortableProgramSpecV17 | PortableProgramSpecV18 | PortableProgramSpecV19 | PortableProgramSpecV20 | PortableProgramSpecV21 | PortableProgramSpecV22 | PortableProgramSpecV23 | PortableProgramSpecV24 | PortableProgramSpecV25 | PortableProgramSpecV26;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -881,7 +897,7 @@ type PortableDslCameraSpec = {
   yaw?: number;
   pitch?: number;
   mode?: "position_lock" | "spectate";
-  audience?: PortableDslPlayerSet;
+  audience?: PortableDslPlayerSet | PortableDslInteractionController;
 };
 type PortableDslActorSpec = {
   dimension?: string;
@@ -1024,6 +1040,7 @@ type PortableDslPlayerContext = {
 type PortableDslInteractionPlayerContext = Omit<PortableDslPlayerContext, "hud">;
 type PortableDslInteractionController = {
   claim(player: PortableDslInteractionPlayerContext): void;
+  returnToInteraction(player: PortableDslInteractionPlayerContext): void;
   forPlayer(callback: (player: PortableDslInteractionPlayerContext) => void): void;
 };
 type PortableDslInteraction = {

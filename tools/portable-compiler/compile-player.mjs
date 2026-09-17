@@ -34,7 +34,11 @@ export function participantPlayerSets(program) {
   if (program.version < 14) return ["all_online"];
   const found = new Map();
   collectActionPlayerSets(program.tickActions, found);
-  for (const camera of program.cameras) if (camera.audience) found.set(playerSetKey(camera.audience), camera.audience);
+  for (const camera of program.cameras) {
+    if (camera.audience && !(typeof camera.audience === "object" && camera.audience.interactionController !== undefined)) {
+      found.set(playerSetKey(camera.audience), camera.audience);
+    }
+  }
   for (const hud of program.playerHuds) found.set(playerSetKey(hud.audience), hud.audience);
   if (found.has("all_online")) return ["all_online"];
   return [...found.values()].sort((a, b) => playerSetKey(a).localeCompare(playerSetKey(b)));

@@ -28,7 +28,7 @@ The compiler accepts one entry TypeScript source, namespace, and output director
 
 Portable IR is the versioned semantic contract between authoring and vanilla lowering. It contains deterministic fixed-point values, bounded actions, collision primitives, declarative presentation/world resources, input mappings, and lifecycle metadata. Arbitrary JavaScript callbacks are not an IR feature.
 
-IR versions 1 through 25 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14, ADR 0024 defines team-bound logical sessions in v15, ADR 0025 defines session-local GridWorld projection in v16, ADR 0027 defines bounded player/session reductions in v17, ADR 0028 defines bounded persistent scalar state in v18, ADR 0029 defines bounded persistent Grid state in v19, ADR 0030 defines bounded native-dialog selection UI in v20, ADR 0031 defines bounded rich/typed native-dialog UI in v21, ADR 0032 defines bounded expanded mannequin actor presentation in v22, ADR 0034 defines bounded world right-click interaction input in v23, ADR 0035 defines active-instance interaction controller binding in v24, and ADR 0036 defines bounded item-backed placeable objects in v25.
+IR versions 1 through 26 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14, ADR 0024 defines team-bound logical sessions in v15, ADR 0025 defines session-local GridWorld projection in v16, ADR 0027 defines bounded player/session reductions in v17, ADR 0028 defines bounded persistent scalar state in v18, ADR 0029 defines bounded persistent Grid state in v19, ADR 0030 defines bounded native-dialog selection UI in v20, ADR 0031 defines bounded rich/typed native-dialog UI in v21, ADR 0032 defines bounded expanded mannequin actor presentation in v22, ADR 0034 defines bounded world right-click interaction input in v23, ADR 0035 defines active-instance interaction controller binding in v24, ADR 0036 defines bounded item-backed placeable objects in v25, and ADR 0037 defines interaction-controller camera audiences and bounded return in v26.
 
 ### Generated datapack
 
@@ -110,7 +110,7 @@ The compiler supports bounded declarative:
 - particle and sound emitters with optional conditions;
 - one actionbar HUD;
 - one global vanilla scoreboard sidebar with 1..15 rows;
-- one camera carrier.
+- one camera carrier; v26 additionally permits one `position_lock` camera to target an interaction controller token instead of a static PlayerSet.
 
 Player-private world scenes and independent per-player sidebars are not v11 features.
 
@@ -123,6 +123,8 @@ Player-private world scenes and independent per-player sidebars are not v11 feat
 v10 default `position_lock` owns one invisible armor-stand carrier and teleports the selected non-spectator controller to it each tick. It does not change player gamemode or create persistent controller tags.
 
 v11 `mode: "spectate"` instead selects the first player already in Spectator and issues `spectate` against the same owned carrier. Entering/leaving Spectator remains external session lifecycle. Cleanup does not change gamemode.
+
+V12-v14 extend shared camera selection to static PlayerSet audiences. V26 additionally permits exactly one `position_lock` camera whose audience is an `InteractionController`. Its generated lock runs only for the online non-Spectator player whose controller-objective token equals that interaction's current generation. This reuses v24 identity state rather than adding names, UUIDs, player tags, or generic identity values. Controller-backed `spectate`, multiple controller cameras, and arbitration between dynamic camera owners are not part of v26.
 
 ## Generated lifecycle
 
@@ -325,6 +327,16 @@ The accepted bounds are 32 ItemTemplates, 8 PlaceableTypes, 1..16 slots per type
 
 V25 placeables are deliberately active-instance state. Pickup/removal frees and resets a slot; `/reload` clears every pending/active placeable entity, slot state, and controller token; `portable/cleanup` removes the full v25-owned scoreboard/entity/force-load footprint. Persistence of placed furniture, native block collision/mining/redstone/fluids/pistons, free-angle placement, generic runtime collections, and 3D/swept collision remain separate capabilities.
 
+## Interaction-controller camera routing v26
+
+ADR 0037 closes the cabinet-to-remote-game camera gap without introducing generic player identity. A camera may use an `InteractionController` handle as its audience. The v26 IR records `{ interactionController: id }`; lowering selects the same exact online player as `controller.forPlayer(...)` by comparing that player's compiler-private controller score with the interaction generation holder. No player name, UUID, persistent tag, or author-visible selector is created.
+
+Controller-backed cameras are deliberately bounded to one camera declaration and `position_lock` mode. Static PlayerSet cameras keep their v14 rules when no controller-backed camera exists. This avoids implicit precedence when one player has multiple controller tokens and avoids datapack-owned gamemode transitions for `spectate`.
+
+Inside the matching `controller.forPlayer(player => ...)`, `controller.returnToInteraction(player)` teleports the exact controller to the source interaction entity when it exists and then advances the controller generation without assigning the replacement token. Authored actions run before camera locking, so that same tick's camera test no longer matches and cannot recapture the player. If the source interaction has already disappeared, teleport is skipped but generation still advances, making release deterministic. Placeable child interactions inherit this behavior and therefore return to their current placed cabinet.
+
+V26 adds no new lifecycle bank: controller-camera selection and return reuse v24 controller objectives/generations, v10+ camera carriers, and v25 slot invalidation. `/reload` and cleanup continue to reset controller state and owned camera/interaction entities.
+
 ## Planned capability roadmap after v16
 
 ADR 0026 establishes a capability-first roadmap: prioritize portable semantics that current game source cannot reproduce safely with existing primitives before automation or infrastructure that already has a workable explicit fallback. This is planning policy, not an implemented API contract; each capability requires its own ADR and Portable IR version decision before implementation.
@@ -340,18 +352,18 @@ ADR 0032 completes item 4 by extending rather than replacing the v7 lifecycle: a
 
 Automatic arena allocation, per-session ownership/dynamic chunk leasing, dynamic matchmaking, session-local presentation declarations, and per-player vanilla sidebars remain useful but lower priority because current prototypes have explicit workarounds. Bounded local TypeScript module/import authoring is implemented by ADR 0033 without changing Portable IR. Bounded world-object right-click input is implemented by Portable v23 / ADR 0034 without opening a generic Minecraft query/event API, and v24 / ADR 0035 adds active-instance exact-player controller binding for those interactions without introducing generic identity queries. Client-private scene visibility is still a genuine missing isolation feature, but spatially separate footprints are sufficient for current acceptance games, so privacy work is also behind the four capability priorities unless a retained game makes it a blocker.
 
-ADR 0036 now completes the bounded item-backed placeable-object capability in Portable v25, including an item-placeable pinball-cabinet reference game. Additional capability gaps include persistent placed furniture, native block semantics, standalone/general custom items, 3D/swept collision, deliberately scoped Minecraft world/entity queries, pathfinding/topology helpers, and generic runtime collections where existing Grid/fixed-slot patterns prove insufficient.
+ADR 0036 completes the bounded item-backed placeable-object capability in Portable v25. ADR 0037 / Portable v26 then separates the checked-in pinball cabinet from its remote game board by routing the exact active interaction controller to one remote position-lock camera and providing bounded return to the source interaction. Additional capability gaps include persistent placed furniture, native block semantics, standalone/general custom items, multiple/dynamic controller-camera arbitration, per-player camera coordinates, 3D/swept collision, deliberately scoped Minecraft world/entity queries, pathfinding/topology helpers, and generic runtime collections where existing Grid/fixed-slot patterns prove insufficient.
 
 ## Current limitations
 
 - TypeScript modules are local build-time composition only: at most 64 `.ts` files / 1,000,000 aggregate source bytes under the entry directory; Node built-ins, npm/bare packages, non-TypeScript assets, dynamic import, authored `require`, and circular imports are unsupported;
 - v1-v11 remain single-controller-oriented for compatibility; v12 is the multiplayer model;
 - fixed-point arithmetic relies on Minecraft scoreboard 32-bit behavior; generated commands do not add generic overflow guards;
-- no runtime generic arrays/collections, arbitrary packet-event dispatch, arbitrary inventory/form/dialog API, arbitrary NBT/storage API, or arbitrary Minecraft queries; v21 provides bounded static rich native-dialog content, v22 provides bounded static mannequin profile/pose/equipment presentation, v23 provides bounded right-click/use events through compiler-owned interaction entities, v24 provides active-instance interaction-controller binding, and v25 provides bounded compiler-known item appearances plus active-instance placeable slots; free-form text input, generic multi-field/dynamic forms, arbitrary click/attack events or commands, inventory GUI ownership, generic entity mutation, standalone/general custom-item behavior, persistent controller identity across reload, persistent placed objects, native custom block semantics, generic player identity values, and runtime entity collections remain unsupported;
+- no runtime generic arrays/collections, arbitrary packet-event dispatch, arbitrary inventory/form/dialog API, arbitrary NBT/storage API, or arbitrary Minecraft queries; v21 provides bounded static rich native-dialog content, v22 provides bounded static mannequin profile/pose/equipment presentation, v23 provides bounded right-click/use events through compiler-owned interaction entities, v24 provides active-instance interaction-controller binding, v25 provides bounded compiler-known item appearances plus active-instance placeable slots, and v26 permits one position-lock camera to use an interaction controller as its exact dynamic audience plus bounded return to the source interaction; free-form text input, generic multi-field/dynamic forms, arbitrary click/attack events or commands, inventory GUI ownership, generic entity mutation, standalone/general custom-item behavior, persistent controller identity across reload, persistent placed objects, native custom block semantics, generic player identity values, and runtime entity collections remain unsupported;
 - one server-global sidebar; v14 permits up to eight camera declarations only for disjoint external-team audiences;
 - bounded 2D logic collision only, not Minecraft hitbox queries or 3D/swept physics;
 - v8 world projection is compile-time declared and persistent; v13 additionally provides bounded incremental runtime grid projection, also persistent;
-- v15 adds independent team-bound logical sessions; v16 adds explicit session-local Grid-to-world footprints inside one shared ownership rectangle; v17 adds bounded cross-player/session reductions; v18 adds persistent scalars, v19 adds persistent Grids, v20 adds player-local native-dialog selection, v21 adds bounded rich/typed native-dialog UI, v22 expands bounded mannequin actor presentation, v23 adds bounded compiler-owned world interaction/right-click input, v24 adds reload-scoped exact-player controller binding to those interactions, and v25 adds bounded item-backed placeable object slots with local presentation/state. Automatic arena allocation, per-session ownership/private visibility scenes, dynamic matchmaking, independent per-player vanilla sidebars, player/offline persistent state, persistent controller identity, persistent placed furniture, richer generic persistent collections, free-form/multi-field forms, and inventory UI are not implemented.
+- v15 adds independent team-bound logical sessions; v16 adds explicit session-local Grid-to-world footprints inside one shared ownership rectangle; v17 adds bounded cross-player/session reductions; v18 adds persistent scalars, v19 adds persistent Grids, v20 adds player-local native-dialog selection, v21 adds bounded rich/typed native-dialog UI, v22 expands bounded mannequin actor presentation, v23 adds bounded compiler-owned world interaction/right-click input, v24 adds reload-scoped exact-player controller binding to those interactions, v25 adds bounded item-backed placeable object slots with local presentation/state, and v26 adds exact controller-to-camera routing plus return. Automatic arena allocation, per-session ownership/private visibility scenes, dynamic matchmaking, independent per-player vanilla sidebars, player/offline persistent state, persistent controller identity, persistent placed furniture, richer generic persistent collections, free-form/multi-field forms, and inventory UI are not implemented.
 
 ## Validation baseline
 
@@ -361,7 +373,7 @@ ADR 0033 adds compiler-frontend module composition without changing Portable IR 
 
 Because this feature changes only build-time source loading, Minecraft runtime acceptance is inherited from the unchanged generated datapack semantics; compiler regression and byte-parity validation are the acceptance evidence.
 
-Portable v1-v25 compiler behavior is covered by the Node regression suite; generated milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
+Portable v1-v26 compiler behavior is covered by the Node regression suite; generated milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
 
 Node migration ADR 0021 additionally established byte-for-byte output parity with the retired Java compiler for representative v1, v9, v10, and v11 programs including Bounce, Pinball, Breakout, Presentation, UI, World, JRPG, and spectate-camera cases. Node compiler regression tests are now the maintained build-time acceptance suite.
 
@@ -374,6 +386,14 @@ The two cabinets maintained independent slot state and controller objectives. Ca
 Sneak-use pickup returned the item, freed the slot, removed its interaction, and advanced the controller generation. Reallocation advanced generation again while the player's old token remained stale; real Space before reclaim did not mutate the new instance. Both full-capacity and outside-ownership placement returned one matching refund stack and left no pending Marker/active slot. `/reload` reset all slots/generations and removed player controller scores/entities. Final cleanup left zero objectives, owned/pending entities, and force-loads; temporary floors and the acceptance pack were removed, leaving only vanilla enabled.
 
 The Node suite is 59/59 green. All 20 retained v1-v24 example outputs are byte-for-byte identical to parent compiler commit `37b4b70`.
+
+### v26 interaction-controller camera validation
+
+Portable v26 passed focused mod-free Minecraft 26.1 acceptance on `second` with real clients `Camera` and `Camera2` using the updated checked-in `examples/portable-pinball-cabinet`. A real Survival placement created the approximately block-sized cabinet at `[732.5,65,731.5]` with its child interaction at `[732.5,65.65,731.98]`, while the shared remote pinball presentation remained around `[770,104,770]`.
+
+A real cabinet use advanced controller generation `1 -> 2`, gave token `2` only to Camera, and routed Camera to the remote carrier `[770,104,778]`; Camera2 had no controller token and remained outside that camera audience. Camera2 `Space+A` left `launched=0` / `ballY=-1850`, while Camera Space launched the ball and advanced live ball/score state. Real Sneak returned Camera to the cabinet, advanced generation `2 -> 3`, and left Camera's old token stale so the later camera-lock phase did not recapture it. A second use advanced `3 -> 4` and re-entered the remote camera.
+
+Reload during an active claim reset generation to `0`, removed the player's controller score, reset the placeable active slot, and removed its child interaction/anchor. Cleanup then left zero generated objectives, owned entities, and force-loads; pack/terrain/item teardown restored `second` to vanilla-only enabled datapacks. The Node suite is 63/63 green, and all 21 retained pre-v26 example sources from `5a4b98b` compile byte-for-byte identically with the v26 and parent v25 compilers.
 
 ### v24 interaction controller validation
 

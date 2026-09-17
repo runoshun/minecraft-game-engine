@@ -115,6 +115,14 @@ export function compileActions(actions, lines, ctx) {
       case "interaction_controller_claim":
         compileControllerAdvance(action.interaction, lines, ctx, true);
         break;
+      case "interaction_controller_return": {
+        const interaction = ctx.program.interactions.find(value => value.id === action.interaction);
+        if (!interaction) fail(`unknown interaction controller return target: ${action.interaction}`);
+        const selector = `@e[type=minecraft:interaction,tag=${interactionTag(ctx.namespace, interaction.id)},limit=1]`;
+        lines.push(`execute in ${interaction.dimension} if entity ${selector} run teleport @s ${selector}`);
+        compileControllerAdvance(action.interaction, lines, ctx, false);
+        break;
+      }
       case "interaction_controller_player": {
         const fn = ctx.nextPlayerFunctionName(), body = [];
         compileActions(action.actions, body, ctx);

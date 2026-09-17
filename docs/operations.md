@@ -388,7 +388,7 @@ Controller state is not persistent. For ordinary v24-to-v24 changes, `/reload` i
 
 ## Item-backed placeable objects v25 acceptance
 
-ADR 0036 defines Portable v25 bounded item-backed placeable objects. Use `examples/portable-pinball-cabinet` on mod-free Minecraft 26.1 `second` with real clients for placement/input checks. V25 uses ordinary functions/entities/scoreboards and does not add a registry resource, so install/replacement can use the normal `/reload` path. A custom `appearance.kind: "model"` can depend on an external resource pack, but the checked-in acceptance example uses `appearance.kind: "head"` and needs no resource pack or client mod.
+ADR 0036 defines Portable v25 bounded item-backed placeable objects. Its accepted reference run used the pre-v26 `examples/portable-pinball-cabinet` source from commit `5a4b98b`; the current checked-in cabinet has moved to Portable v26 and is covered by the v26 section below. V25 uses ordinary functions/entities/scoreboards and does not add a registry resource, so install/replacement can use the normal `/reload` path. A custom `appearance.kind: "model"` can depend on an external resource pack, but the checked-in acceptance example uses `appearance.kind: "head"` and needs no resource pack or client mod.
 
 Compile and package the reference pack with:
 
@@ -403,7 +403,7 @@ tar -C build/portable/portable_pinball_cabinet \
 sha256sum build/portable_pinball_cabinet.tar.gz
 ```
 
-Deploy through the normal devcontainer `publish_file` -> `mc-mcp.write_datapack_files` path. Keep a real client online while interpreting placement/tick behavior. Validate the generated marker reports `portable_version=25`, item appearance/placeable slot metadata, and controller mappings for controller-enabled child interactions.
+For historical v25 reproduction, compile the `5a4b98b` source and deploy through the normal devcontainer `publish_file` -> `mc-mcp.write_datapack_files` path. Keep a real client online while interpreting placement/tick behavior. Validate that generated marker reports `portable_version=25`, item appearance/placeable slot metadata, and controller mappings for controller-enabled child interactions.
 
 Acceptance must verify all of the following through generated behavior rather than by editing scoreboard state as a substitute for the player path:
 
@@ -425,3 +425,25 @@ The final Node suite was 59/59 green, and all 20 retained v1-v24 examples matche
 V25 placeables are active-instance state. Do not rely on a placed cabinet surviving `/reload`, same-namespace replacement, or server-side pack reinstallation. Persistent placed furniture requires a separate design. Also remember that rejection refunds are dropped item entities; acceptance queries should be executed `at` the attempted placement/player position rather than from the RCON command origin.
 
 Before removing or replacing a v25 pack, run its installed `portable/cleanup` while it is still enabled. Clear or restore any temporary test terrain separately; as with other ownership programs, cleanup owns generated runtime resources, not arbitrary test blocks. Player inventory items granted during acceptance are test state and should also be cleared explicitly during teardown.
+
+
+## Interaction-controller camera v26 acceptance
+
+ADR 0037 defines Portable v26 controller-backed camera routing and bounded return. The checked-in `examples/portable-pinball-cabinet` now uses a roughly block-sized placed cabinet as the interaction surface and a separate fixed remote playfield inside the same ownership rectangle. Using the cabinet claims its child interaction controller; one `position_lock` camera targets that controller handle. Sneak while controlling calls `returnToInteraction(player)`, returns to the cabinet interaction, and invalidates the token. No gamemode transition or client mod is involved.
+
+Compile and package with the same pinball-cabinet command above. The generated marker must report `portable_version=26`; the controller objective/generation mapping remains present because the v26 camera audience reuses v24 controller state.
+
+Focused acceptance on mod-free Minecraft 26.1 `second` should verify:
+
+- place one cabinet in Survival and inspect that its visible footprint remains approximately one block wide/deep rather than embedding the full pinball board;
+- keep the remote playfield spatially separate from the cabinet;
+- use the cabinet with real client `Camera` and verify only `Camera` is teleported/held at the remote `pinball_view` carrier while `Camera2` remains unaffected;
+- real A/D and Space from the controller mutate the pinball state, while equivalent input from the unrelated client does not;
+- real Sneak returns `Camera` to the cabinet interaction and advances the controller generation so the subsequent camera-lock phase does not recapture it;
+- use the cabinet again and verify a fresh generation can enter the remote view again;
+- `/reload` clears controller tokens/placeable active state under the existing v24/v25 lifecycle;
+- final cleanup removes generated objectives, owned entities, and ownership force-loads.
+
+Unlike v25's earlier two-independent-cabinet acceptance, the current reference game intentionally uses one placeable cabinet and one shared remote pinball arena. V26 currently permits only one controller-backed camera, so simultaneous independent remote boards/cameras remain outside this reference and API contract.
+
+The accepted 2026-09-17 run placed the cabinet at `[732.5,65,731.5]` and created its child interaction at `[732.5,65.65,731.98]`. Camera's real use advanced controller generation `1 -> 2`, assigned only Camera token `2`, and routed it to remote carrier `[770,104,778]`; Camera2 had no token. Camera2 `Space+A` left `launched=0` / `ballY=-1850`, while Camera Space launched the ball and advanced game state. Camera Sneak returned to the cabinet and advanced generation `2 -> 3` without camera recapture; a second use advanced `3 -> 4` and re-entered the remote view. `/reload` reset generation/token/slot/children, cleanup left zero objectives/entities/force-loads, and teardown restored vanilla-only enabled datapacks. Node regression finished 63/63 green, with byte-for-byte parity for all 21 pre-v26 example sources against parent commit `5a4b98b`.

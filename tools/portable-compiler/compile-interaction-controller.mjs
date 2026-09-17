@@ -2,7 +2,7 @@ import { fullInteractionControllerObjectiveBank } from "./compile-context.mjs";
 
 function collect(actions, out) {
   for (const action of actions) {
-    if (action.op === "interaction_controller_claim" || action.op === "interaction_controller_player") out.add(action.interaction);
+    if (action.op === "interaction_controller_claim" || action.op === "interaction_controller_player" || action.op === "interaction_controller_return") out.add(action.interaction);
     if (Array.isArray(action.actions)) collect(action.actions, out);
     if (Array.isArray(action.then)) collect(action.then, out);
     if (Array.isArray(action.else)) collect(action.else, out);
@@ -12,6 +12,9 @@ function collect(actions, out) {
 export function interactionControllerIds(program) {
   const ids = new Set();
   collect(program.tickActions, ids);
+  for (const camera of program.cameras || []) {
+    if (camera.audience && typeof camera.audience === "object" && camera.audience.interactionController !== undefined) ids.add(camera.audience.interactionController);
+  }
   return [...ids].sort();
 }
 

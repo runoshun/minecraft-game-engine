@@ -149,20 +149,21 @@ export function parseProgram(spec, api = "portable.define") {
     placeables: placeableContextMap(placeables), placeableScope: null,
     gridWorlds: new Set(),
     playerScope: false,
-    interactionUse: null,
+    interactionUse: null, interactionController: null,
   };
   let vanilla = { inputs: {}, projections: [], texts: [], actors: [], interactions: [], worldBatches: [], gridWorlds: [], cameras: [], particles: [], sounds: [], huds: [], playerHuds: [], sidebars: [], ownership: null };
   if (has(spec, "vanilla")) {
     if (version < 2) fail(`${api}.vanilla requires portable version 2`);
     const raw = requiredObject(spec, "vanilla", api);
-    vanilla = { ...vanilla, ...parseVanillaScene(raw, ctx, api), ...parseVanillaUi(raw, ctx, api) };
+    const scene = parseVanillaScene(raw, ctx, api);
+    ctx.interactions = new Set(scene.interactions.map(value => value.id));
+    ctx.interactionPlaceables = new Map(scene.interactions.filter(value => value.placeable).map(value => [value.id, { id: value.placeable.id, slot: value.placeable.slot }]));
+    vanilla = { ...vanilla, ...scene, ...parseVanillaUi(raw, ctx, api) };
   }
   if (placeables.length && !vanilla.ownership) fail(`${api}.placeables requires vanilla.ownership`);
   if (version >= 12 && Object.keys(vanilla.inputs).length) fail(`${api}.vanilla.inputs first_player_* bindings are v1-v11 compatibility only; use player.input.* in v12`);
   if (version >= 12 && vanilla.huds.length) fail(`${api}.vanilla.huds is single-controller v1-v11 presentation; use player.hud(...) in v12`);
   ctx.gridWorlds = new Set(vanilla.gridWorlds.map(value => value.id));
-  ctx.interactions = new Set(vanilla.interactions.map(value => value.id));
-  ctx.interactionPlaceables = new Map(vanilla.interactions.filter(value => value.placeable).map(value => [value.id, { id: value.placeable.id, slot: value.placeable.slot }]));
   if (version >= 16) validateSessionGridWorldFootprints(grids, sessions, vanilla.gridWorlds, vanilla.ownership, api);
 
   const tickActions = parseActions(requiredArray(spec, "tick", api), ctx, `${api}.tick`);

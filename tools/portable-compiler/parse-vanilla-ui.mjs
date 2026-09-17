@@ -1,4 +1,4 @@
-import { LIMITS, fail, has, requiredArray, requiredMember, requiredObject, requiredString, memberString, memberNumber, memberBoolean, memberBoundedInt, boundedInteger, memberResource, portableId, floorDiv } from "./utils.mjs";
+import { LIMITS, PORTABLE_ID, fail, has, isObject, requiredArray, requiredMember, requiredObject, requiredString, memberString, memberNumber, memberBoolean, memberBoundedInt, boundedInteger, memberResource, portableId, floorDiv } from "./utils.mjs";
 import { parseCondition, parseCoordinate, parseTokens } from "./parse-value.mjs";
 import { parseVec3 } from "./parse-shapes.mjs";
 import { parsePlayerSetRef, playerSetKey, validateDisjointAudiences } from "./player-set.mjs";
@@ -28,11 +28,23 @@ export function parseVanillaUi(vanilla, ctx, api) {
       let audience = null;
       if (has(v, "audience")) {
         if (ctx.version < 12) fail(`${p}.audience requires portable version 12`);
-        audience = parsePlayerSetRef(requiredMember(v, "audience", p), ctx, `${p}.audience`);
+        const rawAudience = requiredMember(v, "audience", p);
+        if (isObject(rawAudience) && has(rawAudience, "interactionController")) {
+          if (ctx.version < 26) fail(`${p}.audience interactionController requires portable version 26`);
+          for (const key of Object.keys(rawAudience)) if (key !== "interactionController") fail(`${p}.audience.${key} is not supported`);
+          const interactionController = requiredString(rawAudience, "interactionController", `${p}.audience`);
+          if (!PORTABLE_ID.test(interactionController)) fail(`${p}.audience.interactionController must match ${PORTABLE_ID.source}`);
+          if (!ctx.interactions?.has(interactionController)) fail(`${p}.audience references unknown interaction controller ${interactionController}`);
+          audience = { interactionController };
+        } else audience = parsePlayerSetRef(rawAudience, ctx, `${p}.audience`);
       } else if (ctx.version >= 12) audience = "all_online";
       return { id: v.id, dimension: memberResource(v, "dimension", "minecraft:overworld", p), x: parseCoordinate(requiredMember(v, "x", p), ctx, `${p}.x`), y: parseCoordinate(requiredMember(v, "y", p), ctx, `${p}.y`), z: parseCoordinate(requiredMember(v, "z", p), ctx, `${p}.z`), yaw: memberNumber(v, "yaw", 0, p), pitch, mode, audience };
     });
-    validateDisjointAudiences(out.cameras, `${api}.vanilla.cameras`);
+    const controllerCameras = out.cameras.filter(camera => isObject(camera.audience) && has(camera.audience, "interactionController"));
+    if (controllerCameras.length > 0) {
+      if (out.cameras.length !== 1) fail(`${api}.vanilla.cameras controller-audience camera must be the only camera declaration`);
+      if (controllerCameras[0].mode === "spectate") fail(`${api}.vanilla.cameras controller-audience camera supports position_lock only`);
+    } else validateDisjointAudiences(out.cameras, `${api}.vanilla.cameras`);
   }
   if (has(vanilla, "particles")) {
     if (ctx.version < 3) fail(`${api}.vanilla.particles requires portable version 3`);

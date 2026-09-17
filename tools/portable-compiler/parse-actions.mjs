@@ -129,6 +129,14 @@ export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }
       out.push({ op, interaction });
       continue;
     }
+    if (op === "interaction_controller_return") {
+      if (ctx.version < 26) fail(`${p}.op requires portable version 26`);
+      const interaction = requiredString(a, "interaction", p);
+      if (!ctx.interactions?.has(interaction)) fail(`${p}.interaction references unknown interaction ${interaction}`);
+      if (ctx.playerScope !== "single" || ctx.interactionController !== interaction) fail(`${p}.op is only valid inside the matching interaction_controller_player callback`);
+      out.push({ op, interaction });
+      continue;
+    }
     if (op === "interaction_controller_player") {
       if (ctx.version < 24) fail(`${p}.op requires portable version 24`);
       const interaction = requiredString(a, "interaction", p);
@@ -137,7 +145,7 @@ export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }
       const directPlaceable = depth === 1 && ctx.placeableScope && mapped && mapped.id === ctx.placeableScope.id && mapped.slot === ctx.placeableScope.slot;
       if ((depth !== 0 && !directPlaceable) || ctx.playerScope || ctx.sessionScope) fail(`${p}.op must be declared directly in the root tick action list or matching placeable tick action list`);
       const placeableScope = ctx.interactionPlaceables?.get(interaction) ?? null;
-      const controllerCtx = { ...childContext(ctx, "single"), interactionUse: null, placeableScope };
+      const controllerCtx = { ...childContext(ctx, "single"), interactionUse: null, interactionController: interaction, placeableScope };
       out.push({ op, interaction, actions: parseActions(requiredArray(a, "actions", p), controllerCtx, `${p}.actions`, depth + 1, counter) });
       continue;
     }

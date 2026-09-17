@@ -18,6 +18,7 @@
   const SELECTION = Symbol("mcgame.portableDsl.selection");
   const FORM = Symbol("mcgame.portableDsl.form");
   const INTERACTION = Symbol("mcgame.portableDsl.interaction");
+  const INTERACTION_CONTROLLER = Symbol("mcgame.portableDsl.interactionController");
   const ITEM = Symbol("mcgame.portableDsl.item");
   const PLACEABLE_SCOPE = Symbol("mcgame.portableDsl.placeableScope");
 
@@ -136,6 +137,7 @@
     let activePlayerMode = null;
     let playerRootSink = null;
     let activeInteractionUseId = null;
+    let activeInteractionControllerId = null;
     let activePlaceableScope = null;
     let placeableTickRootSink = null;
     let nextPlayerScope = 0;
@@ -157,6 +159,7 @@
     let usesV23 = false;
     let usesV24 = false;
     let usesV25 = false;
+    let usesV26 = false;
 
     function assertUnique(name) {
       if (Object.prototype.hasOwnProperty.call(stateValues, name) || Object.prototype.hasOwnProperty.call(persistentStateValues, name) || Object.prototype.hasOwnProperty.call(inputValues, name)) {
@@ -539,6 +542,17 @@
         if (seen.has(key)) fail(label + " duplicate audience " + key);
         seen.add(key);
       }
+    }
+
+    function cameraAudience(value, label) {
+      if (value && value[INTERACTION_CONTROLLER] === true && typeof value.interaction === "string") {
+        usesV26 = true;
+        usesV24 = true;
+        usesPlayerApi = true;
+        return { interactionController: value.interaction };
+      }
+      usesPlayerApi = true;
+      return requirePlayerSet(value, label);
     }
 
     function makePlayerState(name, initial, scope) {
@@ -1582,11 +1596,19 @@
       }
 
       const controller = Object.freeze({
+        [INTERACTION_CONTROLLER]: true,
+        interaction: id,
         claim(player) {
           if (activeInteractionUseId !== id || activePlayerScope === null) fail("interaction " + id + ".controller.claim(...) is only valid inside this interaction's onUse callback");
           if (!player || player[PLAYER_CONTEXT] !== activePlayerScope) fail("interaction " + id + ".controller.claim(...) requires the current onUse player");
           usesV24 = true;
           emit({ op: "interaction_controller_claim", interaction: id });
+        },
+        returnToInteraction(player) {
+          if (activeInteractionControllerId !== id || activePlayerScope === null) fail("interaction " + id + ".controller.returnToInteraction(...) is only valid inside this controller's forPlayer callback");
+          if (!player || player[PLAYER_CONTEXT] !== activePlayerScope) fail("interaction " + id + ".controller.returnToInteraction(...) requires the current controller player");
+          usesV26 = true; usesV24 = true;
+          emit({ op: "interaction_controller_return", interaction: id });
         },
         forPlayer(callback) {
           if (actionSink === null) fail("interaction " + id + ".controller.forPlayer(...) is only valid inside tick(...)");
@@ -1610,11 +1632,11 @@
             form(value) { return playerFormRef(scope, value); },
             hud() { fail("player.hud(...) is not supported inside interaction controller context; HUD audiences must be statically declared"); },
           });
-          const previousSink = actionSink, previousScope = activePlayerScope, previousMode = activePlayerMode, previousRoot = playerRootSink;
+          const previousSink = actionSink, previousScope = activePlayerScope, previousMode = activePlayerMode, previousRoot = playerRootSink, previousController = activeInteractionControllerId;
           const captured = [];
-          actionSink = captured; activePlayerScope = scope; activePlayerMode = "single"; playerRootSink = captured;
+          actionSink = captured; activePlayerScope = scope; activePlayerMode = "single"; playerRootSink = captured; activeInteractionControllerId = id;
           try { callback(player); } finally {
-            actionSink = previousSink; activePlayerScope = previousScope; activePlayerMode = previousMode; playerRootSink = previousRoot;
+            actionSink = previousSink; activePlayerScope = previousScope; activePlayerMode = previousMode; playerRootSink = previousRoot; activeInteractionControllerId = previousController;
           }
           emit({ op: "interaction_controller_player", interaction: id, actions: captured });
         },
@@ -1745,7 +1767,7 @@
         pitch: finiteNumber(spec.pitch === undefined ? 0 : spec.pitch, "camera " + id + " pitch"),
       };
       if (mode === "spectate") camera.mode = mode;
-      if (spec.audience !== undefined) { camera.audience = requirePlayerSet(spec.audience, "camera " + id + " audience"); usesPlayerApi = true; }
+      if (spec.audience !== undefined) camera.audience = cameraAudience(spec.audience, "camera " + id + " audience");
       cameras.push(camera);
     }
 
@@ -1901,7 +1923,11 @@
       if (Object.keys(inputValues).length > 0 || Object.keys(vanillaInputs).length > 0) fail("game.input(...) is v1-v11 compatibility only; use player.input.* in multiplayer v12");
       if (huds.length > 0) fail("game.hud(...) is single-controller v1-v11 presentation; use player.hud(...) in multiplayer v12");
       for (const camera of cameras) if (camera.audience === undefined) camera.audience = "all_online";
-      validateDisjointPlayerAudiences(cameras, "camera");
+      const controllerCameras = cameras.filter(camera => camera.audience && camera.audience.interactionController !== undefined);
+      if (controllerCameras.length > 0) {
+        if (cameras.length !== 1) fail("controller-audience camera must be the only camera declaration");
+        if (controllerCameras[0].mode === "spectate") fail("controller-audience camera supports position_lock only");
+      } else validateDisjointPlayerAudiences(cameras, "camera");
       validateDisjointPlayerAudiences(playerHuds, "player.hud");
       const playerHudValues = playerHuds.reduce((total, hud) => total + hud.tokens.filter(token => token.value !== undefined).length, 0);
       if (playerHudValues > 32) fail("player.hud(...) declarations exceed total numeric HUD value count 32");
@@ -1909,7 +1935,7 @@
 
     const usesSpectateCamera = cameras.some(camera => camera.mode === "spectate");
     const spec = {
-      version: usesV25 ? 25 : usesV24 ? 24 : usesV23 ? 23 : usesV22 ? 22 : usesV21 ? 21 : usesV20 ? 20 : usesV19 ? 19 : usesV18 ? 18 : usesV17 ? 17 : usesV16 ? 16 : usesV15 ? 15 : usesV14 ? 14 : usesV13 ? 13 : usesPlayerApi ? 12 : usesSpectateCamera ? 11 : ownership === null ? 9 : 10,
+      version: usesV26 ? 26 : usesV25 ? 25 : usesV24 ? 24 : usesV23 ? 23 : usesV22 ? 22 : usesV21 ? 21 : usesV20 ? 20 : usesV19 ? 19 : usesV18 ? 18 : usesV17 ? 17 : usesV16 ? 16 : usesV15 ? 15 : usesV14 ? 14 : usesV13 ? 13 : usesPlayerApi ? 12 : usesSpectateCamera ? 11 : ownership === null ? 9 : 10,
       fixedPoint,
       state: stateValues,
       tick: tickActions,

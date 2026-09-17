@@ -490,6 +490,13 @@ export function compileVanillaCameraLock(program, lines, ctx) {
   if (!program.cameras.length) return;
   for (const camera of program.cameras) {
     const tag = cameraTag(ctx.namespace, camera.id);
+    if (camera.audience && typeof camera.audience === "object" && camera.audience.interactionController !== undefined) {
+      const interaction = camera.audience.interactionController;
+      const objective = ctx.interactionControllerObjective(interaction);
+      const generation = ctx.interactionControllerGenerationHolder(interaction);
+      lines.push(`execute as @a[gamemode=!spectator] if score @s ${objective} = ${generation} ${ctx.objective} in ${camera.dimension} if entity @e[type=minecraft:armor_stand,tag=${tag},limit=1] run teleport @s @e[type=minecraft:armor_stand,tag=${tag},limit=1]`);
+      continue;
+    }
     const selector = program.version >= 12
       ? playerSetSelector(camera.audience ?? "all_online", [camera.mode === "spectate" ? "gamemode=spectator" : "gamemode=!spectator"])
       : controllerSelector(program);
