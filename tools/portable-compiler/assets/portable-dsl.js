@@ -259,7 +259,7 @@
     }
 
     function emit(action) {
-      if (actionSink == null) fail("state mutations and when(...) are only valid inside tick(...)");
+      if (actionSink == null) fail("portable actions are only valid inside tick(...)");
       if (activePlayerMode === "reduce") fail("reduction selector callback is read-only");
       actionSink.push(action);
     }
@@ -351,6 +351,75 @@
       };
       if (elseCallback !== undefined) action.else = captureActions(elseCallback, "when else");
       emit(action);
+    }
+
+    function conditionList(conditions, label) {
+      if (!Array.isArray(conditions) || conditions.length < 1 || conditions.length > 16) {
+        fail(label + " conditions must contain 1..16 entries");
+      }
+      return conditions.map((condition, index) => serializedCondition(condition, label + " condition " + index));
+    }
+
+    function whenAll(conditions, thenCallback, elseCallback) {
+      const tests = conditionList(conditions, "whenAll");
+      const thenActions = captureActions(thenCallback, "whenAll then");
+      const elseActions = elseCallback === undefined ? null : captureActions(elseCallback, "whenAll else");
+      let branch = thenActions;
+      for (let index = tests.length - 1; index >= 0; index--) {
+        const action = { op: "if", condition: tests[index], then: branch };
+        if (elseActions !== null) action.else = elseActions;
+        branch = [action];
+      }
+      emit(branch[0]);
+    }
+
+    function whenAny(conditions, thenCallback, elseCallback) {
+      const tests = conditionList(conditions, "whenAny");
+      const thenActions = captureActions(thenCallback, "whenAny then");
+      let branch = elseCallback === undefined ? null : captureActions(elseCallback, "whenAny else");
+      for (let index = tests.length - 1; index >= 0; index--) {
+        const action = { op: "if", condition: tests[index], then: thenActions };
+        if (branch !== null) action.else = branch;
+        branch = [action];
+      }
+      emit(branch[0]);
+    }
+
+    function unless(condition, thenCallback, elseCallback) {
+      const action = {
+        op: "if",
+        condition: serializedCondition(condition, "unless condition"),
+        then: elseCallback === undefined ? [] : captureActions(elseCallback, "unless else"),
+        else: captureActions(thenCallback, "unless then"),
+      };
+      emit(action);
+    }
+
+    function choose(cases, otherwiseCallback) {
+      if (!Array.isArray(cases) || cases.length < 1 || cases.length > 16) fail("choose cases must contain 1..16 entries");
+      const normalized = cases.map((entry, index) => {
+        if (entry == null || typeof entry !== "object" || Array.isArray(entry)) fail("choose case " + index + " must be an object");
+        return {
+          condition: serializedCondition(entry.when, "choose case " + index + " when"),
+          actions: captureActions(entry.then, "choose case " + index + " then"),
+        };
+      });
+      let branch = otherwiseCallback === undefined ? null : captureActions(otherwiseCallback, "choose otherwise");
+      for (let index = normalized.length - 1; index >= 0; index--) {
+        const action = { op: "if", condition: normalized[index].condition, then: normalized[index].actions };
+        if (branch !== null) action.else = branch;
+        branch = [action];
+      }
+      emit(branch[0]);
+    }
+
+    function match(value, cases, otherwiseCallback) {
+      if (!Array.isArray(cases) || cases.length < 1 || cases.length > 16) fail("match cases must contain 1..16 entries");
+      const choices = cases.map((entry, index) => {
+        if (!Array.isArray(entry) || entry.length !== 2) fail("match case " + index + " must be [value, callback]");
+        return { when: comparison("eq", value, entry[0]), then: entry[1] };
+      });
+      choose(choices, otherwiseCallback);
     }
 
     function tick(callback) {
@@ -1885,6 +1954,11 @@
       tick,
       repeat,
       when,
+      whenAll,
+      whenAny,
+      unless,
+      choose,
+      match,
       whenColliding,
       whenTriggered,
       at,

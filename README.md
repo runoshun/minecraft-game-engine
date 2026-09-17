@@ -16,7 +16,7 @@ Current capabilities include fixed-point state, held input and hotbar input, sta
 
 Post-v16 roadmap policy is recorded in ADR 0026. Bounded reductions are complete in v17; bounded global/session scalar persistence is complete in v18, bounded persistent Grid state in v19, interactive selection UI in v20, bounded rich/typed native-dialog UI in v21, mannequin/actor presentation expansion in v22, bounded world-object right-click input in v23, active-instance interaction controller binding in v24, bounded item/placeable objects in v25, and controller-backed camera routing in v26. The four ordered capability priorities are complete; arena allocation and related session infrastructure remain lower priority while explicit-coordinate/team-based workarounds are sufficient.
 
-The compiler frontend also supports bounded static relative imports between local `.ts` files under the entry source directory (ADR 0033); this is authoring-time composition and does not consume a Portable IR version.
+The compiler frontend also supports bounded static relative imports between local `.ts` files under the entry source directory (ADR 0033) and bounded conditional authoring sugar (`whenAll`, `whenAny`, `unless`, first-match `choose`, and equality `match`; ADR 0038). These are authoring-time transformations to existing Portable IR and do not consume a new IR version.
 
 ## Requirements
 
@@ -85,6 +85,7 @@ portableDsl({ fixedPoint: 1000 }, game => {
 - `examples/portable-interaction` — v23 compiler-owned interaction hitbox and real-player right-click acceptance example.
 - `examples/portable-interaction-controller` — v24 click-to-claim active-instance controller binding, reconnect, replacement, reload, and cleanup acceptance example.
 - `examples/portable-pinball-cabinet` — v26 block-sized placeable cabinet that claims one controller, routes it to a separate remote pinball camera/playfield, and returns on Sneak.
+- `examples/portable-othello` — v23 two-player 8x8 Othello/Reversi reference using direct cell interactions, player-local seats, Grid/GridWorld board state, bounded directional flips, automatic pass detection, and ADR 0038 condition sugar.
 
 Legacy host-runtime-only examples were removed when the Java/Fabric runtime was retired. Examples in the repository must compile through the current Node portable compiler.
 

@@ -35,6 +35,17 @@ function branchFunction(actions, ctx) {
   return name;
 }
 
+function exclusiveIfFunction(test, thenActions, elseActions, ctx) {
+  const thenFn = branchFunction(thenActions, ctx);
+  const elseFn = branchFunction(elseActions, ctx);
+  const name = ctx.nextBranchFunctionName();
+  ctx.functions.set(name, [
+    `execute ${condition(test, true, ctx)} run return run function ${ctx.namespace}:portable/${thenFn}`,
+    `return run function ${ctx.namespace}:portable/${elseFn}`,
+  ]);
+  return name;
+}
+
 export function compileActions(actions, lines, ctx) {
   for (const action of actions) {
     if (compileSelectionAction(action, lines, ctx)) continue;
@@ -186,6 +197,11 @@ export function compileActions(actions, lines, ctx) {
         break;
       }
       case "if": {
+        if (action.then.length && action.else.length) {
+          const fn = exclusiveIfFunction(action.condition, action.then, action.else, ctx);
+          lines.push(`function ${ctx.namespace}:portable/${fn}`);
+          break;
+        }
         if (action.then.length) {
           const fn = branchFunction(action.then, ctx);
           lines.push(`execute ${condition(action.condition, true, ctx)} run function ${ctx.namespace}:portable/${fn}`);

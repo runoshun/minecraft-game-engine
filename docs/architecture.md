@@ -26,7 +26,7 @@ The compiler accepts one entry TypeScript source, namespace, and output director
 
 ### Portable IR
 
-Portable IR is the versioned semantic contract between authoring and vanilla lowering. It contains deterministic fixed-point values, bounded actions, collision primitives, declarative presentation/world resources, input mappings, and lifecycle metadata. Arbitrary JavaScript callbacks are not an IR feature.
+Portable IR is the versioned semantic contract between authoring and vanilla lowering. It contains deterministic fixed-point values, bounded actions, collision primitives, declarative presentation/world resources, input mappings, and lifecycle metadata. Arbitrary JavaScript callbacks are not an IR feature. Authoring-only DSL sugar may expand to existing IR without consuming a new Portable version when it adds no new runtime semantics; ADR 0038 applies this rule to bounded conditional helpers.
 
 IR versions 1 through 26 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14, ADR 0024 defines team-bound logical sessions in v15, ADR 0025 defines session-local GridWorld projection in v16, ADR 0027 defines bounded player/session reductions in v17, ADR 0028 defines bounded persistent scalar state in v18, ADR 0029 defines bounded persistent Grid state in v19, ADR 0030 defines bounded native-dialog selection UI in v20, ADR 0031 defines bounded rich/typed native-dialog UI in v21, ADR 0032 defines bounded expanded mannequin actor presentation in v22, ADR 0034 defines bounded world right-click interaction input in v23, ADR 0035 defines active-instance interaction controller binding in v24, ADR 0036 defines bounded item-backed placeable objects in v25, and ADR 0037 defines interaction-controller camera audiences and bounded return in v26.
 
@@ -75,7 +75,9 @@ Portable numbers use signed 32-bit fixed-point integers. `fixedPoint` defaults t
 
 ### Tick rules
 
-`game.tick(fn)` records the ordered action tree. Mutations and `game.when(...)` are valid only while an action sink is being captured. Multi-action branches become generated branch functions and comparisons lower to scoreboard `execute if/unless score` conditions.
+`game.tick(fn)` records the ordered action tree. Mutations and conditional action helpers are valid only while an action sink is being captured. Multi-action branches become generated branch functions and comparisons lower to scoreboard `execute if/unless score` conditions.
+
+`game.when(condition, then, else?)` is the primitive authoring branch. ADR 0038 adds bounded authoring-only `whenAll`, `whenAny`, `unless`, ordered first-match `choose`, and equality-dispatch `match`. These helpers expand to the existing nested `if` action tree, preserve lexical PlayerContext/SessionContext/PlaceableInstanceContext checks, and do not change or raise Portable IR version. `choose`/`match` are one `if -> else-if -> else` tree rather than independent conditions, so a matched branch cannot fall through after mutating its dispatch state. ADR 0039 makes this exclusive-branch guarantee explicit in vanilla lowering: an `if` with both branches evaluates its comparison once in a compiler-owned dispatch function and uses `return run` to select exactly one branch. Condition/case lists are bounded to 1..16 and their expansion still counts toward the existing action/depth limits. Since the current IR has no compound boolean condition node, `whenAny` can duplicate its branch body and `whenAll(..., else)` can duplicate the else body; large reusable logic should use one shared state-driven pipeline until a future IR decision adds compound conditions or reusable runtime rules.
 
 `game.repeat(count, fn)` is build-time declaration expansion; no runtime loop is emitted.
 

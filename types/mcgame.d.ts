@@ -806,6 +806,8 @@ type PortableDslSharedValue = number | PortableDslState | PortableDslPersistentS
 type PortableDslPlaceableState = PortableDslComparable & { readonly name: string; set(value: PortableDslValue): void; add(value: PortableDslValue): void; sub(value: PortableDslValue): void; negate(): void };
 type PortableDslValue = PortableDslSharedValue | PortableDslSessionState | PortableDslSessionPersistentState | PortableDslPlayerState | PortableDslPlayerInput | PortableDslPlayerSelection | PortableDslPlayerForm | PortableDslPlaceableState;
 type PortableDslCondition = { readonly __portableDslCondition?: never };
+type PortableDslChooseCase = { when: PortableDslCondition; then: () => void };
+type PortableDslMatchCase = readonly [PortableDslValue, () => void];
 type PortableDslCoordinate = number | PortableDslState | { readonly __portableDslCoordinate?: never };
 type PortableDslInputBinding = { source: PortableVanillaInputSource };
 type PortableDslBlockSpec = {
@@ -1101,6 +1103,11 @@ type PortableDsl = {
   tick(callback: () => void): void;
   repeat<T>(count: number, callback: (index: number) => T): readonly T[];
   when(condition: PortableDslCondition, thenCallback: () => void, elseCallback?: () => void): void;
+  whenAll(conditions: readonly PortableDslCondition[], thenCallback: () => void, elseCallback?: () => void): void;
+  whenAny(conditions: readonly PortableDslCondition[], thenCallback: () => void, elseCallback?: () => void): void;
+  unless(condition: PortableDslCondition, thenCallback: () => void, elseCallback?: () => void): void;
+  choose(cases: readonly PortableDslChooseCase[], otherwiseCallback?: () => void): void;
+  match(value: PortableDslValue, cases: readonly PortableDslMatchCase[], otherwiseCallback?: () => void): void;
   box(id: string, spec: PortableDslBoxSpec): PortableDslBox;
   circle(id: string, spec: PortableDslCircleSpec): PortableDslCircle;
   segment(id: string, spec: PortableDslSegmentSpec): PortableDslSegment;
