@@ -57,9 +57,12 @@ export const LIMITS = Object.freeze({
   placeableChildrenTotal: 256,
   actions: 2048,
   depth: 16,
+  conditionChildren: 16,
+  conditionDepth: 8,
+  conditionNodes: 64,
 });
 
-export const CURRENT_VERSION = 26;
+export const CURRENT_VERSION = 27;
 
 export function fail(message) { throw new Error(message); }
 export function has(object, member) { return Object.prototype.hasOwnProperty.call(object, member); }

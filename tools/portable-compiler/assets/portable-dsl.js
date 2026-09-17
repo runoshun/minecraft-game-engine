@@ -1,6 +1,8 @@
 (() => {
   const REF = Symbol("mcgame.portableDsl.ref");
   const CONDITION = Symbol("mcgame.portableDsl.condition");
+  const CONDITION_DEPTH = Symbol("mcgame.portableDsl.conditionDepth");
+  const CONDITION_NODES = Symbol("mcgame.portableDsl.conditionNodes");
   const COORDINATE = Symbol("mcgame.portableDsl.coordinate");
   const BOX = Symbol("mcgame.portableDsl.box");
   const CIRCLE = Symbol("mcgame.portableDsl.circle");
@@ -160,6 +162,7 @@
     let usesV24 = false;
     let usesV25 = false;
     let usesV26 = false;
+    let usesV27 = false;
 
     function assertUnique(name) {
       if (Object.prototype.hasOwnProperty.call(stateValues, name) || Object.prototype.hasOwnProperty.call(persistentStateValues, name) || Object.prototype.hasOwnProperty.call(inputValues, name)) {
@@ -231,6 +234,8 @@
       const placeableScope = isPlaceableRef(left) || isPlaceableRef(right) ? activePlaceableScope : null;
       return Object.freeze({
         [CONDITION]: true,
+        [CONDITION_DEPTH]: 1,
+        [CONDITION_NODES]: 1,
         [PLAYER_SCOPE]: playerScope,
         [SESSION_SCOPE]: sessionScope,
         [PLACEABLE_SCOPE]: placeableScope,
@@ -336,12 +341,63 @@
     }
 
     function serializedCondition(condition, label = "condition") {
-      if (!condition || condition[CONDITION] !== true) fail(label + " must be created by eq/ne/lt/lte/gt/gte");
+      if (!condition || condition[CONDITION] !== true) fail(label + " must be created by a comparison or game.condition");
       if (condition[PLAYER_SCOPE] !== null && condition[PLAYER_SCOPE] !== activePlayerScope) fail(label + " escaped its PlayerContext");
       if (condition[SESSION_SCOPE] !== null && condition[SESSION_SCOPE] !== activeSessionScope) fail(label + " escaped its SessionContext");
       if (condition[PLACEABLE_SCOPE] !== null && !samePlaceableScope(condition[PLACEABLE_SCOPE], activePlaceableScope)) fail(label + " escaped its PlaceableInstanceContext");
+      if (condition.op === "all" || condition.op === "any") return { op: condition.op, conditions: condition.conditions };
+      if (condition.op === "not") return { op: "not", condition: condition.condition };
       return { op: condition.op, left: condition.left, right: condition.right };
     }
+
+    function compoundScope(conditions, symbol, active) {
+      return conditions.some(condition => condition[symbol] !== null) ? active : null;
+    }
+
+    function compoundCondition(op, conditions, label) {
+      if (!Array.isArray(conditions) || conditions.length < 1 || conditions.length > 16) fail(label + " conditions must contain 1..16 entries");
+      const serialized = conditions.map((condition, index) => serializedCondition(condition, label + " condition " + index));
+      const depth = 1 + Math.max(...conditions.map(condition => condition[CONDITION_DEPTH] || 1));
+      const nodes = 1 + conditions.reduce((sum, condition) => sum + (condition[CONDITION_NODES] || 1), 0);
+      if (depth > 8) fail(label + " exceeds max condition depth 8");
+      if (nodes > 64) fail(label + " exceeds max condition node count 64");
+      usesV27 = true;
+      return Object.freeze({
+        [CONDITION]: true,
+        [CONDITION_DEPTH]: depth,
+        [CONDITION_NODES]: nodes,
+        [PLAYER_SCOPE]: compoundScope(conditions, PLAYER_SCOPE, activePlayerScope),
+        [SESSION_SCOPE]: compoundScope(conditions, SESSION_SCOPE, activeSessionScope),
+        [PLACEABLE_SCOPE]: compoundScope(conditions, PLACEABLE_SCOPE, activePlaceableScope),
+        op,
+        conditions: serialized,
+      });
+    }
+
+    function notCondition(condition) {
+      const serialized = serializedCondition(condition, "condition.not condition");
+      const depth = 1 + (condition[CONDITION_DEPTH] || 1);
+      const nodes = 1 + (condition[CONDITION_NODES] || 1);
+      if (depth > 8) fail("condition.not exceeds max condition depth 8");
+      if (nodes > 64) fail("condition.not exceeds max condition node count 64");
+      usesV27 = true;
+      return Object.freeze({
+        [CONDITION]: true,
+        [CONDITION_DEPTH]: depth,
+        [CONDITION_NODES]: nodes,
+        [PLAYER_SCOPE]: condition[PLAYER_SCOPE],
+        [SESSION_SCOPE]: condition[SESSION_SCOPE],
+        [PLACEABLE_SCOPE]: condition[PLACEABLE_SCOPE],
+        op: "not",
+        condition: serialized,
+      });
+    }
+
+    const conditionApi = Object.freeze({
+      all(conditions) { return compoundCondition("all", conditions, "condition.all"); },
+      any(conditions) { return compoundCondition("any", conditions, "condition.any"); },
+      not: notCondition,
+    });
 
     function when(condition, thenCallback, elseCallback) {
       const action = {
@@ -351,38 +407,6 @@
       };
       if (elseCallback !== undefined) action.else = captureActions(elseCallback, "when else");
       emit(action);
-    }
-
-    function conditionList(conditions, label) {
-      if (!Array.isArray(conditions) || conditions.length < 1 || conditions.length > 16) {
-        fail(label + " conditions must contain 1..16 entries");
-      }
-      return conditions.map((condition, index) => serializedCondition(condition, label + " condition " + index));
-    }
-
-    function whenAll(conditions, thenCallback, elseCallback) {
-      const tests = conditionList(conditions, "whenAll");
-      const thenActions = captureActions(thenCallback, "whenAll then");
-      const elseActions = elseCallback === undefined ? null : captureActions(elseCallback, "whenAll else");
-      let branch = thenActions;
-      for (let index = tests.length - 1; index >= 0; index--) {
-        const action = { op: "if", condition: tests[index], then: branch };
-        if (elseActions !== null) action.else = elseActions;
-        branch = [action];
-      }
-      emit(branch[0]);
-    }
-
-    function whenAny(conditions, thenCallback, elseCallback) {
-      const tests = conditionList(conditions, "whenAny");
-      const thenActions = captureActions(thenCallback, "whenAny then");
-      let branch = elseCallback === undefined ? null : captureActions(elseCallback, "whenAny else");
-      for (let index = tests.length - 1; index >= 0; index--) {
-        const action = { op: "if", condition: tests[index], then: thenActions };
-        if (branch !== null) action.else = branch;
-        branch = [action];
-      }
-      emit(branch[0]);
     }
 
     function unless(condition, thenCallback, elseCallback) {
@@ -1954,8 +1978,7 @@
       tick,
       repeat,
       when,
-      whenAll,
-      whenAny,
+      condition: conditionApi,
       unless,
       choose,
       match,
@@ -2009,7 +2032,7 @@
 
     const usesSpectateCamera = cameras.some(camera => camera.mode === "spectate");
     const spec = {
-      version: usesV26 ? 26 : usesV25 ? 25 : usesV24 ? 24 : usesV23 ? 23 : usesV22 ? 22 : usesV21 ? 21 : usesV20 ? 20 : usesV19 ? 19 : usesV18 ? 18 : usesV17 ? 17 : usesV16 ? 16 : usesV15 ? 15 : usesV14 ? 14 : usesV13 ? 13 : usesPlayerApi ? 12 : usesSpectateCamera ? 11 : ownership === null ? 9 : 10,
+      version: usesV27 ? 27 : usesV26 ? 26 : usesV25 ? 25 : usesV24 ? 24 : usesV23 ? 23 : usesV22 ? 22 : usesV21 ? 21 : usesV20 ? 20 : usesV19 ? 19 : usesV18 ? 18 : usesV17 ? 17 : usesV16 ? 16 : usesV15 ? 15 : usesV14 ? 14 : usesV13 ? 13 : usesPlayerApi ? 12 : usesSpectateCamera ? 11 : ownership === null ? 9 : 10,
       fixedPoint,
       state: stateValues,
       tick: tickActions,

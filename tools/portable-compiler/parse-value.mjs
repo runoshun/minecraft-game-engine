@@ -1,4 +1,4 @@
-import { LIMITS, fail, has, isObject, requiredMember, requiredString, memberNumber, scale } from "./utils.mjs";
+import { LIMITS, fail, has, isObject, requiredMember, requiredObject, requiredString, memberNumber, scale } from "./utils.mjs";
 
 export function parseValue(value, ctx, path) {
   if (typeof value === "number") return { kind: "constant", raw: scale(value, ctx.fixedPoint, path) };
@@ -100,11 +100,28 @@ export function parseValue(value, ctx, path) {
   fail(`${path} must be a number or portable scalar reference`);
 }
 
-export function parseCondition(value, ctx, path) {
+export function parseCondition(value, ctx, path, depth = 1, counter = { count: 0 }) {
   if (!isObject(value)) fail(`${path} must be an object`);
+  if (depth > LIMITS.conditionDepth) fail(`${path} exceeds max condition depth ${LIMITS.conditionDepth}`);
+  counter.count++;
+  if (counter.count > LIMITS.conditionNodes) fail(`${path} exceeds max condition node count ${LIMITS.conditionNodes}`);
   const op = requiredString(value, "op", path);
-  if (!["eq", "ne", "lt", "lte", "gt", "gte"].includes(op)) fail(`${path}.op unsupported comparison: ${op}`);
-  return { op, left: parseValue(requiredMember(value, "left", path), ctx, `${path}.left`), right: parseValue(requiredMember(value, "right", path), ctx, `${path}.right`) };
+  if (["eq", "ne", "lt", "lte", "gt", "gte"].includes(op)) {
+    return { op, left: parseValue(requiredMember(value, "left", path), ctx, `${path}.left`), right: parseValue(requiredMember(value, "right", path), ctx, `${path}.right`) };
+  }
+  if (op === "all" || op === "any") {
+    if (ctx.version < 27) fail(`${path}.op ${op} requires portable version 27`);
+    const conditions = requiredMember(value, "conditions", path);
+    if (!Array.isArray(conditions) || conditions.length < 1 || conditions.length > LIMITS.conditionChildren) {
+      fail(`${path}.conditions must contain 1..${LIMITS.conditionChildren} entries`);
+    }
+    return { op, conditions: conditions.map((condition, index) => parseCondition(condition, ctx, `${path}.conditions[${index}]`, depth + 1, counter)) };
+  }
+  if (op === "not") {
+    if (ctx.version < 27) fail(`${path}.op not requires portable version 27`);
+    return { op, condition: parseCondition(requiredObject(value, "condition", path), ctx, `${path}.condition`, depth + 1, counter) };
+  }
+  fail(`${path}.op unsupported condition: ${op}`);
 }
 
 export function parseCoordinate(value, ctx, path) {

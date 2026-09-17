@@ -19,84 +19,55 @@ function extract(source) {
   return parseProgram(extractSpec(source));
 }
 
-test("condition authoring sugar expands to existing ordered if actions without raising Portable IR version", () => {
-  const baseline = extractSpec(`
-    portableDsl(game => {
-      const a = game.state("a", 0);
-      const out = game.state("out", 0);
-      game.tick(() => game.when(a.eq(1), () => out.set(1)));
-    });
-  `);
+test("v27 compound conditions are explicit IR nodes and replace whenAll/whenAny", () => {
   const spec = extractSpec(`
     portableDsl(game => {
       const a = game.state("a", 0);
       const b = game.state("b", 0);
-      const phase = game.state("phase", 0);
+      const c = game.state("c", 0);
       const out = game.state("out", 0);
-      game.tick(() => {
-        game.whenAll([a.eq(1), b.eq(2)], () => out.set(10), () => out.set(-10));
-        game.whenAny([a.eq(3), b.eq(4)], () => out.set(20), () => out.set(-20));
-        game.unless(a.eq(5), () => out.set(30), () => out.set(-30));
-        game.choose([
-          { when: a.eq(6), then: () => out.set(40) },
-          { when: b.eq(7), then: () => out.set(41) },
-        ], () => out.set(42));
-        game.match(phase, [
-          [1, () => out.set(50)],
-          [2, () => out.set(51)],
-        ], () => out.set(52));
-      });
+      const visible = game.condition.all([
+        a.eq(1),
+        game.condition.any([b.eq(2), game.condition.not(c.eq(3))]),
+      ]);
+      game.text("status", { text: "READY", x: 0, y: 64, z: 0, when: visible });
+      game.tick(() => game.when(visible, () => out.set(1), () => out.set(2)));
     });
   `);
 
-  assert.equal(spec.version, baseline.version);
-  assert.equal(spec.tick.length, 5);
-  assert.ok(spec.tick.every(action => action.op === "if"));
+  assert.equal(spec.version, 27);
+  assert.equal(spec.tick[0].condition.op, "all");
+  assert.equal(spec.tick[0].condition.conditions[1].op, "any");
+  assert.equal(spec.tick[0].condition.conditions[1].conditions[1].op, "not");
+  assert.equal(spec.vanilla.texts[0].when.op, "all");
 
-  const all = spec.tick[0];
-  assert.equal(all.condition.left.state, "a");
-  assert.equal(all.then[0].condition.left.state, "b");
-  assert.equal(all.then[0].then[0].value, 10);
-  assert.equal(all.else[0].value, -10);
-  assert.equal(all.then[0].else[0].value, -10);
+  const program = parseProgram(spec);
+  assert.equal(program.version, 27);
+  assert.equal(program.tickActions[0].condition.op, "all");
 
-  const any = spec.tick[1];
-  assert.equal(any.then[0].value, 20);
-  assert.equal(any.else[0].condition.left.state, "b");
-  assert.equal(any.else[0].then[0].value, 20);
-  assert.equal(any.else[0].else[0].value, -20);
+  assert.throws(() => extractSpec(`
+    portableDsl(game => {
+      const a = game.state("a", 0);
+      game.tick(() => (game as any).whenAll([a.eq(1)], () => a.set(2)));
+    });
+  `), /whenAll is not a function/);
 
-  const unless = spec.tick[2];
-  assert.equal(unless.then[0].value, -30);
-  assert.equal(unless.else[0].value, 30);
-
-  const choose = spec.tick[3];
-  assert.equal(choose.condition.left.state, "a");
-  assert.equal(choose.then[0].value, 40);
-  assert.equal(choose.else[0].condition.left.state, "b");
-  assert.equal(choose.else[0].then[0].value, 41);
-  assert.equal(choose.else[0].else[0].value, 42);
-
-  const match = spec.tick[4];
-  assert.equal(match.condition.left.state, "phase");
-  assert.equal(match.condition.right, 1);
-  assert.equal(match.then[0].value, 50);
-  assert.equal(match.else[0].condition.left.state, "phase");
-  assert.equal(match.else[0].condition.right, 2);
-  assert.equal(match.else[0].then[0].value, 51);
-  assert.equal(match.else[0].else[0].value, 52);
-
-  const parsed = parseProgram(spec);
-  assert.equal(parsed.version, baseline.version);
-  assert.equal(parsed.tickActions.length, 5);
+  assert.throws(() => extractSpec(`
+    portableDsl(game => {
+      const a = game.state("a", 0);
+      game.tick(() => (game as any).whenAny([a.eq(1)], () => a.set(2)));
+    });
+  `), /whenAny is not a function/);
 });
 
-test("choose and match are first-match else-if trees, not independent whens", () => {
+test("unless choose and match remain authoring-only ordered branches", () => {
   const spec = extractSpec(`
     portableDsl(game => {
+      const a = game.state("a", 0);
       const phase = game.state("phase", 1);
       const out = game.state("out", 0);
       game.tick(() => {
+        game.unless(a.eq(5), () => out.set(30), () => out.set(-30));
         game.choose([
           { when: phase.eq(1), then: () => { out.set(1); phase.set(2); } },
           { when: phase.eq(2), then: () => out.set(2) },
@@ -109,14 +80,17 @@ test("choose and match are first-match else-if trees, not independent whens", ()
     });
   `);
 
-  assert.equal(spec.tick[0].then[1].target, "phase");
-  assert.equal(spec.tick[0].else[0].condition.right, 2);
+  assert.ok(spec.version < 27);
+  assert.equal(spec.tick[0].then[0].value, -30);
+  assert.equal(spec.tick[0].else[0].value, 30);
   assert.equal(spec.tick[1].then[1].target, "phase");
-  assert.equal(spec.tick[1].else[0].condition.right, 3);
+  assert.equal(spec.tick[1].else[0].condition.right, 2);
+  assert.equal(spec.tick[2].then[1].target, "phase");
+  assert.equal(spec.tick[2].else[0].condition.right, 3);
   parseProgram(spec);
 });
 
-test("condition sugar preserves lexical PlayerContext checks", () => {
+test("compound conditions preserve lexical PlayerContext checks", () => {
   assert.throws(() => extract(`
     portableDsl(game => {
       const players = game.players();
@@ -124,47 +98,99 @@ test("condition sugar preserves lexical PlayerContext checks", () => {
       let escaped;
       game.tick(() => {
         game.forSinglePlayer(players, player => { escaped = player.input.left.eq(1); });
-        game.whenAll([escaped], () => out.set(1));
+        const combined = game.condition.all([escaped, out.eq(0)]);
+        game.when(combined, () => out.set(1));
       });
     });
-  `), /whenAll condition 0 escaped its PlayerContext/);
+  `), /condition\.all condition 0 escaped its PlayerContext/);
 
-  assert.throws(() => extract(`
+  const program = extract(`
     portableDsl(game => {
       const players = game.players();
-      const out = game.state("out", 0);
-      let escaped;
       game.tick(() => {
-        game.forSinglePlayer(players, player => { escaped = player.input.left; });
-        game.match(escaped, [[1, () => out.set(1)]]);
+        game.forEachPlayer(players, player => {
+          const hp = player.state("hp", 1);
+          const aliveAndMoving = game.condition.all([
+            hp.gt(0),
+            game.condition.any([player.input.left.eq(1), player.input.right.eq(1)]),
+          ]);
+          game.when(aliveAndMoving, () => hp.add(1));
+        });
       });
     });
-  `), /player input reference escaped its PlayerContext/);
+  `);
+  assert.equal(program.version, 27);
 });
 
-test("condition sugar validates bounded case lists and shapes", () => {
+test("compound condition DSL and raw IR enforce version and structural bounds", () => {
   assert.throws(() => extractSpec(`
     portableDsl(game => {
       const out = game.state("out", 0);
-      game.tick(() => game.whenAll([], () => out.set(1)));
+      game.condition.all([]);
+      game.tick(() => out.set(1));
     });
-  `), /whenAll conditions must contain 1\.\.16 entries/);
+  `), /condition\.all conditions must contain 1\.\.16 entries/);
 
-  assert.throws(() => extractSpec(`
-    portableDsl(game => {
-      const x = game.state("x", 0);
-      game.tick(() => game.choose([{ when: x.eq(1) } as any]));
-    });
-  `), /choose case 0 then callback is required/);
+  assert.throws(() => parseProgram({
+    version: 26,
+    fixedPoint: 1000,
+    state: { a: 0, out: 0 },
+    tick: [{
+      op: "if",
+      condition: { op: "all", conditions: [{ op: "eq", left: { state: "a" }, right: 0 }] },
+      then: [{ op: "set", target: "out", value: 1 }],
+    }],
+  }), /requires portable version 27/);
 
-  assert.throws(() => extractSpec(`
-    portableDsl(game => {
-      const x = game.state("x", 0);
-      game.tick(() => game.match(x, [[1] as any]));
-    });
-  `), /match case 0 must be \[value, callback\]/);
+  const tooWide = Array.from({ length: 17 }, () => ({ op: "eq", left: { state: "a" }, right: 0 }));
+  assert.throws(() => parseProgram({
+    version: 27,
+    fixedPoint: 1000,
+    state: { a: 0, out: 0 },
+    tick: [{
+      op: "if",
+      condition: { op: "all", conditions: tooWide },
+      then: [{ op: "set", target: "out", value: 1 }],
+    }],
+  }), /conditions must contain 1\.\.16 entries/);
 });
 
+test("compound conditions lower through boolean evaluator functions without branch-body duplication", () => {
+  const program = extract(`
+    portableDsl(game => {
+      const a = game.state("a", 0);
+      const b = game.state("b", 0);
+      const c = game.state("c", 0);
+      const out = game.state("out", 0);
+      const players = game.players();
+      game.tick(() => {
+        game.when(game.condition.any([a.eq(1), b.eq(2), c.eq(3)]), () => {
+          out.add(1);
+          out.add(2);
+          out.add(3);
+        });
+        game.reduce.any(players, out, player => game.condition.all([
+          player.input.left.eq(1),
+          game.condition.not(player.input.sneak.eq(1)),
+        ]));
+      });
+    });
+  `);
+  const output = fs.mkdtempSync(path.join(os.tmpdir(), "mcgame-v27-condition-"));
+  compileDatapack(program, "portable_v27_condition", output);
+  const portableDir = path.join(output, "data/portable_v27_condition/function/portable");
+  const files = fs.readdirSync(portableDir);
+  const conditionFiles = files.filter(name => name.startsWith("condition_"));
+  assert.ok(conditionFiles.length >= 2);
+
+  const allBodies = files.filter(name => name.endsWith(".mcfunction"))
+    .map(name => fs.readFileSync(path.join(portableDir, name), "utf8")).join("\n");
+  assert.match(allBodies, /execute store result score #k\d+ .* run function portable_v27_condition:portable\/condition_/);
+  assert.match(allBodies, /execute as @a store result score @s .* run function portable_v27_condition:portable\/condition_/);
+
+  const addOneOccurrences = (allBodies.match(/scoreboard players operation #out .* \+= .*#c/g) || []).length;
+  assert.ok(addOneOccurrences <= 3, "guarded body should not be copied once per OR alternative");
+});
 
 test("if/else lowering snapshots branch choice before a branch can mutate its condition", () => {
   const program = extract(`

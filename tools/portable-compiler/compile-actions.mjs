@@ -21,11 +21,85 @@ function persistentTarget(action, ctx) {
   return { holder: ctx.persistentStateHolder(action.target, action.session ?? null), objective: ctx.persistentObjective };
 }
 
-export function condition(test, positive, ctx) {
+function isComparison(test) {
+  return ["eq", "ne", "lt", "lte", "gt", "gte"].includes(test.op);
+}
+
+function comparisonCondition(test, positive, ctx) {
   const left = score(test.left, ctx), right = score(test.right, ctx);
   const comparator = ({ eq: "=", ne: "=", lt: "<", lte: "<=", gt: ">", gte: ">=" })[test.op];
   const naturallyPositive = test.op !== "ne";
   return `${positive === naturallyPositive ? "if" : "unless"} score ${left.holder} ${left.objective} ${comparator} ${right.holder} ${right.objective}`;
+}
+
+function conditionEvaluator(test, ctx) {
+  const name = ctx.nextConditionFunctionName(), body = [];
+  compileConditionReturn(test, body, ctx);
+  ctx.functions.set(name, body);
+  return name;
+}
+
+function compoundChildScore(test, lines, ctx) {
+  const fn = conditionEvaluator(test, ctx), temp = ctx.nextConditionTemp();
+  lines.push(`execute store result score ${temp} ${ctx.objective} run function ${ctx.namespace}:portable/${fn}`);
+  return temp;
+}
+
+function compileConditionReturn(test, lines, ctx) {
+  if (isComparison(test)) {
+    lines.push(`execute ${comparisonCondition(test, true, ctx)} run return 1`);
+    lines.push("return 0");
+    return;
+  }
+  if (test.op === "all") {
+    for (const child of test.conditions) {
+      if (isComparison(child)) lines.push(`execute ${comparisonCondition(child, false, ctx)} run return 0`);
+      else {
+        const temp = compoundChildScore(child, lines, ctx);
+        lines.push(`execute unless score ${temp} ${ctx.objective} matches 1 run return 0`);
+      }
+    }
+    lines.push("return 1");
+    return;
+  }
+  if (test.op === "any") {
+    for (const child of test.conditions) {
+      if (isComparison(child)) lines.push(`execute ${comparisonCondition(child, true, ctx)} run return 1`);
+      else {
+        const temp = compoundChildScore(child, lines, ctx);
+        lines.push(`execute if score ${temp} ${ctx.objective} matches 1 run return 1`);
+      }
+    }
+    lines.push("return 0");
+    return;
+  }
+  if (test.op === "not") {
+    if (isComparison(test.condition)) {
+      lines.push(`execute ${comparisonCondition(test.condition, true, ctx)} run return 0`);
+      lines.push("return 1");
+    } else {
+      const temp = compoundChildScore(test.condition, lines, ctx);
+      lines.push(`execute if score ${temp} ${ctx.objective} matches 1 run return 0`);
+      lines.push("return 1");
+    }
+    return;
+  }
+  fail(`unsupported portable condition: ${test.op}`);
+}
+
+export function condition(test, positive, ctx, lines) {
+  if (isComparison(test)) return comparisonCondition(test, positive, ctx);
+  if (!lines) fail("compound condition lowering requires an output command list");
+  const fn = conditionEvaluator(test, ctx), temp = ctx.nextConditionTemp();
+  lines.push(`execute store result score ${temp} ${ctx.objective} run function ${ctx.namespace}:portable/${fn}`);
+  return `${positive ? "if" : "unless"} score ${temp} ${ctx.objective} matches 1`;
+}
+
+function playerCondition(test, selector, positive, lines, ctx) {
+  if (isComparison(test)) return comparisonCondition(test, positive, ctx);
+  const fn = conditionEvaluator(test, ctx);
+  lines.push(`execute as ${selector} store result score @s ${ctx.objective} run function ${ctx.namespace}:portable/${fn}`);
+  return `${positive ? "if" : "unless"} score @s ${ctx.objective} matches 1`;
 }
 
 function branchFunction(actions, ctx) {
@@ -38,11 +112,11 @@ function branchFunction(actions, ctx) {
 function exclusiveIfFunction(test, thenActions, elseActions, ctx) {
   const thenFn = branchFunction(thenActions, ctx);
   const elseFn = branchFunction(elseActions, ctx);
-  const name = ctx.nextBranchFunctionName();
-  ctx.functions.set(name, [
-    `execute ${condition(test, true, ctx)} run return run function ${ctx.namespace}:portable/${thenFn}`,
-    `return run function ${ctx.namespace}:portable/${elseFn}`,
-  ]);
+  const name = ctx.nextBranchFunctionName(), body = [];
+  const positive = condition(test, true, ctx, body);
+  body.push(`execute ${positive} run return run function ${ctx.namespace}:portable/${thenFn}`);
+  body.push(`return run function ${ctx.namespace}:portable/${elseFn}`);
+  ctx.functions.set(name, body);
   return name;
 }
 
@@ -185,12 +259,12 @@ export function compileActions(actions, lines, ctx) {
         const trueRaw = ctx.program.fixedPoint;
         if (action.kind === "any") {
           lines.push(`scoreboard players set ${target} ${ctx.objective} 0`);
-          lines.push(`execute as ${selector} ${condition(action.condition, true, ctx)} run scoreboard players set ${target} ${ctx.objective} ${trueRaw}`);
+          lines.push(`execute as ${selector} ${playerCondition(action.condition, selector, true, lines, ctx)} run scoreboard players set ${target} ${ctx.objective} ${trueRaw}`);
           break;
         }
         if (action.kind === "all") {
           lines.push(`scoreboard players set ${target} ${ctx.objective} ${trueRaw}`);
-          lines.push(`execute as ${selector} ${condition(action.condition, false, ctx)} run scoreboard players set ${target} ${ctx.objective} 0`);
+          lines.push(`execute as ${selector} ${playerCondition(action.condition, selector, false, lines, ctx)} run scoreboard players set ${target} ${ctx.objective} 0`);
           break;
         }
         fail(`unsupported player reduction: ${action.kind}`);
@@ -204,11 +278,11 @@ export function compileActions(actions, lines, ctx) {
         }
         if (action.then.length) {
           const fn = branchFunction(action.then, ctx);
-          lines.push(`execute ${condition(action.condition, true, ctx)} run function ${ctx.namespace}:portable/${fn}`);
+          lines.push(`execute ${condition(action.condition, true, ctx, lines)} run function ${ctx.namespace}:portable/${fn}`);
         }
         if (action.else.length) {
           const fn = branchFunction(action.else, ctx);
-          lines.push(`execute ${condition(action.condition, false, ctx)} run function ${ctx.namespace}:portable/${fn}`);
+          lines.push(`execute ${condition(action.condition, false, ctx, lines)} run function ${ctx.namespace}:portable/${fn}`);
         }
         break;
       }

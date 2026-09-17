@@ -447,3 +447,32 @@ Focused acceptance on mod-free Minecraft 26.1 `second` should verify:
 Unlike v25's earlier two-independent-cabinet acceptance, the current reference game intentionally uses one placeable cabinet and one shared remote pinball arena. V26 currently permits only one controller-backed camera, so simultaneous independent remote boards/cameras remain outside this reference and API contract.
 
 The accepted 2026-09-17 run placed the cabinet at `[732.5,65,731.5]` and created its child interaction at `[732.5,65.65,731.98]`. Camera's real use advanced controller generation `1 -> 2`, assigned only Camera token `2`, and routed it to remote carrier `[770,104,778]`; Camera2 had no token. Camera2 `Space+A` left `launched=0` / `ballY=-1850`, while Camera Space launched the ball and advanced game state. Camera Sneak returned to the cabinet and advanced generation `2 -> 3` without camera recapture; a second use advanced `3 -> 4` and re-entered the remote view. `/reload` reset generation/token/slot/children, cleanup left zero objectives/entities/force-loads, and teardown restored vanilla-only enabled datapacks. Node regression finished 63/63 green, with byte-for-byte parity for all 21 pre-v26 example sources against parent commit `5a4b98b`.
+
+
+## Compound conditions v27 acceptance
+
+ADR 0040 defines Portable v27 recursive `all` / `any` / `not` conditions. Use `examples/portable-othello` on mod-free Minecraft 26.1 `second` with real clients `Camera` and `Camera2`. V27 adds generated function/scoreboard control flow only, so ordinary archive replacement plus `/reload` is sufficient; no server restart, Fabric mod, or resource pack is required.
+
+Compile and package with:
+
+```bash
+npm run compile:portable --   --source examples/portable-othello/datapack/data/portable_othello/mcgame/main.ts   --namespace portable_othello   --output build/portable/portable_othello
+
+tar -C build/portable/portable_othello   -czf build/portable_othello.tar.gz .
+sha256sum build/portable_othello.tar.gz
+```
+
+Acceptance must verify:
+
+- the generated marker reports `portable_version=27` and generated `condition_NNN.mcfunction` evaluators are present;
+- `/reload` on Minecraft 26.1 reports no datapack problems;
+- the initial Othello GridWorld is 60 empty/green cells, two black, and two white;
+- real client Camera claims Black and Camera2 claims White through the two seat interactions; the compound seat-presence predicate moves the game into `PLAYING`;
+- Camera physically uses legal opening cell `(2,3)`; the bracketed white stone flips, score becomes Black `4` / White `1`, and the next turn remains White rather than falling through to a sibling branch;
+- the board footprint after the move is 59 green / four black / one white;
+- the full Node regression suite passes and only the Othello example infers v27 among the retained examples;
+- `portable/cleanup` removes generated objectives/entities/force-loads before pack removal, and acceptance terrain is explicitly restored because GridWorld projection writes real blocks.
+
+The accepted 2026-09-18 run installed archive SHA-256 `68bddf83f36929e9168b101cccac10d0dbd87cbaadaa2d2f127f0c18c0147ef8`. The pack exposed 65 generated condition evaluators and loaded with no problems. Initial board scan returned 60 green / two black / two white. Real simultaneous seat use produced Camera color raw `1000`, Camera2 color raw `2000`, both seat-presence values raw `1000`, and `phase=1000`. Camera's real use of cell `(2,3)` produced score raw `4000/1000`, board counts 59/4/1, `turn=2000` (White), `phase=1000`, and `consecutivePasses=0`.
+
+The Node suite is 70/70 green. All 22 checked-in examples compile and version inference remains unchanged for the 21 examples that do not use v27 compound conditions.

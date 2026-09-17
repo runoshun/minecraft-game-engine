@@ -160,6 +160,8 @@ export class CompileContext {
     this.nextText = 0;
     this.nextSidebar = 0;
     this.nextCollision = 0;
+    this.nextCondition = 0;
+    this.nextConditionScore = 0;
     this.usesNegate = false;
   }
   constantHolder(raw) {
@@ -171,6 +173,8 @@ export class CompileContext {
   nextProjectionTemp() { return `#v${this.nextProjection++}`; }
   nextHudTemp() { return `#h${this.nextHud++}`; }
   nextCollisionTemp() { return `#q${this.nextCollision++}`; }
+  nextConditionFunctionName() { return `condition_${String(this.nextCondition++).padStart(3, "0")}`; }
+  nextConditionTemp() { return `#k${this.nextConditionScore++}`; }
   playerStateObjective(name) {
     const objective = this.playerStateObjectives.get(name);
     if (!objective) fail(`unknown player state objective: ${name}`);

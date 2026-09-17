@@ -1,4 +1,4 @@
-# ADR 0038: Add bounded conditional authoring sugar without changing Portable IR
+# ADR 0038: Add bounded branch authoring sugar without changing Portable IR
 
 ## Status
 
@@ -6,25 +6,17 @@ Accepted and implemented.
 
 ## Context
 
-Portable gameplay rules are recorded as an ordered action tree. Before this decision, authoring exposed only `game.when(condition, then, else?)` for ordinary scalar comparisons. Combining conditions therefore required nested callbacks such as `when(a, () => when(b, ...))`, and state-machine dispatch required several independent `when(...)` calls or a manually nested `if / else-if` tree.
+Portable gameplay rules are recorded as an ordered action tree. The primitive branch API is `game.when(condition, then, else?)`.
 
-Existing retained games already contain repeated two- and three-level `when` nesting for rising edges, collision guards, mode dispatch, and compound player input. An 8x8 board game such as Othello/Reversi makes this more visible: move validation and bounded directional scans need several guards, while turn/phase logic needs mutually exclusive branches. The runtime capability is already sufficient; the problem is authoring clarity.
+State-machine dispatch and inverted branches are common enough that spelling them only through nested `game.when` callbacks is noisy. This is an authoring ergonomics issue rather than a runtime capability gap.
 
-This does not justify a new runtime condition language by itself. Portable IR already has the required ordered `if` action, lexical scope validation, fixed-point comparisons, and vanilla lowering. Adding compound boolean nodes to IR would widen every parser/lowering/presentation condition surface and require a new Portable version even though the same behavior is expressible today.
+Compound boolean conditions are a different problem. They affect action guards, reductions, and declarative `when:` fields, and therefore belong in the Portable condition IR rather than in branch-specific source expansion. Portable v27 / ADR 0040 owns that capability.
 
 ## Decision
 
-`portableDsl` adds bounded build-time conditional sugar:
+`portableDsl` provides three bounded branch helpers that compile to the existing ordinary `if` action tree:
 
 ```ts
-game.whenAll([a.eq(1), b.eq(2)], () => {
-  result.set(1);
-});
-
-game.whenAny([left.eq(1), right.eq(1)], () => {
-  moving.set(1);
-});
-
 game.unless(gameOver.eq(1), () => {
   tickGame();
 });
@@ -40,38 +32,51 @@ game.match(phase, [
 ], () => finishedTick());
 ```
 
-These are authoring helpers only. They emit the existing `op: "if"` Portable IR tree and do not raise the inferred Portable version.
-
 ### Semantics
 
-- `whenAll([a, b, ...], then, else?)` executes `then` only if every condition is true. Conditions are represented as nested existing `if` actions in array order.
-- `whenAny([a, b, ...], then, else?)` executes `then` if at least one condition is true, with ordered short-circuit shape expressed through existing nested `if`/`else` actions.
-- `unless(condition, then, else?)` is the inverse branch form of `when` and emits the normal `if` action with authored branches swapped.
-- `choose(cases, otherwise?)` is a first-match ordered branch. Only the first matching case executes. It lowers to one `if -> else-if -> ... -> else` tree, not several independent `when` actions.
-- `match(value, cases, otherwise?)` is `choose` sugar for ordered equality comparisons against one portable value. Cases use `[value, callback]` tuples.
+- `unless(condition, then, else?)` is the inverse branch form of `when`.
+- `choose(cases, otherwise?)` is a first-match ordered branch. Only the first matching case executes.
+- `match(value, cases, otherwise?)` is equality-dispatch sugar over `choose`; each case is a `[value, callback]` tuple.
 
-`choose` and `match` first-match semantics are important for mutable state machines. If the first branch changes the dispatch state, later cases in the same `choose`/`match` are still unreachable in that invocation because they are nested under the first branch's `else` path. ADR 0039 guarantees this at vanilla runtime by selecting an ordinary `if/else` branch once before authored branch mutation can affect its sibling.
+`choose` and `match` lower to one nested `if -> else-if -> ... -> else` tree, not independent sibling `when` actions. ADR 0039 guarantees exclusive runtime dispatch even if a selected branch mutates the value used by later cases.
 
-Each condition/case list is bounded to 1..16 entries. Expansion still counts toward the existing Portable action-count and nesting-depth limits; this API improves source readability rather than weakening compiler bounds. Because v1-v26 IR has only single-comparison `if`, some sugar shapes necessarily duplicate one branch in the expanded tree: `whenAny` repeats its `then` branch across alternatives, and `whenAll` with an `else` repeats that `else` branch across failed conjuncts. Small rule bodies are appropriate; large reusable algorithms should be factored into one shared state-driven pipeline rather than hidden behind a large `whenAny` body. A future compound-condition or reusable runtime-rule facility would require a separate IR decision.
+Case lists are bounded to 1..16 entries and continue to count against the existing action/depth bounds.
 
-### Scope and ordering
+### Compound conditions
 
-Condition serialization uses the same lexical checks as `game.when`. Player-, session-, and placeable-scoped values therefore cannot escape through these helpers. Callback actions are captured through the existing action sink, so mutation/cardinality restrictions are unchanged.
+Branch helpers do not define a second boolean language.
 
-All callbacks are compiler-time authoring callbacks exactly like `game.when`; they are not arbitrary runtime JavaScript callbacks.
+Portable v27 adds `game.condition.all(...)`, `game.condition.any(...)`, and `game.condition.not(...)`. Those return the normal opaque `PortableDslCondition` and can be consumed by `game.when`, `unless`, `choose`, reductions, or declarative `when:` fields.
+
+For example:
+
+```ts
+game.when(game.condition.all([
+  phase.eq(PLAYING),
+  cell.eq(EMPTY),
+]), () => {
+  placeStone();
+});
+```
+
+## Scope and ordering
+
+Conditions use the same lexical validation as `game.when`. Player-, session-, and placeable-scoped values cannot escape through `unless`, `choose`, or `match`.
+
+Callbacks are compiler-time authoring callbacks exactly like `game.when`; they are not arbitrary runtime JavaScript callbacks.
 
 ## Compatibility
 
-No Portable IR version is added. Existing raw IR, parsers, vanilla lowering, generated datapack layout, lifecycle, and Minecraft runtime behavior are unchanged. Source that does not use the helpers is unaffected.
+No Portable IR version is consumed by `unless`, `choose`, or `match` themselves.
 
-Compound boolean conditions are deliberately **not** added as a general `PortableDslCondition`. Declarative presentation fields such as `when:` therefore continue to accept one ordinary portable comparison. If compound declarative conditions become necessary, that is a separate IR/version decision rather than an implicit side effect of action authoring sugar.
+This project has not shipped a stable public DSL release, so removed experimental authoring shapes are not retained solely for source compatibility. Compound boolean composition is represented only by the v27 `game.condition` API.
 
 ## Validation
 
-The compiler regression suite must verify that:
+The compiler regression suite verifies that:
 
-1. all helpers expand exclusively to existing `if` actions;
-2. using the helpers does not raise the inferred Portable version relative to equivalent `when` source;
+1. `unless`, `choose`, and `match` expand only to existing `if` actions;
+2. using only those helpers does not raise the inferred Portable version;
 3. `choose` and `match` form ordered first-match else-if trees;
-4. lexical PlayerContext escape checks remain enforced; and
-5. invalid/oversized helper inputs are rejected during extraction.
+4. lexical scope checks remain enforced; and
+5. invalid/oversized case lists are rejected during extraction.

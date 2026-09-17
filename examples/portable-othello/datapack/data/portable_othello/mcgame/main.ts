@@ -272,16 +272,16 @@ portableDsl({
     game.reduce.any(players, blackPresent, player => player.state("othelloColor", EMPTY).eq(BLACK));
     game.reduce.any(players, whitePresent, player => player.state("othelloColor", EMPTY).eq(WHITE));
 
-    game.whenAll([phase.eq(WAITING), blackPresent.eq(1), whitePresent.eq(1)], () => phase.set(PLAYING));
+    game.when(game.condition.all([phase.eq(WAITING), blackPresent.eq(1), whitePresent.eq(1)]), () => phase.set(PLAYING));
 
     blackSeat.onUse(player => {
       const color = player.state("othelloColor", EMPTY);
-      game.whenAll([phase.eq(WAITING), blackPresent.eq(0), color.eq(EMPTY)], () => color.set(BLACK));
+      game.when(game.condition.all([phase.eq(WAITING), blackPresent.eq(0), color.eq(EMPTY)]), () => color.set(BLACK));
     });
 
     whiteSeat.onUse(player => {
       const color = player.state("othelloColor", EMPTY);
-      game.whenAll([phase.eq(WAITING), whitePresent.eq(0), color.eq(EMPTY)], () => color.set(WHITE));
+      game.when(game.condition.all([phase.eq(WAITING), whitePresent.eq(0), color.eq(EMPTY)]), () => color.set(WHITE));
     });
 
     resetButton.onUse(() => resetBoard());
@@ -289,11 +289,11 @@ portableDsl({
     for (const cell of cells) {
       cell.hit.onUse(player => {
         const color = player.state("othelloColor", EMPTY);
-        game.whenAll([
+        game.when(game.condition.all([
           requestLock.eq(0),
           phase.eq(PLAYING),
           color.eq(turn),
-        ], () => {
+        ]), () => {
           requestX.set(cell.x);
           requestZ.set(cell.z);
           requestColor.set(color);
@@ -302,7 +302,7 @@ portableDsl({
       });
     }
 
-    game.whenAll([requestLock.eq(1), scanMode.eq(SCAN_NONE)], () => {
+    game.when(game.condition.all([requestLock.eq(1), scanMode.eq(SCAN_NONE)]), () => {
       board.get(requestX, requestZ, probe);
       game.when(probe.eq(EMPTY), () => {
         scanOriginX.set(requestX);
@@ -312,7 +312,7 @@ portableDsl({
       });
     });
 
-    game.whenAll([phase.eq(CHECKING), scanMode.eq(SCAN_NONE)], () => {
+    game.when(game.condition.all([phase.eq(CHECKING), scanMode.eq(SCAN_NONE)]), () => {
       board.get(checkX, checkZ, probe);
       game.when(probe.eq(EMPTY), () => {
         scanOriginX.set(checkX);

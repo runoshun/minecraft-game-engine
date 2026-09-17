@@ -86,8 +86,8 @@ function compileVisibility(dimension, tag, entityScale, visibility, lines, ctx) 
   if (!visibility) return;
   const selector = `@e[tag=${tag},limit=1]`;
   const shown = `[${floatLiteral(entityScale.x)},${floatLiteral(entityScale.y)},${floatLiteral(entityScale.z)}]`;
-  lines.push(`execute ${condition(visibility, true, ctx)} in ${dimension} run data modify entity ${selector} transformation.scale set value ${shown}`);
-  lines.push(`execute ${condition(visibility, false, ctx)} in ${dimension} run data modify entity ${selector} transformation.scale set value [0f,0f,0f]`);
+  lines.push(`execute ${condition(visibility, true, ctx, lines)} in ${dimension} run data modify entity ${selector} transformation.scale set value ${shown}`);
+  lines.push(`execute ${condition(visibility, false, ctx, lines)} in ${dimension} run data modify entity ${selector} transformation.scale set value [0f,0f,0f]`);
 }
 
 function placeableScoreWithBase(value, base, lines, ctx) {
@@ -266,7 +266,7 @@ export function compileVanillaActorLoad(program, lines, ctx) {
     if (!program.ownership) lines.push(`execute in ${actor.dimension} run forceload add ${bx} ${bz}`);
     lines.push(`execute in ${actor.dimension} run kill @e[tag=${tag}]`);
     const spawn = `${ctx.namespace}:portable/actor_${actor.id}_spawn`;
-    lines.push(actor.condition ? `execute ${condition(actor.condition, true, ctx)} run function ${spawn}` : `function ${spawn}`);
+    lines.push(actor.condition ? `execute ${condition(actor.condition, true, ctx, lines)} run function ${spawn}` : `function ${spawn}`);
     if (!program.ownership) lines.push(`execute in ${actor.dimension} run forceload remove ${bx} ${bz}`);
   }
 }
@@ -297,7 +297,7 @@ export function compileVanillaInteractionLoad(program, lines, ctx) {
     if (!program.ownership) lines.push(`execute in ${interaction.dimension} run forceload add ${bx} ${bz}`);
     lines.push(`execute in ${interaction.dimension} run kill @e[tag=${tag}]`);
     const spawn = `${ctx.namespace}:portable/interaction_${interaction.id}_spawn`;
-    lines.push(interaction.condition ? `execute ${condition(interaction.condition, true, ctx)} run function ${spawn}` : `function ${spawn}`);
+    lines.push(interaction.condition ? `execute ${condition(interaction.condition, true, ctx, lines)} run function ${spawn}` : `function ${spawn}`);
     if (!program.ownership) lines.push(`execute in ${interaction.dimension} run forceload remove ${bx} ${bz}`);
   }
 }
@@ -324,7 +324,7 @@ function ensureWorldBatchFunction(batch, ctx) {
 export function prepareVanillaWorldBatches(program, tick, ctx) {
   for (const batch of program.worldBatches) {
     ensureWorldBatchFunction(batch, ctx);
-    if (batch.condition) tick.push(`execute ${condition(batch.condition, true, ctx)} run function ${ctx.namespace}:portable/world_${batch.id}`);
+    if (batch.condition) tick.push(`execute ${condition(batch.condition, true, ctx, tick)} run function ${ctx.namespace}:portable/world_${batch.id}`);
   }
 }
 
@@ -441,8 +441,8 @@ export function compileVanillaActorUpdates(program, lines, ctx) {
   for (const actor of program.actors) {
     const tag = actorTag(ctx.namespace, actor.id); ensureActorSpawnFunction(program, actor, ctx); const spawn = `${ctx.namespace}:portable/actor_${actor.id}_spawn`;
     if (actor.condition) {
-      lines.push(`execute ${condition(actor.condition, true, ctx)} in ${actor.dimension} unless entity @e[tag=${tag},limit=1] run function ${spawn}`);
-      lines.push(`execute ${condition(actor.condition, false, ctx)} in ${actor.dimension} if entity @e[tag=${tag},limit=1] run kill @e[tag=${tag}]`);
+      lines.push(`execute ${condition(actor.condition, true, ctx, lines)} in ${actor.dimension} unless entity @e[tag=${tag},limit=1] run function ${spawn}`);
+      lines.push(`execute ${condition(actor.condition, false, ctx, lines)} in ${actor.dimension} if entity @e[tag=${tag},limit=1] run kill @e[tag=${tag}]`);
     }
     compileEntityAxis(actor.dimension, tag, "Pos[0]", actor.x, s, lines, ctx); compileEntityAxis(actor.dimension, tag, "Pos[1]", actor.y, s, lines, ctx); compileEntityAxis(actor.dimension, tag, "Pos[2]", actor.z, s, lines, ctx); compileEntityFloat(actor.dimension, tag, "Rotation[0]", actor.yaw, s, lines, ctx);
     if (actor.pitch) compileEntityFloat(actor.dimension, tag, "Rotation[1]", actor.pitch, s, lines, ctx);
@@ -458,9 +458,9 @@ export function compileVanillaInteractionUpdates(program, lines, ctx) {
     if (interaction.placeable) {
       const activeTrue = placeableActive(interaction, true, ctx), activeFalse = placeableActive(interaction, false, ctx);
       if (interaction.condition) {
-        lines.push(`execute ${activeTrue} ${condition(interaction.condition, true, ctx)} in ${interaction.dimension} unless entity @e[tag=${tag},limit=1] run function ${spawn}`);
+        lines.push(`execute ${activeTrue} ${condition(interaction.condition, true, ctx, lines)} in ${interaction.dimension} unless entity @e[tag=${tag},limit=1] run function ${spawn}`);
         lines.push(`execute ${activeFalse} in ${interaction.dimension} if entity @e[tag=${tag},limit=1] run kill @e[tag=${tag}]`);
-        lines.push(`execute ${activeTrue} ${condition(interaction.condition, false, ctx)} in ${interaction.dimension} if entity @e[tag=${tag},limit=1] run kill @e[tag=${tag}]`);
+        lines.push(`execute ${activeTrue} ${condition(interaction.condition, false, ctx, lines)} in ${interaction.dimension} if entity @e[tag=${tag},limit=1] run kill @e[tag=${tag}]`);
       } else {
         lines.push(`execute ${activeTrue} in ${interaction.dimension} unless entity @e[tag=${tag},limit=1] run function ${spawn}`);
         lines.push(`execute ${activeFalse} in ${interaction.dimension} if entity @e[tag=${tag},limit=1] run kill @e[tag=${tag}]`);
@@ -468,8 +468,8 @@ export function compileVanillaInteractionUpdates(program, lines, ctx) {
       compilePlaceablePosition(interaction, tag, lines, ctx);
     } else {
       if (interaction.condition) {
-        lines.push(`execute ${condition(interaction.condition, true, ctx)} in ${interaction.dimension} unless entity @e[tag=${tag},limit=1] run function ${spawn}`);
-        lines.push(`execute ${condition(interaction.condition, false, ctx)} in ${interaction.dimension} if entity @e[tag=${tag},limit=1] run kill @e[tag=${tag}]`);
+        lines.push(`execute ${condition(interaction.condition, true, ctx, lines)} in ${interaction.dimension} unless entity @e[tag=${tag},limit=1] run function ${spawn}`);
+        lines.push(`execute ${condition(interaction.condition, false, ctx, lines)} in ${interaction.dimension} if entity @e[tag=${tag},limit=1] run kill @e[tag=${tag}]`);
       }
       compileEntityAxis(interaction.dimension, tag, "Pos[0]", interaction.x, s, lines, ctx);
       compileEntityAxis(interaction.dimension, tag, "Pos[1]", interaction.y, s, lines, ctx);
@@ -514,7 +514,7 @@ export function compileVanillaParticles(program, lines, ctx) {
       position = "~ ~ ~"; location = `in ${e.dimension} at @e[tag=${tag},limit=1]`;
     } else { position = `${format6(logicalCoordinate(program, e.x))} ${format6(logicalCoordinate(program, e.y))} ${format6(logicalCoordinate(program, e.z))}`; location = `in ${e.dimension}`; }
     const command = `particle ${e.particle} ${position} ${numberLiteral(e.delta.x)} ${numberLiteral(e.delta.y)} ${numberLiteral(e.delta.z)} ${numberLiteral(e.speed)} ${e.count}${e.force ? " force" : ""}`;
-    lines.push(`execute ${e.condition ? `${condition(e.condition, true, ctx)} ` : ""}${location} run ${command}`);
+    lines.push(`execute ${e.condition ? `${condition(e.condition, true, ctx, lines)} ` : ""}${location} run ${command}`);
   }
 }
 
@@ -527,7 +527,7 @@ export function compileVanillaSounds(program, lines, ctx) {
       position = "~ ~ ~"; location = `in ${e.dimension} at @e[tag=${tag},limit=1]`;
     } else { position = `${format6(logicalCoordinate(program, e.x))} ${format6(logicalCoordinate(program, e.y))} ${format6(logicalCoordinate(program, e.z))}`; location = `in ${e.dimension}`; }
     const command = `playsound ${e.sound} master @a ${position} ${numberLiteral(e.volume)} ${numberLiteral(e.pitch)}`;
-    lines.push(`execute ${e.condition ? `${condition(e.condition, true, ctx)} ` : ""}${location} run ${command}`);
+    lines.push(`execute ${e.condition ? `${condition(e.condition, true, ctx, lines)} ` : ""}${location} run ${command}`);
   }
 }
 

@@ -727,7 +727,53 @@ type PortableProgramSpecV26 = Omit<PortableProgramSpecV25, "version" | "items" |
   tick: PortableV26Action[];
   vanilla?: Omit<NonNullable<PortableProgramSpecV25["vanilla"]>, "cameras"> & { cameras?: PortableVanillaCameraV26[] };
 };
-type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14 | PortableProgramSpecV15 | PortableProgramSpecV16 | PortableProgramSpecV17 | PortableProgramSpecV18 | PortableProgramSpecV19 | PortableProgramSpecV20 | PortableProgramSpecV21 | PortableProgramSpecV22 | PortableProgramSpecV23 | PortableProgramSpecV24 | PortableProgramSpecV25 | PortableProgramSpecV26;
+type PortableV27Condition =
+  | PortableV25Comparison
+  | { op: "all" | "any"; conditions: PortableV27Condition[] }
+  | { op: "not"; condition: PortableV27Condition };
+type PortableV27PlayerAction =
+  | Exclude<PortableV26PlayerAction, { op: "if" } | { op: "player_reduce"; kind: "any" | "all" }>
+  | { op: "player_reduce"; kind: "any" | "all"; players: PortablePlayerSetRefV14; target: string; condition: PortableV27Condition }
+  | { op: "if"; condition: PortableV27Condition; then: PortableV27PlayerAction[]; else?: PortableV27PlayerAction[] };
+type PortableV27Action =
+  | Exclude<PortableV26Action,
+      | { op: "if" } | { op: "player_reduce"; kind: "any" | "all" }
+      | { op: "for_each_player" | "for_single_player" | "for_session" }
+      | { op: "interaction_use" | "interaction_controller_player" | "placeable_tick" }>
+  | { op: "player_reduce"; kind: "any" | "all"; players: PortablePlayerSetRefV14; target: string; condition: PortableV27Condition }
+  | { op: "if"; condition: PortableV27Condition; then: PortableV27Action[]; else?: PortableV27Action[] }
+  | { op: "for_each_player" | "for_single_player"; players: PortablePlayerSetRefV14; actions: PortableV27Action[] }
+  | { op: "for_session"; session: string; actions: PortableV27Action[] }
+  | { op: "interaction_use"; interaction: string; actions: PortableV27PlayerAction[] }
+  | { op: "interaction_controller_player"; interaction: string; actions: PortableV27PlayerAction[] }
+  | { op: "placeable_tick"; placeable: string; slot: number; actions: PortableV27Action[] };
+type PortableV27BlockProjection = Omit<PortableVanillaBlockProjection, "when"> & { when?: PortableV27Condition };
+type PortableV27PlaceableBlockProjection = Omit<PortableVanillaBlockProjectionV25, "when"> & { when?: PortableV27Condition };
+type PortableV27TextProjection = Omit<PortableVanillaTextProjection, "when"> & { when?: PortableV27Condition };
+type PortableV27PlaceableTextProjection = Omit<PortableVanillaTextProjectionV25, "when"> & { when?: PortableV27Condition };
+type PortableV27ActorProjection = Omit<PortableVanillaActorProjectionV22, "when"> & { when?: PortableV27Condition };
+type PortableV27Interaction = Omit<PortableVanillaInteractionV23, "when"> & { when?: PortableV27Condition };
+type PortableV27PlaceableInteraction = Omit<PortableVanillaInteractionV25, "when"> & { when?: PortableV27Condition };
+type PortableV27ItemDisplay = Omit<PortableVanillaItemDisplayV25, "when"> & { when?: PortableV27Condition };
+type PortableV27WorldBatch = Omit<PortableVanillaWorldBatch, "when"> & { when?: PortableV27Condition };
+type PortableV27ParticleEmitter = Omit<PortableVanillaParticleEmitter, "when"> & { when?: PortableV27Condition };
+type PortableV27SoundEmitter = Omit<PortableVanillaSoundEmitter, "when"> & { when?: PortableV27Condition };
+type PortableProgramSpecV27 = Omit<PortableProgramSpecV26, "version" | "tick" | "vanilla"> & {
+  version: 27;
+  tick: PortableV27Action[];
+  vanilla?: Omit<NonNullable<PortableProgramSpecV26["vanilla"]>,
+    "projections" | "texts" | "actors" | "interactions" | "itemDisplays" | "worldBatches" | "particles" | "sounds"> & {
+    projections?: Array<PortableV27BlockProjection | PortableV27PlaceableBlockProjection>;
+    texts?: Array<PortableV27TextProjection | PortableV27PlaceableTextProjection>;
+    actors?: PortableV27ActorProjection[];
+    interactions?: Array<PortableV27Interaction | PortableV27PlaceableInteraction>;
+    itemDisplays?: PortableV27ItemDisplay[];
+    worldBatches?: PortableV27WorldBatch[];
+    particles?: PortableV27ParticleEmitter[];
+    sounds?: PortableV27SoundEmitter[];
+  };
+};
+type PortableProgramSpec = PortableProgramSpecV1 | PortableProgramSpecV2 | PortableProgramSpecV3 | PortableProgramSpecV4 | PortableProgramSpecV5 | PortableProgramSpecV6 | PortableProgramSpecV7 | PortableProgramSpecV8 | PortableProgramSpecV9 | PortableProgramSpecV10 | PortableProgramSpecV11 | PortableProgramSpecV12 | PortableProgramSpecV13 | PortableProgramSpecV14 | PortableProgramSpecV15 | PortableProgramSpecV16 | PortableProgramSpecV17 | PortableProgramSpecV18 | PortableProgramSpecV19 | PortableProgramSpecV20 | PortableProgramSpecV21 | PortableProgramSpecV22 | PortableProgramSpecV23 | PortableProgramSpecV24 | PortableProgramSpecV25 | PortableProgramSpecV26 | PortableProgramSpecV27;
 
 declare const portable: {
   define(spec: PortableProgramSpec): void;
@@ -806,6 +852,11 @@ type PortableDslSharedValue = number | PortableDslState | PortableDslPersistentS
 type PortableDslPlaceableState = PortableDslComparable & { readonly name: string; set(value: PortableDslValue): void; add(value: PortableDslValue): void; sub(value: PortableDslValue): void; negate(): void };
 type PortableDslValue = PortableDslSharedValue | PortableDslSessionState | PortableDslSessionPersistentState | PortableDslPlayerState | PortableDslPlayerInput | PortableDslPlayerSelection | PortableDslPlayerForm | PortableDslPlaceableState;
 type PortableDslCondition = { readonly __portableDslCondition?: never };
+type PortableDslConditionApi = {
+  all(conditions: readonly PortableDslCondition[]): PortableDslCondition;
+  any(conditions: readonly PortableDslCondition[]): PortableDslCondition;
+  not(condition: PortableDslCondition): PortableDslCondition;
+};
 type PortableDslChooseCase = { when: PortableDslCondition; then: () => void };
 type PortableDslMatchCase = readonly [PortableDslValue, () => void];
 type PortableDslCoordinate = number | PortableDslState | { readonly __portableDslCoordinate?: never };
@@ -1103,8 +1154,7 @@ type PortableDsl = {
   tick(callback: () => void): void;
   repeat<T>(count: number, callback: (index: number) => T): readonly T[];
   when(condition: PortableDslCondition, thenCallback: () => void, elseCallback?: () => void): void;
-  whenAll(conditions: readonly PortableDslCondition[], thenCallback: () => void, elseCallback?: () => void): void;
-  whenAny(conditions: readonly PortableDslCondition[], thenCallback: () => void, elseCallback?: () => void): void;
+  readonly condition: PortableDslConditionApi;
   unless(condition: PortableDslCondition, thenCallback: () => void, elseCallback?: () => void): void;
   choose(cases: readonly PortableDslChooseCase[], otherwiseCallback?: () => void): void;
   match(value: PortableDslValue, cases: readonly PortableDslMatchCase[], otherwiseCallback?: () => void): void;

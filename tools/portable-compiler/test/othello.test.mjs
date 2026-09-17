@@ -11,11 +11,11 @@ import { parseProgram } from "../program.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const source = path.join(root, "examples/portable-othello/datapack/data/portable_othello/mcgame/main.ts");
 
-test("portable Othello stays on v23 and fits bounded board/interaction/action budgets", () => {
+test("portable Othello uses v27 compound conditions and fits bounded board/interaction/action budgets", () => {
   const spec = extractPortableSource(source, root);
   const program = parseProgram(spec);
 
-  assert.equal(program.version, 23);
+  assert.equal(program.version, 27);
   assert.equal(program.grids.length, 1);
   assert.equal(program.grids[0].id, "board");
   assert.equal(program.grids[0].width, 8);
@@ -36,10 +36,10 @@ test("portable Othello stays on v23 and fits bounded board/interaction/action bu
   assert.equal(result.gridCount, 1);
   assert.equal(result.gridWorldCount, 1);
   assert.equal(result.playerStateCount, 1);
-  assert.ok(result.branchFunctionCount < 800);
+  assert.ok(result.branchFunctionCount < 700);
 
   const marker = fs.readFileSync(path.join(output, ".mcgame-portable-generated"), "utf8");
-  assert.match(marker, /portable_version=23/);
+  assert.match(marker, /portable_version=27/);
   assert.match(marker, /player\.state\.othelloColor=/);
   assert.match(marker, /grid\.board=/);
 });

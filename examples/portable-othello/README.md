@@ -8,7 +8,7 @@ A two-player Othello/Reversi reference game for the vanilla-first Portable DSL.
 - a `GridWorld` projection for the visible board;
 - 60 direct-click cell interactions (the four permanent initial center cells do not need hitboxes);
 - two player-local seat/color assignments plus bounded player reductions for seat presence;
-- ordered `whenAll`, `choose`, and `match` authoring sugar from ADR 0038;
+- v27 `game.condition.all(...)` plus ordered `choose` and `match` control-flow helpers;
 - one generic move processor shared by all cell interactions instead of duplicating eight-direction rules 60 times;
 - bounded eight-direction capture/flip scans;
 - automatic no-legal-move pass detection using an incremental board scan;
