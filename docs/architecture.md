@@ -28,7 +28,7 @@ The compiler accepts one entry TypeScript source, namespace, and output director
 
 Portable IR is the versioned semantic contract between authoring and vanilla lowering. It contains deterministic fixed-point values, bounded actions, collision primitives, declarative presentation/world resources, input mappings, and lifecycle metadata. Arbitrary JavaScript callbacks are not an IR feature. Authoring-only DSL sugar may expand to existing IR without consuming a new Portable version when it adds no new runtime semantics; ADR 0038 applies this rule to bounded conditional helpers.
 
-IR versions 1 through 27 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14, ADR 0024 defines team-bound logical sessions in v15, ADR 0025 defines session-local GridWorld projection in v16, ADR 0027 defines bounded player/session reductions in v17, ADR 0028 defines bounded persistent scalar state in v18, ADR 0029 defines bounded persistent Grid state in v19, ADR 0030 defines bounded native-dialog selection UI in v20, ADR 0031 defines bounded rich/typed native-dialog UI in v21, ADR 0032 defines bounded expanded mannequin actor presentation in v22, ADR 0034 defines bounded world right-click interaction input in v23, ADR 0035 defines active-instance interaction controller binding in v24, ADR 0036 defines bounded item-backed placeable objects in v25, and ADR 0037 defines interaction-controller camera audiences and bounded return in v26. ADR 0040 defines bounded recursive compound conditions in Portable v27.
+IR versions 1 through 28 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14, ADR 0024 defines team-bound logical sessions in v15, ADR 0025 defines session-local GridWorld projection in v16, ADR 0027 defines bounded player/session reductions in v17, ADR 0028 defines bounded persistent scalar state in v18, ADR 0029 defines bounded persistent Grid state in v19, ADR 0030 defines bounded native-dialog selection UI in v20, ADR 0031 defines bounded rich/typed native-dialog UI in v21, ADR 0032 defines bounded expanded mannequin actor presentation in v22, ADR 0034 defines bounded world right-click interaction input in v23, ADR 0035 defines active-instance interaction controller binding in v24, ADR 0036 defines bounded item-backed placeable objects in v25, and ADR 0037 defines interaction-controller camera audiences and bounded return in v26. ADR 0040 defines bounded recursive compound conditions in Portable v27. ADR 0041 defines constant-factor scalar multiplication/division in Portable v28.
 
 ### Generated datapack
 
@@ -71,7 +71,7 @@ Compiler assets live under `tools/portable-compiler/assets/`:
 
 Portable numbers use signed 32-bit fixed-point integers. `fixedPoint` defaults to 1000. Values are constants, shared state references, or shared input references.
 
-`game.state(name, initial)` returns a mutable state reference with `set`, `add`, `sub`, `negate`, and comparison helpers. `game.input(...)` returns a read-only input reference. State/input names and collection counts are bounded by compiler validation.
+`game.state(name, initial)` returns a mutable state reference with `set`, `add`, `sub`, `negate`, and comparison helpers. Portable v28 additionally exposes constant-factor `mul(number)` / `div(number)` on every mutable scalar state scope. `game.input(...)` returns a read-only input reference. State/input names and collection counts are bounded by compiler validation.
 
 ### Tick rules
 
@@ -351,6 +351,14 @@ Vanilla lowering keeps comparison-only fast paths. Compound trees become generat
 
 The migrated `portable-othello` reference uses v27 conjunctions for seat admission and scan scheduling. Reusable runtime rules/procedures remain a separate future capability because they require parameter/local-state, recursion/cycle, lexical specialization, and execution-context semantics beyond condition composition.
 
+## Portable v28 constant scalar arithmetic
+
+ADR 0041 adds compile-time-number multiplication and division to mutable global, persistent, session, player-local, and placeable-local scalar state. The authoring surface is `state.mul(factor)` and `state.div(divisor)`; factors are JavaScript numbers, not Portable value references. Using either method raises inferred Portable version to v28.
+
+The parser quantizes the factor with the program `fixedPoint`. Division is rejected when the quantized divisor is zero. Lowering reduces the fixed-point ratio by GCD before emitting scoreboard arithmetic. With `fixedPoint=1000`, `velocity.mul(0.98)` becomes the reduced coefficient `49/50`, so generated code multiplies by 49 and divides by 50 rather than multiplying by 980 and dividing by 1000. Negative factors negate first and then use a positive reduced divisor; `mul(0)` lowers directly to zero.
+
+V28 remains deliberately constant-only. It does not add state-by-state multiply/divide or an expression tree. Intermediate multiplication still follows signed 32-bit Minecraft scoreboard behavior and has no generic overflow guard, so game code must keep runtime magnitudes within a safe range. This is suitable for intended arcade coefficients and pinball-scale positions/velocities while keeping lowering bounded and deterministic.
+
 ## Planned capability roadmap after v16
 
 ADR 0026 establishes a capability-first roadmap: prioritize portable semantics that current game source cannot reproduce safely with existing primitives before automation or infrastructure that already has a workable explicit fallback. This is planning policy, not an implemented API contract; each capability requires its own ADR and Portable IR version decision before implementation.
@@ -366,13 +374,13 @@ ADR 0032 completes item 4 by extending rather than replacing the v7 lifecycle: a
 
 Automatic arena allocation, per-session ownership/dynamic chunk leasing, dynamic matchmaking, session-local presentation declarations, and per-player vanilla sidebars remain useful but lower priority because current prototypes have explicit workarounds. Bounded local TypeScript module/import authoring is implemented by ADR 0033 without changing Portable IR. Bounded world-object right-click input is implemented by Portable v23 / ADR 0034 without opening a generic Minecraft query/event API, and v24 / ADR 0035 adds active-instance exact-player controller binding for those interactions without introducing generic identity queries. Client-private scene visibility is still a genuine missing isolation feature, but spatially separate footprints are sufficient for current acceptance games, so privacy work is also behind the four capability priorities unless a retained game makes it a blocker.
 
-ADR 0036 completes the bounded item-backed placeable-object capability in Portable v25. ADR 0037 / Portable v26 then separates the checked-in pinball cabinet from its remote game board by routing the exact active interaction controller to one remote position-lock camera and providing bounded return to the source interaction. ADR 0040 / Portable v27 adds bounded recursive compound conditions shared across action and declarative predicate surfaces without increasing the action ceiling. Additional capability gaps include persistent placed furniture, native block semantics, standalone/general custom items, multiple/dynamic controller-camera arbitration, per-player camera coordinates, 3D/swept collision, deliberately scoped Minecraft world/entity queries, pathfinding/topology helpers, and generic runtime collections where existing Grid/fixed-slot patterns prove insufficient.
+ADR 0036 completes the bounded item-backed placeable-object capability in Portable v25. ADR 0037 / Portable v26 then separates the checked-in pinball cabinet from its remote game board by routing the exact active interaction controller to one remote position-lock camera and providing bounded return to the source interaction. ADR 0040 / Portable v27 adds bounded recursive compound conditions shared across action and declarative predicate surfaces without increasing the action ceiling. ADR 0041 / Portable v28 adds bounded constant-factor fixed-point multiplication/division for mutable scalar state. Additional capability gaps include persistent placed furniture, native block semantics, standalone/general custom items, multiple/dynamic controller-camera arbitration, per-player camera coordinates, 3D/swept collision, deliberately scoped Minecraft world/entity queries, pathfinding/topology helpers, and generic runtime collections where existing Grid/fixed-slot patterns prove insufficient.
 
 ## Current limitations
 
 - TypeScript modules are local build-time composition only: at most 64 `.ts` files / 1,000,000 aggregate source bytes under the entry directory; Node built-ins, npm/bare packages, non-TypeScript assets, dynamic import, authored `require`, and circular imports are unsupported;
 - v1-v11 remain single-controller-oriented for compatibility; v12 is the multiplayer model;
-- fixed-point arithmetic relies on Minecraft scoreboard 32-bit behavior; generated commands do not add generic overflow guards;
+- fixed-point arithmetic relies on Minecraft scoreboard 32-bit behavior; generated commands do not add generic overflow guards. V28 `mul`/`div` accept compile-time numeric factors only, reduce coefficients before lowering, and still require authored runtime values to avoid 32-bit intermediate overflow;
 - no runtime generic arrays/collections, arbitrary packet-event dispatch, arbitrary inventory/form/dialog API, arbitrary NBT/storage API, or arbitrary Minecraft queries; v21 provides bounded static rich native-dialog content, v22 provides bounded static mannequin profile/pose/equipment presentation, v23 provides bounded right-click/use events through compiler-owned interaction entities, v24 provides active-instance interaction-controller binding, v25 provides bounded compiler-known item appearances plus active-instance placeable slots, and v26 permits one position-lock camera to use an interaction controller as its exact dynamic audience plus bounded return to the source interaction; free-form text input, generic multi-field/dynamic forms, arbitrary click/attack events or commands, inventory GUI ownership, generic entity mutation, standalone/general custom-item behavior, persistent controller identity across reload, persistent placed objects, native custom block semantics, generic player identity values, and runtime entity collections remain unsupported;
 - one server-global sidebar; v14 permits up to eight camera declarations only for disjoint external-team audiences;
 - bounded 2D logic collision only, not Minecraft hitbox queries or 3D/swept physics;
@@ -400,6 +408,14 @@ The two cabinets maintained independent slot state and controller objectives. Ca
 Sneak-use pickup returned the item, freed the slot, removed its interaction, and advanced the controller generation. Reallocation advanced generation again while the player's old token remained stale; real Space before reclaim did not mutate the new instance. Both full-capacity and outside-ownership placement returned one matching refund stack and left no pending Marker/active slot. `/reload` reset all slots/generations and removed player controller scores/entities. Final cleanup left zero objectives, owned/pending entities, and force-loads; temporary floors and the acceptance pack were removed, leaving only vanilla enabled.
 
 The Node suite is 59/59 green. All 20 retained v1-v24 example outputs are byte-for-byte identical to parent compiler commit `37b4b70`.
+
+### v28 constant scalar arithmetic validation
+
+Portable v28 passed focused mod-free Minecraft 26.1 acceptance on `second` with a generated fixed-point arithmetic smoke pack. The generated marker reported `portable_version=28` and `fixed_point=1000`. Lowering reduced `mul(0.98)` from raw coefficient `980/1000` to `49/50`.
+
+Starting from raw values `mulPos=1234`, `divPos=1235`, `mulNeg=1001`, `divNeg=1001`, and `zero=1000`, one authored arithmetic tick produced `1209`, `617`, `-501`, `-501`, and `0` respectively. A subsequent ordinary `/reload` reproduced the same values. `portable/cleanup` removed the smoke objective, and pack teardown left only the pre-existing Othello datapack enabled.
+
+The Node regression suite is 74/74 green. The checked-in pinball core and pinball cabinet also compile successfully without using v28 arithmetic and retain their previous inferred Portable versions, v10 and v26 respectively.
 
 ### v27 compound-condition validation
 

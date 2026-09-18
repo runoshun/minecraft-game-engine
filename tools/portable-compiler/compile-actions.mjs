@@ -21,6 +21,33 @@ function persistentTarget(action, ctx) {
   return { holder: ctx.persistentStateHolder(action.target, action.session ?? null), objective: ctx.persistentObjective };
 }
 
+function gcd(a, b) {
+  while (b !== 0) [a, b] = [b, a % b];
+  return a;
+}
+
+function compileConstantFactor(targetHolder, targetObjective, kind, factorRaw, lines, ctx) {
+  if (kind === "mul" && factorRaw === 0) {
+    lines.push(`scoreboard players set ${targetHolder} ${targetObjective} 0`);
+    return;
+  }
+  if (kind === "div" && factorRaw === 0) fail("portable fixed-point division factor may not resolve to zero");
+
+  const magnitude = Math.abs(factorRaw);
+  if (factorRaw < 0) {
+    ctx.usesNegate = true;
+    lines.push(`scoreboard players operation ${targetHolder} ${targetObjective} *= #neg1 ${ctx.objective}`);
+  }
+
+  const left = kind === "mul" ? magnitude : ctx.program.fixedPoint;
+  const right = kind === "mul" ? ctx.program.fixedPoint : magnitude;
+  const common = gcd(left, right);
+  const numerator = left / common, denominator = right / common;
+  if (numerator > 2147483647 || denominator > 2147483647) fail("portable fixed-point factor cannot be represented by signed scoreboard constants after reduction");
+  if (numerator !== 1) lines.push(`scoreboard players operation ${targetHolder} ${targetObjective} *= ${ctx.constantHolder(numerator)} ${ctx.objective}`);
+  if (denominator !== 1) lines.push(`scoreboard players operation ${targetHolder} ${targetObjective} /= ${ctx.constantHolder(denominator)} ${ctx.objective}`);
+}
+
 function isComparison(test) {
   return ["eq", "ne", "lt", "lte", "gt", "gte"].includes(test.op);
 }
@@ -135,6 +162,8 @@ export function compileActions(actions, lines, ctx) {
       }
       case "add": lines.push(operation(actionStateHolder(action, ctx), ctx.objective, "+=", action.value, ctx)); break;
       case "sub": lines.push(operation(actionStateHolder(action, ctx), ctx.objective, "-=", action.value, ctx)); break;
+      case "mul": compileConstantFactor(actionStateHolder(action, ctx), ctx.objective, "mul", action.factorRaw, lines, ctx); break;
+      case "div": compileConstantFactor(actionStateHolder(action, ctx), ctx.objective, "div", action.factorRaw, lines, ctx); break;
       case "negate":
         ctx.usesNegate = true;
         lines.push(`scoreboard players operation ${actionStateHolder(action, ctx)} ${ctx.objective} *= #neg1 ${ctx.objective}`);
@@ -147,6 +176,8 @@ export function compileActions(actions, lines, ctx) {
       }
       case "persistent_add": { const target = persistentTarget(action, ctx); lines.push(operation(target.holder, target.objective, "+=", action.value, ctx)); break; }
       case "persistent_sub": { const target = persistentTarget(action, ctx); lines.push(operation(target.holder, target.objective, "-=", action.value, ctx)); break; }
+      case "persistent_mul": { const target = persistentTarget(action, ctx); compileConstantFactor(target.holder, target.objective, "mul", action.factorRaw, lines, ctx); break; }
+      case "persistent_div": { const target = persistentTarget(action, ctx); compileConstantFactor(target.holder, target.objective, "div", action.factorRaw, lines, ctx); break; }
       case "persistent_negate": {
         ctx.usesNegate = true;
         const target = persistentTarget(action, ctx);
@@ -161,6 +192,8 @@ export function compileActions(actions, lines, ctx) {
       }
       case "player_add": lines.push(operation("@s", ctx.playerStateObjective(action.target), "+=", action.value, ctx)); break;
       case "player_sub": lines.push(operation("@s", ctx.playerStateObjective(action.target), "-=", action.value, ctx)); break;
+      case "player_mul": compileConstantFactor("@s", ctx.playerStateObjective(action.target), "mul", action.factorRaw, lines, ctx); break;
+      case "player_div": compileConstantFactor("@s", ctx.playerStateObjective(action.target), "div", action.factorRaw, lines, ctx); break;
       case "player_negate":
         ctx.usesNegate = true;
         lines.push(`scoreboard players operation @s ${ctx.playerStateObjective(action.target)} *= #neg1 ${ctx.objective}`);
@@ -180,6 +213,8 @@ export function compileActions(actions, lines, ctx) {
       }
       case "placeable_add": lines.push(operation(ctx.placeableStateHolder(action.placeable, action.slot, action.target), ctx.objective, "+=", action.value, ctx)); break;
       case "placeable_sub": lines.push(operation(ctx.placeableStateHolder(action.placeable, action.slot, action.target), ctx.objective, "-=", action.value, ctx)); break;
+      case "placeable_mul": compileConstantFactor(ctx.placeableStateHolder(action.placeable, action.slot, action.target), ctx.objective, "mul", action.factorRaw, lines, ctx); break;
+      case "placeable_div": compileConstantFactor(ctx.placeableStateHolder(action.placeable, action.slot, action.target), ctx.objective, "div", action.factorRaw, lines, ctx); break;
       case "placeable_negate":
         ctx.usesNegate = true;
         lines.push(`scoreboard players operation ${ctx.placeableStateHolder(action.placeable, action.slot, action.target)} ${ctx.objective} *= #neg1 ${ctx.objective}`);

@@ -792,16 +792,18 @@ type PortableDslState = PortableDslComparable & {
   set(value: PortableDslValue): void;
   add(value: PortableDslValue): void;
   sub(value: PortableDslValue): void;
+  mul(factor: number): void;
+  div(divisor: number): void;
   negate(): void;
 };
 type PortableDslPersistentStateOptions = { schema?: number; onSchemaMismatch?: "reset" | "preserve" };
 type PortableDslPersistentState = PortableDslComparable & {
   readonly name: string;
-  set(value: PortableDslValue): void; add(value: PortableDslValue): void; sub(value: PortableDslValue): void; negate(): void;
+  set(value: PortableDslValue): void; add(value: PortableDslValue): void; sub(value: PortableDslValue): void; mul(factor: number): void; div(divisor: number): void; negate(): void;
 };
 type PortableDslSessionPersistentState = PortableDslComparable & {
   readonly name: string;
-  set(value: PortableDslValue): void; add(value: PortableDslValue): void; sub(value: PortableDslValue): void; negate(): void;
+  set(value: PortableDslValue): void; add(value: PortableDslValue): void; sub(value: PortableDslValue): void; mul(factor: number): void; div(divisor: number): void; negate(): void;
 };
 type PortableDslInput = PortableDslComparable & { readonly name: string };
 type PortableDslPlayerState = PortableDslComparable & {
@@ -809,6 +811,8 @@ type PortableDslPlayerState = PortableDslComparable & {
   set(value: PortableDslValue): void;
   add(value: PortableDslValue): void;
   sub(value: PortableDslValue): void;
+  mul(factor: number): void;
+  div(divisor: number): void;
   negate(): void;
 };
 type PortableDslSessionState = PortableDslComparable & {
@@ -816,6 +820,8 @@ type PortableDslSessionState = PortableDslComparable & {
   set(value: PortableDslValue): void;
   add(value: PortableDslValue): void;
   sub(value: PortableDslValue): void;
+  mul(factor: number): void;
+  div(divisor: number): void;
   negate(): void;
 };
 type PortableDslPlayerInput = PortableDslComparable & { readonly name: PortablePlayerInputName };
@@ -849,7 +855,7 @@ type PortableDslForm = { readonly __portableDslForm?: never };
 type PortableDslPlayerForm = PortableDslComparable & { open(): void; clear(): void };
 type PortableDslGridWorldReady = PortableDslComparable & { readonly name: string };
 type PortableDslSharedValue = number | PortableDslState | PortableDslPersistentState | PortableDslInput | PortableDslGridWorldReady;
-type PortableDslPlaceableState = PortableDslComparable & { readonly name: string; set(value: PortableDslValue): void; add(value: PortableDslValue): void; sub(value: PortableDslValue): void; negate(): void };
+type PortableDslPlaceableState = PortableDslComparable & { readonly name: string; set(value: PortableDslValue): void; add(value: PortableDslValue): void; sub(value: PortableDslValue): void; mul(factor: number): void; div(divisor: number): void; negate(): void };
 type PortableDslValue = PortableDslSharedValue | PortableDslSessionState | PortableDslSessionPersistentState | PortableDslPlayerState | PortableDslPlayerInput | PortableDslPlayerSelection | PortableDslPlayerForm | PortableDslPlaceableState;
 type PortableDslCondition = { readonly __portableDslCondition?: never };
 type PortableDslConditionApi = {

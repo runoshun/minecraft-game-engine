@@ -62,7 +62,7 @@ export const LIMITS = Object.freeze({
   conditionNodes: 64,
 });
 
-export const CURRENT_VERSION = 27;
+export const CURRENT_VERSION = 28;
 
 export function fail(message) { throw new Error(message); }
 export function has(object, member) { return Object.prototype.hasOwnProperty.call(object, member); }

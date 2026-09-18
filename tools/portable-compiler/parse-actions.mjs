@@ -17,6 +17,13 @@ function requireSessionPlayers(ctx, players, path) {
   if (playerSetKey(players) !== playerSetKey(session.players)) fail(`${path} PlayerSet must match session ${ctx.sessionScope}`);
 }
 
+function parseConstantFactor(action, op, ctx, path) {
+  if (ctx.version < 28) fail(`${path}.op requires portable version 28`);
+  const factorRaw = scale(requiredMember(action, "factor", path), ctx.fixedPoint, `${path}.factor`);
+  if ((op === "div" || op.endsWith("_div")) && factorRaw === 0) fail(`${path}.factor resolves to zero at fixedPoint ${ctx.fixedPoint}`);
+  return factorRaw;
+}
+
 export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }) {
   if (!Array.isArray(array)) fail(`${path} must be an array`);
   if (depth > LIMITS.depth) fail(`${path} exceeds max nesting depth ${LIMITS.depth}`);
@@ -27,6 +34,52 @@ export function parseActions(array, ctx, path, depth = 0, counter = { count: 0 }
     const a = array[i], p = `${path}[${i}]`;
     if (!isObject(a)) fail(`${p} must be an object`);
     const op = requiredString(a, "op", p);
+
+    if (["mul", "div"].includes(op)) {
+      if (ctx.playerScope === "multi") fail(`${p} shared state mutation is not allowed inside PlayerContext`);
+      const target = requiredString(a, "target", p), factorRaw = parseConstantFactor(a, op, ctx, p);
+      if (ctx.sessionScope) {
+        const session = currentSession(ctx, p);
+        if (!session.states.has(target)) fail(`${p} references unknown target session state ${ctx.sessionScope}.${target}`);
+        out.push({ op, session: ctx.sessionScope, target, factorRaw });
+      } else {
+        if (!ctx.states.has(target)) fail(`${p} references unknown target state ${target}`);
+        out.push({ op, target, factorRaw });
+      }
+      continue;
+    }
+    if (["persistent_mul", "persistent_div"].includes(op)) {
+      if (ctx.playerScope === "multi") fail(`${p} persistent shared state mutation is not allowed inside PlayerContext`);
+      const target = requiredString(a, "target", p), factorRaw = parseConstantFactor(a, op, ctx, p);
+      if (ctx.sessionScope) {
+        const session = currentSession(ctx, p);
+        if (!session.persistentStates.has(target)) fail(`${p} references unknown target session persistent state ${ctx.sessionScope}.${target}`);
+        out.push({ op, session: ctx.sessionScope, target, factorRaw });
+      } else {
+        if (!ctx.persistentStates?.has(target)) fail(`${p} references unknown target persistent state ${target}`);
+        out.push({ op, target, factorRaw });
+      }
+      continue;
+    }
+    if (["player_mul", "player_div"].includes(op)) {
+      if (!ctx.playerScope) fail(`${p}.op is only valid inside PlayerContext`);
+      const target = requiredString(a, "target", p), factorRaw = parseConstantFactor(a, op, ctx, p);
+      if (!ctx.playerStates.has(target)) fail(`${p} references unknown target player state ${target}`);
+      out.push({ op, target, factorRaw });
+      continue;
+    }
+    if (["placeable_mul", "placeable_div"].includes(op)) {
+      if (!ctx.placeableScope) fail(`${p}.op is only valid inside PlaceableInstanceContext`);
+      if (ctx.playerScope === "multi") fail(`${p} placeable state mutation is not allowed inside multi-player PlayerContext`);
+      const placeable = requiredString(a, "placeable", p);
+      const slot = boundedInteger(requiredMember(a, "slot", p), 0, 2147483647, `${p}.slot`);
+      if (ctx.placeableScope.id !== placeable || ctx.placeableScope.slot !== slot) fail(`${p}.op targets a different placeable slot`);
+      const declaration = ctx.placeables?.get(placeable);
+      const target = requiredString(a, "target", p);
+      if (!declaration?.states.has(target)) fail(`${p}.target references unknown placeable state ${placeable}.${target}`);
+      out.push({ op, placeable, slot, target, factorRaw: parseConstantFactor(a, op, ctx, p) });
+      continue;
+    }
 
     if (["set", "add", "sub", "negate"].includes(op)) {
       if (ctx.playerScope === "multi") fail(`${p} shared state mutation is not allowed inside PlayerContext`);

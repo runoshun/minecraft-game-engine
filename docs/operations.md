@@ -476,3 +476,19 @@ Acceptance must verify:
 The accepted 2026-09-18 run installed archive SHA-256 `68bddf83f36929e9168b101cccac10d0dbd87cbaadaa2d2f127f0c18c0147ef8`. The pack exposed 65 generated condition evaluators and loaded with no problems. Initial board scan returned 60 green / two black / two white. Real simultaneous seat use produced Camera color raw `1000`, Camera2 color raw `2000`, both seat-presence values raw `1000`, and `phase=1000`. Camera's real use of cell `(2,3)` produced score raw `4000/1000`, board counts 59/4/1, `turn=2000` (White), `phase=1000`, and `consecutivePasses=0`.
 
 The Node suite is 70/70 green. All 22 checked-in examples compile and version inference remains unchanged for the 21 examples that do not use v27 compound conditions.
+
+## Portable v28 arithmetic acceptance
+
+ADR 0041 constant-factor scalar arithmetic changes generated scoreboard math and therefore requires focused Minecraft 26.1 validation when its lowering changes.
+
+Use a small mod-free `second` smoke pack with `fixedPoint=1000` and known scalar inputs. At minimum verify:
+
+- `mul(0.98)` applies the reduced `49/50` coefficient;
+- `div(2)` halves the fixed-point raw value;
+- a negative factor applies the documented sign/floor behavior;
+- `mul(0)` produces exact zero;
+- cleanup removes the generated objective state.
+
+Compiler tests must also reject a divisor that quantizes to raw zero and raw mul/div IR below Portable v28.
+
+The accepted 2026-09-19 run used archive SHA-256 `a0c0b2c3dfc2e5df9105e4fcb18bebe928ac964aa7d0d00087d5ad1df2764021`. With raw inputs `1234`, `1235`, `1001`, `1001`, and `1000`, the generated pack produced `1209` for `mul(0.98)`, `617` for `div(2)`, `-501` for both negative-factor probes, and `0` for `mul(0)`. A subsequent `/reload` reproduced the values. Cleanup removed the generated objective and the smoke pack was then deleted, leaving the pre-existing Othello acceptance pack untouched.

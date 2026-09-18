@@ -163,6 +163,7 @@
     let usesV25 = false;
     let usesV26 = false;
     let usesV27 = false;
+    let usesV28 = false;
 
     function assertUnique(name) {
       if (Object.prototype.hasOwnProperty.call(stateValues, name) || Object.prototype.hasOwnProperty.call(persistentStateValues, name) || Object.prototype.hasOwnProperty.call(inputValues, name)) {
@@ -281,6 +282,8 @@
       ref.set = value => { assertSharedWrite(); emit({ op: "set", target: name, value: unwrapValue(value) }); };
       ref.add = value => { assertSharedWrite(); emit({ op: "add", target: name, value: unwrapValue(value) }); };
       ref.sub = value => { assertSharedWrite(); emit({ op: "sub", target: name, value: unwrapValue(value) }); };
+      ref.mul = factor => { assertSharedWrite(); usesV28 = true; emit({ op: "mul", target: name, factor: finiteNumber(factor, "state " + name + " mul factor") }); };
+      ref.div = divisor => { assertSharedWrite(); usesV28 = true; emit({ op: "div", target: name, factor: finiteNumber(divisor, "state " + name + " div divisor") }); };
       ref.negate = () => { assertSharedWrite(); emit({ op: "negate", target: name }); };
       return Object.freeze(ref);
     }
@@ -310,6 +313,8 @@
       ref.set = value => { assertSharedWrite(); emit({ op: "persistent_set", target: name, value: unwrapValue(value) }); };
       ref.add = value => { assertSharedWrite(); emit({ op: "persistent_add", target: name, value: unwrapValue(value) }); };
       ref.sub = value => { assertSharedWrite(); emit({ op: "persistent_sub", target: name, value: unwrapValue(value) }); };
+      ref.mul = factor => { assertSharedWrite(); usesV28 = true; emit({ op: "persistent_mul", target: name, factor: finiteNumber(factor, "persistent state " + name + " mul factor") }); };
+      ref.div = divisor => { assertSharedWrite(); usesV28 = true; emit({ op: "persistent_div", target: name, factor: finiteNumber(divisor, "persistent state " + name + " div divisor") }); };
       ref.negate = () => { assertSharedWrite(); emit({ op: "persistent_negate", target: name }); };
       return Object.freeze(ref);
     }
@@ -659,6 +664,8 @@
       ref.set = next => emit({ op: "player_set", target: name, value: unwrapValue(next) });
       ref.add = next => emit({ op: "player_add", target: name, value: unwrapValue(next) });
       ref.sub = next => emit({ op: "player_sub", target: name, value: unwrapValue(next) });
+      ref.mul = factor => { usesV28 = true; emit({ op: "player_mul", target: name, factor: finiteNumber(factor, "player state " + name + " mul factor") }); };
+      ref.div = divisor => { usesV28 = true; emit({ op: "player_div", target: name, factor: finiteNumber(divisor, "player state " + name + " div divisor") }); };
       ref.negate = () => emit({ op: "player_negate", target: name });
       return Object.freeze(ref);
     }
@@ -876,6 +883,8 @@
         ref.set = next => { assertSessionSharedMutation("session state set"); emit({ op: "set", target: name, value: unwrapValue(next) }); };
         ref.add = next => { assertSessionSharedMutation("session state add"); emit({ op: "add", target: name, value: unwrapValue(next) }); };
         ref.sub = next => { assertSessionSharedMutation("session state sub"); emit({ op: "sub", target: name, value: unwrapValue(next) }); };
+        ref.mul = factor => { assertSessionSharedMutation("session state mul"); usesV28 = true; emit({ op: "mul", target: name, factor: finiteNumber(factor, "session state " + name + " mul factor") }); };
+        ref.div = divisor => { assertSessionSharedMutation("session state div"); usesV28 = true; emit({ op: "div", target: name, factor: finiteNumber(divisor, "session state " + name + " div divisor") }); };
         ref.negate = () => { assertSessionSharedMutation("session state negate"); emit({ op: "negate", target: name }); };
         return Object.freeze(ref);
       }
@@ -890,6 +899,8 @@
         ref.set = next => { assertSessionSharedMutation("session persistent state set"); emit({ op: "persistent_set", target: name, value: unwrapValue(next) }); };
         ref.add = next => { assertSessionSharedMutation("session persistent state add"); emit({ op: "persistent_add", target: name, value: unwrapValue(next) }); };
         ref.sub = next => { assertSessionSharedMutation("session persistent state sub"); emit({ op: "persistent_sub", target: name, value: unwrapValue(next) }); };
+        ref.mul = factor => { assertSessionSharedMutation("session persistent state mul"); usesV28 = true; emit({ op: "persistent_mul", target: name, factor: finiteNumber(factor, "session persistent state " + name + " mul factor") }); };
+        ref.div = divisor => { assertSessionSharedMutation("session persistent state div"); usesV28 = true; emit({ op: "persistent_div", target: name, factor: finiteNumber(divisor, "session persistent state " + name + " div divisor") }); };
         ref.negate = () => { assertSessionSharedMutation("session persistent state negate"); emit({ op: "persistent_negate", target: name }); };
         return Object.freeze(ref);
       }
@@ -1469,6 +1480,8 @@
       ref.set = value => { assertWrite(); emit({ op: "placeable_set", placeable: placeable.id, slot, target: name, value: unwrapValue(value) }); };
       ref.add = value => { assertWrite(); emit({ op: "placeable_add", placeable: placeable.id, slot, target: name, value: unwrapValue(value) }); };
       ref.sub = value => { assertWrite(); emit({ op: "placeable_sub", placeable: placeable.id, slot, target: name, value: unwrapValue(value) }); };
+      ref.mul = factor => { assertWrite(); usesV28 = true; emit({ op: "placeable_mul", placeable: placeable.id, slot, target: name, factor: finiteNumber(factor, "placeable state " + name + " mul factor") }); };
+      ref.div = divisor => { assertWrite(); usesV28 = true; emit({ op: "placeable_div", placeable: placeable.id, slot, target: name, factor: finiteNumber(divisor, "placeable state " + name + " div divisor") }); };
       ref.negate = () => { assertWrite(); emit({ op: "placeable_negate", placeable: placeable.id, slot, target: name }); };
       return Object.freeze(ref);
     }
@@ -2032,7 +2045,7 @@
 
     const usesSpectateCamera = cameras.some(camera => camera.mode === "spectate");
     const spec = {
-      version: usesV27 ? 27 : usesV26 ? 26 : usesV25 ? 25 : usesV24 ? 24 : usesV23 ? 23 : usesV22 ? 22 : usesV21 ? 21 : usesV20 ? 20 : usesV19 ? 19 : usesV18 ? 18 : usesV17 ? 17 : usesV16 ? 16 : usesV15 ? 15 : usesV14 ? 14 : usesV13 ? 13 : usesPlayerApi ? 12 : usesSpectateCamera ? 11 : ownership === null ? 9 : 10,
+      version: usesV28 ? 28 : usesV27 ? 27 : usesV26 ? 26 : usesV25 ? 25 : usesV24 ? 24 : usesV23 ? 23 : usesV22 ? 22 : usesV21 ? 21 : usesV20 ? 20 : usesV19 ? 19 : usesV18 ? 18 : usesV17 ? 17 : usesV16 ? 16 : usesV15 ? 15 : usesV14 ? 14 : usesV13 ? 13 : usesPlayerApi ? 12 : usesSpectateCamera ? 11 : ownership === null ? 9 : 10,
       fixedPoint,
       state: stateValues,
       tick: tickActions,
