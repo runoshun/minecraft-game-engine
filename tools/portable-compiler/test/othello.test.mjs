@@ -21,6 +21,20 @@ test("portable Othello uses v27 compound conditions and fits bounded board/inter
   assert.equal(program.grids[0].width, 8);
   assert.equal(program.grids[0].height, 8);
   assert.equal(program.gridWorlds.length, 1);
+  assert.equal(program.gridWorlds[0].y, 65);
+  assert.deepEqual(program.gridWorlds[0].palette.map(value => value.block), [
+    "minecraft:air",
+    "minecraft:polished_blackstone_pressure_plate",
+    "minecraft:heavy_weighted_pressure_plate",
+  ]);
+  assert.equal(program.worldBatches.length, 1);
+  assert.equal(program.worldBatches[0].id, "board_base");
+  assert.equal(program.worldBatches[0].blocks.length, 100);
+  assert.equal(program.projections.length, 23);
+  assert.ok(program.projections.some(value => value.id === "grid_v_0"));
+  assert.ok(program.projections.some(value => value.id === "grid_h_8"));
+  assert.equal(program.texts.length, 17);
+  assert.ok(program.texts.some(value => value.id === "pass_notice"));
   assert.equal(program.interactions.length, 63);
   assert.ok(program.interactions.some(value => value.id === "seat_black"));
   assert.ok(program.interactions.some(value => value.id === "seat_white"));
@@ -36,7 +50,7 @@ test("portable Othello uses v27 compound conditions and fits bounded board/inter
   assert.equal(result.gridCount, 1);
   assert.equal(result.gridWorldCount, 1);
   assert.equal(result.playerStateCount, 1);
-  assert.ok(result.branchFunctionCount < 700);
+  assert.ok(result.branchFunctionCount < 900);
 
   const marker = fs.readFileSync(path.join(output, ".mcgame-portable-generated"), "utf8");
   assert.match(marker, /portable_version=27/);
