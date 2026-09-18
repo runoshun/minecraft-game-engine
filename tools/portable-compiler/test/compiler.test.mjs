@@ -868,23 +868,25 @@ test("v17 reduction callbacks are read-only and parser enforces scope version an
   }), /exceeds max player reduction count 64/);
 });
 
-test("v17 acceptance example emits explicit empty reduction semantics", () => {
-  const relative = "examples/portable-player-reductions/datapack/data/portable_reductions/mcgame/main.ts";
+test("multiplayer lab preserves explicit empty reduction semantics", () => {
+  const relative = "examples/portable-multiplayer-lab/datapack/data/portable_multiplayer_lab/mcgame/main.ts";
   const source = fs.readFileSync(path.join(root, relative), "utf8");
   const program = parseProgram(extractPortableSpec(relative, transpileTypeScript(relative, source, root), root));
   assert.equal(program.version, 17);
-  const output = fs.mkdtempSync(path.join(os.tmpdir(), "mcgame-v17-acceptance-"));
-  compileDatapack(program, "portable_reductions", output);
+  const output = fs.mkdtempSync(path.join(os.tmpdir(), "mcgame-multiplayer-lab-"));
+  compileDatapack(program, "portable_multiplayer_lab", output);
   const markerText = read(output, ".mcgame-portable-generated");
   const marker = Object.fromEntries(markerText.trim().split("\n").map(line => {
     const index = line.indexOf("=");
     return [line.slice(0, index), line.slice(index + 1)];
   }));
-  const tick = read(output, "data/portable_reductions/function/portable/tick.mcfunction");
-  assert.ok(tick.includes(`scoreboard players set ${marker["session.party.state.minimum"]} ${marker.objective} -1000`));
-  assert.ok(tick.includes(`scoreboard players set ${marker["session.party.state.maximum"]} ${marker.objective} -1000`));
-  assert.ok(tick.includes(`scoreboard players set ${marker["session.party.state.anyReady"]} ${marker.objective} 0`));
-  assert.ok(tick.includes(`scoreboard players set ${marker["session.party.state.allReady"]} ${marker.objective} 1000`));
+  const tick = read(output, "data/portable_multiplayer_lab/function/portable/tick.mcfunction");
+  for (const session of ["red", "blue"]) {
+    assert.ok(tick.includes(`scoreboard players set ${marker[`session.${session}.state.minimum`]} ${marker.objective} -1000`));
+    assert.ok(tick.includes(`scoreboard players set ${marker[`session.${session}.state.maximum`]} ${marker.objective} -1000`));
+    assert.ok(tick.includes(`scoreboard players set ${marker[`session.${session}.state.anyReady`]} ${marker.objective} 0`));
+    assert.ok(tick.includes(`scoreboard players set ${marker[`session.${session}.state.allReady`]} ${marker.objective} 1000`));
+  }
 });
 
 
@@ -955,40 +957,31 @@ test("v18 persistent state enforces version scope bounds and collision rules", (
   assert.throws(() => extract(`portableDsl(game => { game.persistentState("x", 0, { schema: 0 }); game.tick(() => {}); });`), /schema.*between 1 and 2147483647/);
 });
 
-test("v18 acceptance example compiles with persistence lifecycle functions", () => {
-  const relative = "examples/portable-persistent-state/datapack/data/portable_persistent/mcgame/main.ts";
+test("persistence lab compiles scalar and Grid lifecycle functions together", () => {
+  const relative = "examples/portable-persistence-lab/datapack/data/portable_persistence_lab/mcgame/main.ts";
   const source = fs.readFileSync(path.join(root, relative), "utf8");
   const program = parseProgram(extractPortableSpec(relative, transpileTypeScript(relative, source, root), root));
-  assert.equal(program.version, 18);
-  const output = fs.mkdtempSync(path.join(os.tmpdir(), "mcgame-v18-persistent-"));
-  const result = compileDatapack(program, "portable_persistent", output);
+  assert.equal(program.version, 19);
+  const output = fs.mkdtempSync(path.join(os.tmpdir(), "mcgame-persistence-lab-"));
+  const result = compileDatapack(program, "portable_persistence_lab", output);
   assert.equal(result.persistentStateCount, 3);
-  assert.ok(fs.existsSync(path.join(output, "data/portable_persistent/function/portable/reset_persistent.mcfunction")));
-  assert.ok(fs.existsSync(path.join(output, "data/portable_persistent/function/portable/purge_persistent.mcfunction")));
+  assert.equal(result.persistentGridCount, 2);
+  assert.equal(result.persistentGridCellCount, 16);
+  assert.ok(fs.existsSync(path.join(output, "data/portable_persistence_lab/function/portable/reset_persistent.mcfunction")));
+  assert.ok(fs.existsSync(path.join(output, "data/portable_persistence_lab/function/portable/purge_persistent.mcfunction")));
 });
 
-test("representative checked-in examples compile deterministically", () => {
+test("checked-in human-facing examples compile deterministically", () => {
   const cases = [
-    ["examples/portable-bounce/datapack/data/portable_bounce/mcgame/main.ts", "portable_bounce", 1],
-    ["examples/portable-pinball-core/datapack/data/portable_pinball/mcgame/main.ts", "portable_pinball", 10],
-    ["examples/portable-breakout-core/datapack/data/portable_breakout/mcgame/main.ts", "portable_breakout", 10],
-    ["examples/portable-presentation-core/datapack/data/portable_presentation/mcgame/main.ts", "portable_presentation", 10],
-    ["examples/portable-ui-core/datapack/data/portable_ui/mcgame/main.ts", "portable_ui", 9],
-    ["examples/portable-world-core/datapack/data/portable_world/mcgame/main.ts", "portable_world", 10],
     ["examples/jrpg-demo/datapack/data/jrpg_demo/mcgame/main.ts", "jrpg_demo", 10],
-    ["examples/portable-multiplayer-core/datapack/data/portable_multiplayer/mcgame/main.ts", "portable_multiplayer", 12],
-    ["examples/portable-procedural-roguelike/datapack/data/portable_roguelike/mcgame/main.ts", "portable_roguelike", 13],
-    ["examples/portable-team-player-sets/datapack/data/portable_team_players/mcgame/main.ts", "portable_team_players", 14],
-    ["examples/portable-session-local/datapack/data/portable_sessions/mcgame/main.ts", "portable_sessions", 15],
-    ["examples/portable-session-grid-world/datapack/data/portable_session_world/mcgame/main.ts", "portable_session_world", 16],
-    ["examples/portable-player-reductions/datapack/data/portable_reductions/mcgame/main.ts", "portable_reductions", 17],
-    ["examples/portable-persistent-state/datapack/data/portable_persistent/mcgame/main.ts", "portable_persistent", 18],
-    ["examples/portable-persistent-grid/datapack/data/portable_persistent_grid/mcgame/main.ts", "portable_persistent_grid", 19],
-    ["examples/portable-selection-ui/datapack/data/portable_selection_ui/mcgame/main.ts", "portable_selection_ui", 20],
-    ["examples/portable-dialog-ui/datapack/data/portable_dialog_ui/mcgame/main.ts", "portable_dialog_ui", 21],
     ["examples/portable-actor-presentation/datapack/data/portable_actor_v22/mcgame/main.ts", "portable_actor_v22", 22],
-    ["examples/portable-interaction/datapack/data/portable_interaction/mcgame/main.ts", "portable_interaction", 23],
-    ["examples/portable-interaction-controller/datapack/data/portable_interaction_controller/mcgame/main.ts", "portable_interaction_controller", 24],
+    ["examples/portable-breakout-core/datapack/data/portable_breakout/mcgame/main.ts", "portable_breakout", 10],
+    ["examples/portable-dialog-ui/datapack/data/portable_dialog_ui/mcgame/main.ts", "portable_dialog_ui", 21],
+    ["examples/portable-multiplayer-lab/datapack/data/portable_multiplayer_lab/mcgame/main.ts", "portable_multiplayer_lab", 17],
+    ["examples/portable-othello/datapack/data/portable_othello/mcgame/main.ts", "portable_othello", 27],
+    ["examples/portable-persistence-lab/datapack/data/portable_persistence_lab/mcgame/main.ts", "portable_persistence_lab", 19],
+    ["examples/portable-pinball-cabinet/datapack/data/portable_pinball_cabinet/mcgame/main.ts", "portable_pinball_cabinet", 26],
+    ["examples/portable-procedural-roguelike/datapack/data/portable_roguelike/mcgame/main.ts", "portable_roguelike", 13],
   ];
   for (const [relative, namespace, expectedVersion] of cases) {
     const program = parseProgram(extractPortableSource(path.join(root, relative), root));

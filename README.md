@@ -64,30 +64,24 @@ portableDsl({ fixedPoint: 1000 }, game => {
 
 ## Examples
 
-- `examples/portable-bounce` — low-level fixed-point smoke example.
-- `examples/portable-breakout-core` — complete brick-breaker acceptance game.
-- `examples/portable-pinball-core` — segment/capsule/trigger/flipper collision coverage.
-- `examples/portable-presentation-core` — bounded actors and dynamic world labels.
-- `examples/portable-world-core` — bounded world projection.
-- `examples/portable-ui-core` — vanilla sidebar and input-edge recipe.
-- `examples/jrpg-demo` — retained portable game-loop example with dialogue, shop, and turn battle.
-- `examples/portable-multiplayer-core` — v12 player-local state/input/HUD and shared-camera acceptance example.
-- `examples/portable-procedural-roguelike` — v13 runtime grid/RNG/grid-world procedural topology acceptance game.
-- `examples/portable-team-player-sets` — v14 external-team PlayerSet, partitioned HUD, and multi-camera acceptance example.
-- `examples/portable-session-local` — v15 two-session scalar/Grid/RNG isolation and session-HUD acceptance example.
-- `examples/portable-session-grid-world` — v16 two-session GridWorld projection and footprint-isolation acceptance example.
-- `examples/portable-player-reductions` — v17 player/session count/sum/min/max/any/all reduction acceptance example.
-- `examples/portable-persistent-state` — v18 global/session scalar persistence, schema, replacement, reset, and purge acceptance example.
-- `examples/portable-persistent-grid` — v19 global/session persistent Grid storage, dynamic indexing, schema reset/preserve, replacement, reset, and purge acceptance example.
-- `examples/portable-selection-ui` — v20 native dialog option/cancel selection, idempotent open, reload, and cleanup acceptance example.
-- `examples/portable-dialog-ui` — v21 rich confirmation plus boolean/option/integer-range native form acceptance example.
-- `examples/portable-actor-presentation` — v22 mannequin profile/skin-layer/pose/equipment and state-backed pitch acceptance example.
-- `examples/portable-interaction` — v23 compiler-owned interaction hitbox and real-player right-click acceptance example.
-- `examples/portable-interaction-controller` — v24 click-to-claim active-instance controller binding, reconnect, replacement, reload, and cleanup acceptance example.
-- `examples/portable-pinball-cabinet` — v26 block-sized placeable cabinet that claims one controller, routes it to a separate remote pinball camera/playfield, and returns on Sneak.
-- `examples/portable-othello` — v23 two-player 8x8 Othello/Reversi reference using direct cell interactions, player-local seats, Grid/GridWorld board state, bounded directional flips, automatic pass detection, and ADR 0038 condition sugar.
+`examples/` is intentionally small and human-facing. Version-specific compiler fixtures live under `tools/portable-compiler/test/`; historical acceptance evidence remains in the ADRs. See `examples/README.md` for the directory policy.
 
-Legacy host-runtime-only examples were removed when the Java/Fabric runtime was retired. Examples in the repository must compile through the current Node portable compiler.
+Complete games:
+
+- `examples/portable-breakout-core` — compact brick-breaker and local TypeScript module reference.
+- `examples/portable-pinball-cabinet` — placeable cabinet, interaction controller, remote camera, and pinball gameplay.
+- `examples/portable-othello` — polished two-player Othello using Grid/GridWorld, interactions, reductions, and v27 compound conditions.
+- `examples/portable-procedural-roguelike` — runtime Grid/RNG/GridWorld procedural topology game.
+- `examples/jrpg-demo` — larger mechanics demo with movement, actors, UI, dialogue, shop, combat, world projection, sound, and particles.
+
+Feature galleries/labs:
+
+- `examples/portable-actor-presentation` — mannequin profile/pose/equipment presentation.
+- `examples/portable-dialog-ui` — consolidated native selection, confirmation, and typed-form gallery.
+- `examples/portable-multiplayer-lab` — consolidated player/team/session/Grid/RNG/GridWorld/camera/HUD/reduction reference.
+- `examples/portable-persistence-lab` — consolidated persistent scalar/Grid reference.
+
+Legacy host-runtime examples and narrow version-by-version acceptance examples are not kept here; equivalent version semantics are covered by compiler tests.
 
 ## Compiler architecture
 

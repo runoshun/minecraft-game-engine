@@ -1,14 +1,20 @@
-# Portable Pinball Cabinet v25
+# Portable Pinball Cabinet v26
 
-Reference acceptance game for Portable v25 bounded item-backed placeable objects.
+Current reference game for the placeable-object/controller-camera path.
 
-Each player receives one **Portable Pinball Cabinet** item. The stack is internally a compiler-controlled Armor Stand placement carrier, but its inventory/hand appearance is a custom player-head texture. Placing it in the ownership area creates an invisible anchor and a separate Display/interaction cabinet; the placed world object does not render the carrier item itself.
+Each player receives one **Portable Pinball Cabinet** item. The stack is a compiler-controlled placement carrier with a custom player-head inventory appearance. Placing it inside the ownership region creates one approximately block-sized cabinet built from compiler-owned Displays plus an invisible interaction hitbox.
 
-Two cabinets may exist at once. Each slot owns independent ball physics, score/lives, flipper state, right-click interaction, and v24 controller generation. Right-click the cabinet to claim/start it, use **A / D** for flippers and **Space** to launch. **Sneak + right-click** picks that cabinet up, invalidates its old controller, frees the slot, and returns the same placeable item.
+The retained source intentionally allows **one active cabinet**. Right-clicking that cabinet claims the exact interacting player and routes only that controller to a separate remote pinball playfield through the v26 controller-backed `position_lock` camera. Other players stay outside that camera audience.
 
-The pinball physics remain table-local 2D collision. V25's local-to-world projection moves/rotates the cabinet Displays and interaction around the placement anchor, while the game rules continue to use local coordinates.
+Controls while playing:
 
-Compile with:
+- **A / D** — left/right flippers;
+- **Space** — launch the ball;
+- **Sneak** — leave the remote view, return to the source cabinet interaction, and invalidate the controller token.
+
+When the cabinet is idle, **Sneak + right-click** picks it up and returns the placeable item.
+
+The remote game uses the bounded arcade collision primitives: circle bumpers, segment/capsule walls and guides, trigger drain, and two-pose flippers. The cabinet itself uses v25 item/placeable projection and v24 interaction-controller binding; v26 adds the controller-backed remote camera and bounded return path.
 
 ```bash
 npm run compile:portable -- \
@@ -17,4 +23,6 @@ npm run compile:portable -- \
   --output build/portable/portable_pinball_cabinet
 ```
 
-The head appearance uses a `textures.minecraft.net` texture and needs no custom resource pack. `appearance: { kind: "model", model: "yourpack:..." }` can instead reference a resource-pack item model; the placement carrier and the placed world representation remain unchanged.
+The head appearance uses a `textures.minecraft.net` texture and needs no custom resource pack. A namespaced `appearance.kind: "model"` can instead reference an external resource-pack item model.
+
+Placeables and controller bindings are active-instance state: ordinary `/reload` clears the placed cabinet/controller state by design.

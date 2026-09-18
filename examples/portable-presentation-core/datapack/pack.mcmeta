@@ -1,7 +1,0 @@
-{
-  "pack": {
-    "description": "Portable presentation v7 acceptance example for MC Game Runtime",
-    "min_format": [101, 1],
-    "max_format": [101, 1]
-  }
-}

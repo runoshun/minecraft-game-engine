@@ -1,7 +1,0 @@
-{
-  "pack": {
-    "description": "Portable v8 bounded world projection source pack",
-    "min_format": [101, 1],
-    "max_format": [101, 1]
-  }
-}

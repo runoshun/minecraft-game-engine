@@ -1,7 +1,0 @@
-{
-  "pack": {
-    "description": "MC Game portable v9 UI acceptance source",
-    "min_format": [101, 1],
-    "max_format": [101, 1]
-  }
-}

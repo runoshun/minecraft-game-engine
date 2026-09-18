@@ -65,6 +65,14 @@ Compiler assets live under `tools/portable-compiler/assets/`:
 - `typescript.cjs` — bundled TypeScript 5.9.2;
 - `portable-dsl.js` — authoring frontend that lowers DSL declarations to `portable.define(...)`.
 
+## Checked-in examples
+
+`examples/` is the human-facing reference surface, not a Portable-version archive. Keep complete games and features that benefit from visual/end-to-end inspection there; keep narrow version-gating, parser, lowering, and scope fixtures in `tools/portable-compiler/test/`. Historical acceptance evidence remains in ADRs even when its old focused example is retired.
+
+The current retained set is nine examples: five complete games (`portable-breakout-core`, `portable-pinball-cabinet`, `portable-othello`, `portable-procedural-roguelike`, and `jrpg-demo`) plus four feature galleries/labs (`portable-actor-presentation`, `portable-dialog-ui`, `portable-multiplayer-lab`, and `portable-persistence-lab`). `portable-dialog-ui` consolidates v20-v21 UI, `portable-multiplayer-lab` consolidates v12/v14-v17 multiplayer/session usage, and `portable-persistence-lab` consolidates v18-v19 persistence usage.
+
+A new checked-in example should demonstrate a materially different end-to-end game or a capability that benefits from human/visual inspection. Prefer extending an existing gallery/lab over adding a version-specific example.
+
 ## Portable IR v1-v11
 
 ### Values and state
@@ -435,7 +443,7 @@ Reload during an active claim reset generation to `0`, removed the player's cont
 
 ### v24 interaction controller validation
 
-Portable v24 passed focused mod-free Minecraft 26.1 acceptance on `second` with real clients `Camera` and `Camera2` using checked-in `examples/portable-interaction-controller`. Camera first claimed cabinet generation `1`; its player-local controller tick counter advanced while Camera2's stayed at `0`. A real Space press from Camera2 produced no controller action. A real Space press from Camera changed shared `controlUses` from raw `0` to `3000` and Camera's player-local `personalUses` to `3000`, while Camera2 remained `0`.
+Portable v24 passed focused mod-free Minecraft 26.1 acceptance on `second` with real clients `Camera` and `Camera2` using the then-checked-in focused v24 interaction-controller pack (retired during example consolidation; current integrated smoke uses `examples/portable-pinball-cabinet`). Camera first claimed cabinet generation `1`; its player-local controller tick counter advanced while Camera2's stayed at `0`. A real Space press from Camera2 produced no controller action. A real Space press from Camera changed shared `controlUses` from raw `0` to `3000` and Camera's player-local `personalUses` to `3000`, while Camera2 remained `0`.
 
 Camera2 then reclaimed the cabinet. Generation advanced `1 -> 2`, Camera retained stale token `1`, and Camera2 received token `2`. Camera's controller tick counter stopped at raw `545000` while Camera2's advanced, Camera's subsequent Space input did not change shared/controller-local use state, and Camera2's Space advanced shared `controlUses` to `9000` and its own `personalUses` to `6000`. Disconnecting and reconnecting Camera2 without another claim preserved token `2` and resumed its controller tick counter. In the inverse stale-offline case, Camera2 disconnected with token `2`, Camera reclaimed generation `3`, and after Camera2 reconnected its controller tick counter remained exactly `1209000` while Camera's continued advancing, proving an older offline token cannot resurrect after a newer claim.
 
@@ -445,7 +453,7 @@ The Node regression suite was 54/54 green. All 19 pre-existing retained v1-v23 e
 
 ### v23 world interaction/use validation
 
-Portable v23 passed focused mod-free Minecraft 26.1 acceptance on `second` using real client `Camera` and checked-in `examples/portable-interaction`. The generated cabinet owned exactly one `minecraft:interaction` with authored `width=1.8f`, `height=2.2f`, `response=1b`, the stable declaration tag, and the normal namespace owner tag. The accompanying block/text Displays rendered the visible cabinet while the interaction entity remained the invisible use hitbox.
+Portable v23 passed focused mod-free Minecraft 26.1 acceptance on `second` using real client `Camera` and the then-checked-in focused v23 interaction pack (retired during example consolidation; current integrated smoke uses `examples/portable-pinball-cabinet`). The generated cabinet owned exactly one `minecraft:interaction` with authored `width=1.8f`, `height=2.2f`, `response=1b`, the stable declaration tag, and the normal namespace owner tag. The accompanying block/text Displays rendered the visible cabinet while the interaction entity remained the invisible use hitbox.
 
 The first real right click changed shared raw `totalUses` and Camera's player-local raw `cabinetUses` from `0` to `1000`. Generated event consumption removed the entity's `interaction` compound after dispatch. A second distinct real right click changed both values to `2000`, proving separate uses dispatch separately without replaying the prior record. Ordinary `/reload` reset both active-instance states to `0`, recreated exactly one interaction entity, and left no stale pending use.
 
@@ -469,7 +477,7 @@ The Node regression suite was 35/35 green. Sixteen retained v1-v20 checked-in ex
 
 ### v20 interactive selection UI validation
 
-Portable v20 passed focused mod-free Minecraft 26.1 acceptance on `second` using real client `Camera` in externally managed team `v20_party`. The checked-in `examples/portable-selection-ui` pack generated one native `Portable Shop` multi-action dialog with Potion=`1`, Sword=`2`, and Cancel=`-1`, while intentionally calling `choice.open()` every tick while enabled. The rendered client showed the generated title, body, two option buttons, Cancel button, and tooltips. A pending selection remained raw `0` across multiple ticks despite repeated authored `open()`, proving the idle-to-pending guard kept the screen actionable.
+Portable v20 passed focused mod-free Minecraft 26.1 acceptance on `second` using real client `Camera` in externally managed team `v20_party`. The then-checked-in focused v20 selection pack (retired during example consolidation; current UI gallery is `examples/portable-dialog-ui`) generated one native `Portable Shop` multi-action dialog with Potion=`1`, Sword=`2`, and Cancel=`-1`, while intentionally calling `choice.open()` every tick while enabled. The rendered client showed the generated title, body, two option buttons, Cancel button, and tooltips. A pending selection remained raw `0` across multiple ticks despite repeated authored `open()`, proving the idle-to-pending guard kept the screen actionable.
 
 In one real-client sequence, Jump opened the menu and a mouse click chose Potion, producing trigger raw `1000`, authored `lastChoice=1000`, `menuEnabled=0`, and the rearmed idle sentinel. A second sequence used Jump then Escape and produced `lastChoice=-1000`. These paths use a compiler-owned trigger objective and native dialog controls; no held-key convention selected the option itself.
 
@@ -479,7 +487,7 @@ The Node regression suite was 31/31 green. Fifteen retained v1-v19 examples were
 
 ### v19 persistent Grid validation
 
-Portable v19 passed focused mod-free Minecraft 26.1 acceptance on `second` using real client `Camera` in externally managed team `v19_party`. The checked-in `examples/portable-persistent-grid` pack began with global reset-policy Grid `world` as twelve logical zero cells and session preserve-policy Grid `stash` as four logical `5` cells. Real A/left wrote `world[1,1]=7`; real D/right wrote `stash[0,0]=9`. Authored `get` operations then exposed raw fixed-point values `worldCell=7000`, `stashCell=9000`, and out-of-bounds `worldOutside=-1000`, while command storage showed the corresponding arrays with only those cells changed.
+Portable v19 passed focused mod-free Minecraft 26.1 acceptance on `second` using real client `Camera` in externally managed team `v19_party`. The then-checked-in focused v19 persistent-Grid pack (retired during example consolidation; current persistence reference is `examples/portable-persistence-lab`) began with global reset-policy Grid `world` as twelve logical zero cells and session preserve-policy Grid `stash` as four logical `5` cells. Real A/left wrote `world[1,1]=7`; real D/right wrote `stash[0,0]=9`. Authored `get` operations then exposed raw fixed-point values `worldCell=7000`, `stashCell=9000`, and out-of-bounds `worldOutside=-1000`, while command storage showed the corresponding arrays with only those cells changed.
 
 With the real client connected and the server ticking, `/reload`, ordinary cleanup/reload, and same-namespace same-schema replacement all preserved the Grid cells and external team membership. Cleanup removed all nine generated active-instance objectives while leaving persistent storage intact. A same-shape schema-2 replacement with new defaults `world=100` / reset and `stash=500` / preserve reset all world cells to raw `100000`, preserved stash as `[9000,5000,5000,5000]`, and advanced both schema markers. `reset_persistent` produced twelve `100000` world cells plus four `500000` stash cells; `purge_persistent` then removed the Grid storage.
 
@@ -487,7 +495,7 @@ Final teardown removed the acceptance pack and external team and left zero objec
 
 ### v18 persistent scalar validation
 
-Portable v18 passed focused mod-free Minecraft 26.1 acceptance on `second` using real client `Camera` in externally managed team `v18_party`. The checked-in `examples/portable-persistent-state` pack began with global `campaign=10`, global preserve-policy `legacy=5`, and session `wins=3`. Real A/left changed campaign to `11` and legacy to `15`; real D/right changed wins to `4`. `/reload` preserved all three persistent values and the external team membership while active-instance player/runtime objectives followed the normal reload lifecycle.
+Portable v18 passed focused mod-free Minecraft 26.1 acceptance on `second` using real client `Camera` in externally managed team `v18_party`. The then-checked-in focused v18 persistent-scalar pack (retired during example consolidation; current persistence reference is `examples/portable-persistence-lab`) began with global `campaign=10`, global preserve-policy `legacy=5`, and session `wins=3`. Real A/left changed campaign to `11` and legacy to `15`; real D/right changed wins to `4`. `/reload` preserved all three persistent values and the external team membership while active-instance player/runtime objectives followed the normal reload lifecycle.
 
 Normal `portable/cleanup` removed active-instance objectives but deliberately left the one persistent objective and values `11 / 15 / 4`. Same-namespace replacement with the same schema preserved those values. A schema-2 replacement with new defaults `campaign=100`, `legacy=500`, `wins=200` then proved both policies: campaign and wins reset to `100 / 200`, while legacy preserved `15`; all schema markers advanced to 2. `portable/reset_persistent` restored the current declaration defaults `100 / 500 / 200`. A subsequent cleanup again left only persistent data, and `portable/purge_persistent` removed the persistence objective and initialization marker. Final teardown removed the temporary team and pack and left zero objectives and zero teams.
 
@@ -495,7 +503,7 @@ The Node regression suite was 25/25 green. Retained v1-v17 generated examples we
 
 ### v17 player/session reduction validation
 
-Portable v17 passed its mod-free Minecraft 26.1 acceptance on `second` using real clients `Camera` and `Camera2` as simultaneous members of externally managed team `v17_party`. The checked-in `examples/portable-player-reductions` pack stores identity-local `score` / `ready` values and recomputes one session's `count`, `sum`, `min`, `max`, `any`, and `all` every tick. With both clients initialized at zero, the aggregate reached `count=2000`, `sum=0`, `min=0`, `max=0`, `any=0`, and `all=0` at fixed point 1000.
+Portable v17 passed its mod-free Minecraft 26.1 acceptance on `second` using real clients `Camera` and `Camera2` as simultaneous members of externally managed team `v17_party`. The then-checked-in focused v17 reductions pack (retired during example consolidation; current multiplayer/session reference is `examples/portable-multiplayer-lab`) stores identity-local `score` / `ready` values and recomputes one session's `count`, `sum`, `min`, `max`, `any`, and `all` every tick. With both clients initialized at zero, the aggregate reached `count=2000`, `sum=0`, `min=0`, `max=0`, `any=0`, and `all=0` at fixed point 1000.
 
 Real A/left input on Camera changed only Camera's score to `1000`, producing `sum=1000`, `min=0`, `max=1000`. Real D/right input on Camera2 then changed only Camera2's score to `2000`, producing `sum=3000`, `min=1000`, `max=2000`. Jump on only Camera produced `any=1000` / `all=0`; after Camera2 also jumped, both became `1000`. This validates player-local source isolation plus deterministic numeric and boolean reduction lowering.
 
@@ -505,7 +513,7 @@ Removing both clients from `v17_party` while they remained online produced the d
 
 ### v16 session GridWorld validation
 
-Portable v16 passed its mod-free Minecraft 26.1 acceptance on `second` using real clients `Camera` and `Camera2` in external teams `v16_red` and `v16_blue`. The checked-in `examples/portable-session-grid-world` pack deliberately reuses session-local Grid `map` and GridWorld `terrain` while projecting red at x=404..407 / z=4..7 / y=100 and blue at x=436..439 / z=4..7 / y=100 inside one ownership rectangle. Staged startup reached `#ready=1`, both session GridWorld ready values and session-local `readySeen` values reached `1000`, eight ownership chunks were force-loaded, and both 4 x 4 footprints initially contained 16 black-concrete blocks.
+Portable v16 passed its mod-free Minecraft 26.1 acceptance on `second` using real clients `Camera` and `Camera2` in external teams `v16_red` and `v16_blue`. The then-checked-in focused v16 session-GridWorld pack (retired during example consolidation; current multiplayer/session reference is `examples/portable-multiplayer-lab`) deliberately reuses session-local Grid `map` and GridWorld `terrain` while projecting red at x=404..407 / z=4..7 / y=100 and blue at x=436..439 / z=4..7 / y=100 inside one ownership rectangle. Staged startup reached `#ready=1`, both session GridWorld ready values and session-local `readySeen` values reached `1000`, eight ownership chunks were force-loaded, and both 4 x 4 footprints initially contained 16 black-concrete blocks.
 
 With both clients online simultaneously, real A input from Camera changed only red `hits` from `0 -> 1000` and rebuilt red terrain to 15 black + one red block at `(404,100,4)`; blue remained `hits=0` with 16 black blocks. Real D input from Camera2 then changed only blue `hits` to `1000` and rebuilt blue terrain to 15 black + one blue block at `(436,100,4)` while red state remained unchanged. This validates same-name Grid/GridWorld qualification, lexical readiness, independent rebuild state, and distinct fixed footprints.
 

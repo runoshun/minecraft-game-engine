@@ -1,19 +1,16 @@
-# Portable dialog UI (v21 acceptance)
+# Portable Dialog UI
 
-This example exercises Portable IR v21 native dialog UI on a vanilla Minecraft 26.1 client. External team `v21_party` supplies membership; the generated pack never owns that team.
+A consolidated native-dialog gallery for Portable v20-v21 on a vanilla Minecraft 26.1 client. It replaces the former separate selection and typed-dialog examples.
 
-The flow is sequential. Press Jump to arm/open the current stage; while armed, `open()` is intentionally level-triggered every tick so lifecycle behavior is visible:
+External team `v21_party` supplies membership. Press **Space** to arm/open the current stage:
 
-1. native confirmation with rich styled text and a diamond-sword item body;
-2. boolean form (`1` / `0`);
-3. single-option form (`Mage=3`, `Warrior=7`);
-4. integer range form (`1..9`, step `2`).
+1. bounded multi-action selection (`Potion=1`, `Sword=2`, cancel `-1`);
+2. rich confirmation with styled text and an item body;
+3. boolean form;
+4. single-option form;
+5. integer-range form.
 
-Every dialog/form `open()` is called again on each tick while that stage is armed. Compiler lowering must therefore keep an already-pending surface stable instead of replacing it every tick. Results are copied into player-local state, the resolved handle is cleared, the stage advances, and the next stage waits for another Jump. Cancel/Escape for forms resolves to `-1` and increments `cancelCount`.
-
-At stage 4, press Jump to reset the authored result states and return to stage 0. The actionbar shows stage, arm state, and all captured results for real-client acceptance.
-
-Compile with:
+While a stage is armed, `open()` is intentionally called every tick so pending-surface idempotence is visible. Results are copied into player-local state, the resolved surface is cleared, and the next stage waits for another Space press. At the final stage, Space resets the captured results and returns to the selection.
 
 ```bash
 npm run compile:portable -- \
@@ -22,4 +19,4 @@ npm run compile:portable -- \
   --output build/portable/portable_dialog_ui
 ```
 
-Because v21 emits `minecraft:dialog` registry resources, installation/replacement/removal follows the same registry lifecycle as v20: run old-pack cleanup when applicable, replace files, then restart the server/world before exercising changed dialog resources. Ordinary `/reload` remains valid after those resources were bootstrapped at startup.
+This example is the human-facing UI gallery. Version-specific selection/form validation remains in compiler tests.
