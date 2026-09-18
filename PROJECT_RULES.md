@@ -13,7 +13,7 @@ When a change modifies any of the following, update `docs/architecture.md` in th
 - generated datapack layout or lifecycle;
 - compatibility targets or required build/runtime dependencies.
 
-Do not leave obsolete architecture text in place. Current behavior must be described as current; planned behavior must be labeled as planned. Significant architectural choices must add or supersede an ADR under `docs/decisions/`.
+Do not leave obsolete architecture text in place. Current behavior must be described as current; planned behavior must be labeled as planned. Significant architectural choices must add or supersede an ADR under `docs/decisions/` and update `docs/decisions/README.md` in the same change.
 
 ## Design principles
 

@@ -1,107 +1,156 @@
 # Architecture
 
-## Goal
+## Purpose and authority
 
-Minecraft Game Engine is a TypeScript-to-vanilla-datapack game compiler. Minecraft owns the world, rendering, player entities/input, audio, particles, networking, and client. Portable game logic is authored with `portableDsl`, lowered to versioned Portable IR, then compiled to ordinary Minecraft 26.1 datapack resources.
+Minecraft Game Engine is a TypeScript-to-vanilla-datapack game compiler. Game logic is authored with `portableDsl`, lowered to versioned Portable IR, then compiled to ordinary Minecraft 26.1 datapack resources.
 
-The canonical workflow is:
+The normal workflow is:
 
 ```text
-edit main.ts/local .ts modules -> npm run compile:portable -> deploy/reload datapack -> play/test/capture -> edit source
+edit TypeScript -> compile portable source -> deploy/reload datapack -> play/test/capture
 ```
 
-There is no Java/Fabric runtime in the repository. ADR 0021 records the compiler migration and retirement order.
+This file is the source of truth for the **current** design, public semantics, ownership, and lifecycle. Historical rationale and version-by-version evolution live in [the ADR index](decisions/README.md). Compile/deploy/acceptance procedures live in [operations.md](operations.md).
+
+There is no Java/Fabric runtime in the repository and none is required by a deployed game.
 
 ## Responsibility boundaries
 
-### TypeScript game source
+| Component | Responsibility |
+| --- | --- |
+| TypeScript game source | Game-specific state, rules, collision response, progression, UI values, and declarative presentation, expressed only through the portable API. |
+| Node portable compiler | TypeScript loading/transpilation, isolated DSL evaluation, Portable IR validation, and deterministic datapack generation. |
+| Portable IR | Versioned bounded semantic contract between authoring and vanilla lowering. Current version: **v28**. |
+| Generated datapack | Runtime functions, scoreboards/storage, predicates, generated entities/resources, lifecycle functions, and optional persistent data. |
+| Minecraft 26.1 | Executes mcfunctions and supplies vanilla world state, player input, entities/Displays, dialogs, sound, particles, scoreboards, and networking. |
+| mc-mcp | Development/test/deployment control plane only; never gameplay logic or a deployment dependency. |
 
-Owns game-specific state, rules, collision response, progression, UI values, and declarative presentation. Source must stay inside the portable API if it is expected to compile.
+## Compiler and source model
 
-### Node portable compiler
+The compiler entry point is `tools/portable-compiler/cli.mjs`. It accepts one TypeScript entry source, namespace, and output directory.
 
-Owns build-time TypeScript transpilation, `portableDsl` evaluation, Portable IR validation, and datapack generation. The implementation lives under `tools/portable-compiler/`.
+Static relative TypeScript imports/re-exports are allowed under the entry source directory. The source graph is limited to 64 modules and 1,000,000 aggregate source bytes. Node built-ins, npm/bare packages, non-TypeScript modules, dynamic import, authored `require`, cycles, and real-path/symlink escapes are rejected.
 
-The compiler accepts one entry TypeScript source, namespace, and output directory. ADR 0033 adds bounded local module authoring: static relative imports/re-exports may resolve `.ts` files inside the entry source directory, while host/package/dynamic module access remains unavailable.
+Accepted modules are transpiled with bundled TypeScript 5.9.2 to ES2022/CommonJS-shaped output and evaluated inside a compiler-owned Node `vm` context. The context exposes the bundled `portableDsl` frontend and registration-only stubs, not filesystem, network, package resolution, host `require`, or live Minecraft state. Exactly one portable program is captured, parsed, validated, and lowered.
 
-### Portable IR
+The `vm` boundary is build-tool containment; it is not specified as a hostile-code security sandbox.
 
-Portable IR is the versioned semantic contract between authoring and vanilla lowering. It contains deterministic fixed-point values, bounded actions, collision primitives, declarative presentation/world resources, input mappings, and lifecycle metadata. Arbitrary JavaScript callbacks are not an IR feature. Authoring-only DSL sugar may expand to existing IR without consuming a new Portable version when it adds no new runtime semantics; ADR 0038 applies this rule to bounded conditional helpers.
+Portable IR is deliberately narrower than JavaScript. Ordinary runtime JavaScript callbacks, dynamic collections, host objects, and arbitrary commands are not IR semantics. Build-time helpers such as local functions, modules, and `game.repeat(...)` may expand declarations/actions, but runtime behavior must still lower to bounded Portable IR.
 
-IR versions 1 through 28 are implemented. ADR 0020 defines the multiplayer v12 contract, ADR 0022 defines the procedural grid/RNG v13 contract, ADR 0023 defines team-backed PlayerSets and partitioned player audiences in v14, ADR 0024 defines team-bound logical sessions in v15, ADR 0025 defines session-local GridWorld projection in v16, ADR 0027 defines bounded player/session reductions in v17, ADR 0028 defines bounded persistent scalar state in v18, ADR 0029 defines bounded persistent Grid state in v19, ADR 0030 defines bounded native-dialog selection UI in v20, ADR 0031 defines bounded rich/typed native-dialog UI in v21, ADR 0032 defines bounded expanded mannequin actor presentation in v22, ADR 0034 defines bounded world right-click interaction input in v23, ADR 0035 defines active-instance interaction controller binding in v24, ADR 0036 defines bounded item-backed placeable objects in v25, and ADR 0037 defines interaction-controller camera audiences and bounded return in v26. ADR 0040 defines bounded recursive compound conditions in Portable v27. ADR 0041 defines constant-factor scalar multiplication/division in Portable v28.
+## Portable execution model
 
-### Generated datapack
+### Numbers and scalar state
 
-The generated directory is the deployment artifact. It owns namespace-derived scoreboards, functions, predicates, generated entities, optional ownership-region force-loads, HUD/sidebar resources, v20+ dialog registry resources and selection/form objectives when declared, v24 interaction-controller objective banks when declared, v25 placeable slot/anchor/state resources and compiler-owned placement carriers when declared, compiler-private persistent storage/objectives when declared, and `portable/cleanup` / persistence lifecycle functions.
+Portable numbers are signed 32-bit fixed-point integers; `fixedPoint` defaults to 1000.
 
-The target Minecraft server needs no compiler, Node.js, TypeScript, Java, Fabric, or mod.
+Mutable scalar state exists in global, session, player-local, persistent, session-persistent, and placeable-local scopes as applicable. Mutable state supports:
 
-### Minecraft 26.1
+```ts
+state.set(value)
+state.add(value)
+state.sub(value)
+state.negate()
+state.mul(constantNumber)
+state.div(constantNumber)
+```
 
-Minecraft executes generated mcfunctions and supplies vanilla-observable player input, entities, Displays, terrain, particles, sounds, camera observation, scoreboards, and networking.
+`mul` and `div` accept compile-time numbers only. The compiler quantizes the coefficient to the program fixed-point scale, reduces the resulting ratio by GCD, and lowers it to scoreboard arithmetic. A divisor that quantizes to zero is rejected. Generic state-by-state multiplication/division and arbitrary expression trees are not supported.
 
-### mc-mcp
+Minecraft scoreboard arithmetic remains signed 32-bit and generated code does not provide generic overflow protection.
 
-`mc-mcp` is the development/test control plane for deploying datapacks, issuing commands, driving test clients, inspecting state, and capturing evidence. It is not a runtime dependency of a deployed game.
+### Rules and conditions
 
-## Compiler pipeline
+`game.tick(fn)` captures the ordered runtime action tree. `game.when(condition, then, else?)` is the primitive branch.
 
-`tools/portable-compiler/cli.mjs` performs:
+Authoring helpers `unless`, ordered first-match `choose`, and equality-dispatch `match` expand to the same branch IR. Branch selection is stable: if a chosen branch mutates values used by its condition, the sibling `else` path cannot subsequently run in the same decision.
 
-1. resolve the entry `main.ts` plus static local TypeScript imports/re-exports, bounded to 64 modules and 1,000,000 aggregate source bytes;
-2. reject non-relative/package/host/non-TypeScript/dynamic/cyclic or source-root-escaping module dependencies, including real-path symlink escapes;
-3. transpile each accepted module through bundled TypeScript 5.9.2 targeting ES2022 with CommonJS-shaped module output;
-4. create an isolated Node `vm` context and install the bundled `portableDsl` frontend plus registration-only host stubs;
-5. evaluate the validated module graph with a compiler-owned in-context loader that has no host `require`, package resolver, filesystem, or network access;
-6. capture exactly one `portable.define(...)` result;
-7. parse and validate Portable IR for the declared version;
-8. lower the IR to a standalone datapack;
-9. write `.mcgame-portable-generated` so later compiler runs may safely replace the generated directory.
+Conditions support scalar comparisons plus bounded recursive composition through:
 
-Live Minecraft host capabilities are unavailable during extraction. A source that calls runtime-only host inspection APIs cannot compile; `game.players()` in v12 is a declarative `PlayerSet` constructor, not live player enumeration during compilation. Local modules are build inputs only: game source cannot call Node `require`, resolve npm packages, dynamically import files, or access arbitrary filesystem/network APIs. The host compiler reads only the validated `.ts` graph below the entry source directory. The `vm` boundary is a build-tool containment measure and has not been audited as a hostile-code security boundary.
+```ts
+game.condition.all(...)
+game.condition.any(...)
+game.condition.not(...)
+```
 
-Compiler assets live under `tools/portable-compiler/assets/`:
+Compound conditions may guard actions, reductions, and supported declarative `when` fields. They are bounded to 16 children per `all`/`any`, depth 8, and 64 total nodes.
 
-- `typescript.cjs` — bundled TypeScript 5.9.2;
-- `portable-dsl.js` — authoring frontend that lowers DSL declarations to `portable.define(...)`.
+`game.repeat(count, fn)` is declaration-time expansion, not a runtime loop.
 
-## Checked-in examples
+### Player, team, and session scopes
 
-`examples/` is the human-facing reference surface, not a Portable-version archive. Keep complete games and features that benefit from visual/end-to-end inspection there; keep narrow version-gating, parser, lowering, and scope fixtures in `tools/portable-compiler/test/`. Historical acceptance evidence remains in ADRs even when its old focused example is retired.
+`game.players()` denotes all online participants. `game.teamPlayers(name)` denotes online members of an externally managed vanilla scoreboard team. The compiler never owns team creation or membership.
 
-The current retained set is nine examples: five complete games (`portable-breakout-core`, `portable-pinball-cabinet`, `portable-othello`, `portable-procedural-roguelike`, and `jrpg-demo`) plus four feature galleries/labs (`portable-actor-presentation`, `portable-dialog-ui`, `portable-multiplayer-lab`, and `portable-persistence-lab`). `portable-dialog-ui` consolidates v20-v21 UI, `portable-multiplayer-lab` consolidates v12/v14-v17 multiplayer/session usage, and `portable-persistence-lab` consolidates v18-v19 persistence usage.
+`game.forEachPlayer(players, player => ...)` creates a lexical `PlayerContext`. Player-local references cannot escape it. `player.state(...)` is stored independently per real player, and `player.input` samples:
 
-A new checked-in example should demonstrate a materially different end-to-end game or a capability that benefits from human/visual inspection. Prefer extending an existing gallery/lab over adding a version-specific example.
+- `hotbarSlot`
+- `forward`, `backward`, `left`, `right`
+- `jump`, `sneak`, `sprint`
 
-## Portable IR v1-v11
+Multi-player `forEachPlayer` may mutate player-local state but may not arbitrarily mutate shared/session-shared state. `forSinglePlayer` executes only when the selected `PlayerSet` contains exactly one online player and may perform deterministic shared mutation from that exact player.
 
-### Values and state
+Disconnect preserves player-local active-instance state; reload/replacement resets it. Cleanup removes the complete compiler-owned player objective banks, including offline entries.
 
-Portable numbers use signed 32-bit fixed-point integers. `fixedPoint` defaults to 1000. Values are constants, shared state references, or shared input references.
+`game.session(id, teamPlayers, session => ...)` binds one compile-time logical session to one team-backed `PlayerSet`. A session has independent scalar state, Grid, RNG, persistent state/Grid, reductions, player iteration, and optional GridWorld projection. Session references are lexical and may not escape into another session or global scope.
 
-`game.state(name, initial)` returns a mutable state reference with `set`, `add`, `sub`, `negate`, and comparison helpers. Portable v28 additionally exposes constant-factor `mul(number)` / `div(number)` on every mutable scalar state scope. `game.input(...)` returns a read-only input reference. State/input names and collection counts are bounded by compiler validation.
+Sessions may reuse the same local names because lowering qualifies storage by session slot. An empty team does not delete the logical session. Session state is active-instance state unless explicitly persistent.
 
-### Tick rules
+The compiler does not provide runtime matchmaking, arbitrary player identity values, UUID/name lookup, or dynamic session allocation.
 
-`game.tick(fn)` records the ordered action tree. Mutations and conditional action helpers are valid only while an action sink is being captured. Multi-action branches become generated branch functions and comparisons lower to scoreboard `execute if/unless score` conditions.
+## Structured runtime data
 
-`game.when(condition, then, else?)` is the primitive authoring branch. ADR 0038 adds authoring-only `unless`, ordered first-match `choose`, and equality-dispatch `match`; those helpers expand to the existing `if` action tree and do not raise Portable version by themselves. `choose`/`match` are one `if -> else-if -> else` tree rather than independent sibling conditions. ADR 0039 guarantees exclusive runtime dispatch even when a selected branch mutates its own comparison inputs.
+### Grid and RNG
 
-Portable v27 / ADR 0040 adds one compound condition language through `game.condition.all(...)`, `game.condition.any(...)`, and `game.condition.not(...)`. Compound trees are bounded to 1..16 children per `all`/`any`, depth 8, and 64 total nodes. They can guard actions, player/session reductions, and existing declarative `when:` fields. Comparison-only conditions keep direct scoreboard lowering; compound trees lower through generated `condition_NNN` functions returning 0/1 into compiler-private scratch. Using a compound constructor raises inferred Portable version to v27.
+`game.grid` and `session.grid` declare fixed-size 2D integer-coordinate grids whose cell values use the program fixed-point representation. Supported operations include `fill`, `get`, `set`, and clipped `fillRect`; out-of-bounds reads return the declared `outside` value and writes are ignored.
 
-`game.repeat(count, fn)` is build-time declaration expansion; no runtime loop is emitted.
+Dynamic grid indexing lowers through compiler-private Minecraft function macros/storage. Raw macro/storage access is not exposed to game source.
 
-### Input
+`game.rng` and `session.rng` declare deterministic versioned random streams with bounded integer sampling and reset. RNG state is active-instance state.
 
-v1-v11 use global `first_player_*` bindings. Supported sources are hotbar slot plus held `forward`, `backward`, `left`, `right`, `jump`, `sneak`, and `sprint`.
+### GridWorld
 
-Held inputs lower to Minecraft 26.1 `minecraft:entity_properties` player predicates. The current controller is the first non-spectator player for ordinary `position_lock` programs and the first spectator player when the v11 camera uses `spectate`.
+`game.gridWorld` and `session.gridWorld` project one Grid cell per Minecraft block into an explicit fixed footprint. Projection is incremental, exposes read-only `ready`, and advances in bounded `cellsPerTick` slices after authored rules.
 
-Rising edges are authored from ordinary state, e.g. storing the previous held value and testing `current == 1 && previous == 0`.
+Session GridWorld footprints must lie inside the program ownership rectangle and may not overlap another session-local footprint at the same dimension/Y. Separate footprints isolate terrain state, not client visibility.
 
-### Collision and rule primitives
+Projected terrain is persistent Minecraft world state. Reload may deterministically rebuild it; `portable/cleanup` does **not** restore blocks.
 
-Implemented deterministic logic-space primitives include:
+### Reductions
+
+Global and session reductions support `count`, `sum`, `min`, `max`, `any`, and `all` over a `PlayerSet`.
+
+Reduction selector callbacks are read-only lexical PlayerContexts. Empty-set results are:
+
+| Reduction | Empty result |
+| --- | --- |
+| `count` | 0 |
+| `sum` | 0 |
+| `any` | false / 0 |
+| `all` | true / 1 |
+| `min`, `max` | explicit author-supplied fallback |
+
+Results use normal fixed-point state.
+
+### Persistent state
+
+`game.persistentState` / `session.persistentState` store fixed-point scalars that survive reload, ordinary cleanup, and same-namespace pack replacement.
+
+`game.persistentGrid` / `session.persistentGrid` provide the same persistence model for bounded Grids, stored in compiler-private namespace command storage.
+
+Every persistent declaration has an integer schema and `onSchemaMismatch: "reset" | "preserve"`. Scalar preserve keeps the value while advancing the schema marker. Persistent Grid preserve applies only when width/height still match; shape changes always reset.
+
+Lifecycle is explicit:
+
+```text
+portable/cleanup            preserve persistent data
+portable/reset_persistent   restore current declared defaults/schema
+portable/purge_persistent   destructively remove persistent data/infrastructure
+```
+
+There are no migration callbacks, cross-namespace persistent references, persistent arbitrary collections, or persistent player/offline identity.
+
+## Collision
+
+Collision is deterministic **logic-space** collision, not Minecraft hitbox/world querying. Supported primitives are:
 
 - inclusive 2D AABB/AABB overlap;
 - quantized circle/circle overlap;
@@ -109,52 +158,101 @@ Implemented deterministic logic-space primitives include:
 - AABB center-point trigger zones;
 - two-pose flippers represented by condition-selected static capsules.
 
-Collision detects overlap only. The game owns velocity, score, damage, sound, and other response.
+Collision only detects overlap. The game owns response such as velocity changes, scoring, damage, sound, and state transitions.
 
-### Presentation
+## Presentation, world, and UI
 
-The compiler supports bounded declarative:
+### Displays and actors
 
-- block Displays with state-backed coordinates, scale/translation, and optional visibility condition;
-- text Displays with literal/state/input tokens, state-backed coordinates, scale, billboard, and optional visibility;
-- mannequin actors with state-backed position/yaw/pitch and optional lifetime condition; v22 adds bounded static profile/skin-layer/pose/hand/equipment presentation, while zombie/skeleton semantic appearances still use mannequin carriers with vanilla mob-head fallback;
-- v23 compiler-owned `minecraft:interaction` hitboxes with state-backed position, optional lifetime condition, static width/height/response, and right-click dispatch to the recorded player; v24 optionally binds that clicker as an active-instance controller for later exact-player tick rules;
-- particle and sound emitters with optional conditions;
-- one actionbar HUD;
-- one global vanilla scoreboard sidebar with 1..15 rows;
-- one camera carrier; v26 additionally permits one `position_lock` camera to target an interaction controller token instead of a static PlayerSet.
+The compiler supports bounded declarative block Displays and text Displays with state-backed coordinates, transforms, visibility conditions, and bounded text tokens.
 
-Player-private world scenes and independent per-player sidebars are not v11 features.
+`game.actor` owns static mannequin declarations with state-backed position/yaw/pitch and optional lifetime condition. Actor presentation may include resource-backed wide/slim profile, hidden skin layers, pose, main-hand preference, and item-id equipment. Zombie/skeleton semantic appearances use mannequin carriers with vanilla mob-head fallback.
+
+Actor profiles are resource-backed, not player-identity lookup. Runtime actor creation, arbitrary entity NBT, arbitrary limb animation, and generic entity mutation are not part of the API.
 
 ### World projection
 
-`worldBatch` and `worldFill` produce bounded compile-time block writes. Writes are grouped by chunk and emitted as `setblock` functions with temporary force-loads. Terrain writes intentionally persist after `portable/cleanup`; acceptance teardown must restore temporary footprints explicitly.
+`worldBatch` and `worldFill` declare bounded block writes. Generated writes are chunk-grouped and may use temporary force-loads. Written terrain intentionally survives compiler cleanup.
+
+### HUD and sidebar
+
+The engine supports one shared actionbar HUD, up to eight player-local HUD declarations, and one server-global vanilla scoreboard sidebar with up to 15 rows.
+
+Independent per-player vanilla sidebars are not supported.
 
 ### Camera
 
-v10 default `position_lock` owns one invisible armor-stand carrier and teleports the selected non-spectator controller to it each tick. It does not change player gamemode or create persistent controller tags.
+A camera is compiler-owned presentation; it never owns player gamemode.
 
-v11 `mode: "spectate"` instead selects the first player already in Spectator and issues `spectate` against the same owned carrier. Entering/leaving Spectator remains external session lifecycle. Cleanup does not change gamemode.
+`position_lock` teleports matching non-Spectator audience players to an owned carrier each tick. `spectate` targets audience players already in Spectator; entering/leaving Spectator remains external lifecycle.
 
-V12-v14 extend shared camera selection to static PlayerSet audiences. V26 additionally permits exactly one `position_lock` camera whose audience is an `InteractionController`. Its generated lock runs only for the online non-Spectator player whose controller-objective token equals that interaction's current generation. This reuses v24 identity state rather than adding names, UUIDs, player tags, or generic identity values. Controller-backed `spectate`, multiple controller cameras, and arbitration between dynamic camera owners are not part of v26.
+Static camera audiences use a `PlayerSet`. Up to eight cameras may be declared when their static team audiences are disjoint.
+
+Exactly one controller-backed `position_lock` camera may instead use an `InteractionController` as its dynamic audience. Controller-backed spectate, multiple dynamic controller cameras, and arbitration between competing dynamic camera owners are unsupported.
+
+### Native dialog UI
+
+Static selection/confirmation/form surfaces lower to Minecraft native dialogs.
+
+Selections support bounded static option lists and cancel results. Confirmations return authored yes/no values. Forms support exactly one boolean, single-option, or integer-range input. Handles are player-local, `open()` is idempotent while pending, a resolved result remains readable until `clear()`, and opening another generated surface rearms/replaces the previous pending generated surface.
+
+Dialog return transport is compiler-owned `/trigger` state. Game source cannot supply arbitrary commands, objective names, registry ids, dynamic click handlers, free-form text input, or generic multi-field forms.
+
+Generated dialog definitions are registry resources. Adding/changing/removing them requires the restart workflow documented in `docs/operations.md`; ordinary reload is valid after registry bootstrap.
+
+## Interactions, controllers, and placeables
+
+### World interaction
+
+`game.interaction(id, spec)` declares a compiler-owned `minecraft:interaction` hitbox with bounded position/size/response and optional lifetime condition.
+
+Its single root-tick `onUse(player => ...)` callback executes as the exact player recorded by Minecraft. The interaction record is consumed after dispatch, so a use is edge-like rather than replayed every tick. The API does not promise queuing if multiple vanilla interaction records collapse before one compiler tick.
+
+### Interaction controller
+
+An interaction exposes an active-instance controller:
+
+```ts
+interaction.controller.claim(player)
+interaction.controller.forPlayer(player => ...)
+interaction.controller.returnToInteraction(player)
+```
+
+Claim binds the exact clicker through compiler-private generation tokens, not names, UUIDs, public tags, or arbitrary identity values. A newer claim invalidates older tokens. Disconnect/reconnect resumes control only while no newer claim advanced the generation.
+
+Controller state is intentionally reload-scoped. Reload resets generations/tokens for online and offline players; cleanup removes the entire controller bank.
+
+`returnToInteraction` returns the exact current controller to the source interaction when it still exists and advances generation so the same tick cannot recapture that player.
+
+### Item templates and placeable objects
+
+`game.item` declares compiler-known item appearance metadata. Supported appearance is either a player-head texture URL under `textures.minecraft.net` or a static `minecraft:item_model` resource id. These are item templates, not registration of new native Minecraft item types.
+
+`game.placeable(id, { item, maxInstances, orientation: "cardinal" }, instance => ...)` expands a fixed slot pool. Placement uses a compiler-controlled marker carrier, records an anchor/cardinal orientation, and creates bounded local presentation/state/interactions. Full-capacity, wrong-dimension, and outside-ownership placements are rejected and refunded.
+
+Each active slot may own local scalar state, block/text/item Displays, interactions/controllers, collision declarations, and tick rules. Child interaction controller generations are slot-qualified so stale tokens cannot revive after slot reuse.
+
+Placeables are active-instance state: pickup/removal frees the slot; reload clears pending/active instances and controller tokens. Persistent placed furniture and native block semantics are not implemented.
 
 ## Generated lifecycle
 
-### Shared scoreboard state
+Programs that own generated entities may declare one ownership rectangle covering at most 64 chunks.
 
-Load creates one namespace-derived objective and initializes declared state/input holders plus compiler scratch constants. Cleanup removes the objective.
+Load/reload converges namespace-owned resources:
 
-### Entity ownership v10+
+1. initialize compiler-owned objectives/state and set readiness false;
+2. force-load the bounded ownership region when required;
+3. cancel/remove stale namespace-owned entities;
+4. recreate declared runtime entities/resources;
+5. mark readiness true before authored tick logic proceeds.
 
-Programs may declare one bounded ownership rectangle, maximum 64 chunks. While active, those chunks remain force-loaded. Load sets `#ready=0`, schedules owned entity initialization two ticks later, removes all entities carrying the namespace-stable owner tag, recreates declarations, then sets `#ready=1`. Tick logic is gated on readiness.
+Dynamic generated entity X/Z coordinates are clamped to the ownership rectangle.
 
-Dynamic generated entity X/Z positions are clamped to the ownership rectangle. Namespace replacement therefore converges to one owned entity set instead of accumulating duplicates across reloads.
+`portable/cleanup` cancels pending initialization, removes compiler-owned entities/objectives/HUD/sidebar/controller/placeable state and owned force-loads, and leaves player gamemode and externally managed teams untouched. Persistent state/Grid storage is preserved unless explicit reset/purge functions are used. World terrain written by projection APIs is also preserved.
 
-`portable/cleanup` cancels pending initialization, kills the owner tag, removes the force-load, removes generated sidebar/objective state, and leaves player gamemode unchanged.
+Historical v1-v9 generated packs retain their older cleanup layout for compatibility; newly compiled current sources use the current lifecycle rules implied by the features they declare.
 
-Legacy v1-v9 generated packs retain their older per-resource cleanup behavior for compatibility.
-
-## Output layout
+## Generated output
 
 A generated pack contains at least:
 
@@ -166,389 +264,56 @@ A generated pack contains at least:
     ├── minecraft/tags/function/{load,tick}.json
     └── <namespace>/
         ├── function/portable/*.mcfunction
-        ├── predicate/portable/input/*.json   # when held input is used
-        ├── dialog/portable/selection/*.json  # when v20+ selection/confirmation UI is declared
-        └── dialog/portable/form/*.json       # when v21 typed forms are declared
+        ├── predicate/portable/input/*.json       # when held input is used
+        ├── dialog/portable/selection/*.json      # when selection/confirmation is used
+        └── dialog/portable/form/*.json           # when typed forms are used
 ```
 
-Generated content belongs under `build/` and is not committed.
-
-## Portable multiplayer v12
-
-ADR 0020 is the implemented design contract. v12 provides one shared game instance with N online participants:
-
-- `game.players()` returns an opaque `PlayerSet` representing all online participants in the shared game;
-- `game.forEachPlayer(players, player => ...)` is a `game.tick(...)`-scoped compiler primitive lowered through `execute as`;
-- `PlayerContext` is lexical, player-local references may not escape it, and nested player contexts are initially rejected;
-- in v12 `forEachPlayer`, `game.state(...)` remains shared and read-only and shared mutations are rejected; v13 adds the exact-cardinality `forSinglePlayer` exception described below;
-- `player.state(...)` is independently mutable per participant. The compiler exposes 32 player-state slots backed by namespace-stable scoreboard objectives and rejects larger programs;
-- `player.input.*` samples `hotbarSlot`, `forward`, `backward`, `left`, `right`, `jump`, `sneak`, and `sprint` independently for each online participant into eight fixed namespace-stable objectives before authored rules run;
-- missing player-local state is initialized before input/rules; disconnect preserves state for the active game instance; reload/replacement resets the instance; cleanup removes the full player-local objective bank, including offline entries;
-- player-local references may drive player-context logic and `player.hud(...)`. Per-player HUD numeric values use a 32-objective namespace-stable scratch bank; player-local values may not drive shared block/text/actor/world projection, global sidebar, or shared camera coordinates;
-- one shared camera carrier targets a `PlayerSet`; `spectate` applies only to audience members already in Spectator and `position_lock` to audience members not in Spectator; the compiler never owns gamemode;
-- multiple concurrent sessions, private world scenes, independent per-player vanilla sidebars, distinct per-player camera positions, and implicit cross-player reductions are deferred.
-
-v12 exists only in the Node compiler/generated-datapack backend; there is no compatibility backend to update. Objective names use namespace-derived short hashes and fixed slot suffixes so the complete possible bank can be removed on reload/cleanup even after declarations are renamed or deleted.
-
-## Portable procedural grid v13 core
-
-ADR 0022 is the implemented and accepted contract for portable v13. It adds bounded shared runtime topology without restoring arbitrary JavaScript runtime collections; the 29 x 37 procedural roguelike is the completed reference acceptance game:
-
-- `game.forSinglePlayer(game.players(), player => ...)` executes only when exactly one online participant exists and, unlike multi-player `forEachPlayer`, may deterministically mutate shared state/grid/RNG/projection state from that sole player's input;
-- `game.grid(id, { width, height, initial, outside })` declares a fixed-size shared 2D grid, initially limited to 4 grids and 2,048 cells per grid;
-- runtime `fill`, `get`, `set`, and clipped `fillRect` actions provide dynamic indexed access while remaining compiler-bounded; `fillRect` lowers through row dispatch so large procedural generation does not scan every grid cell for every rectangle;
-- grid values use the normal portable fixed-point representation, while runtime coordinates are interpreted as integer cell units;
-- `game.rng(id, { seed })` declares a deterministic shared random stream with `int(target, min, max)` and `reset()` actions;
-- the v13 RNG algorithm is versioned and deterministic, using a fixed 32-bit LCG step lowered to scoreboard arithmetic;
-- `game.gridWorld(...)` declares an incremental fixed-footprint projection from grid cell values to one block per Minecraft cell, with `rebuild()` and read-only `ready`;
-- projection runs after authored rules in bounded `cellsPerTick` slices and projected terrain remains persistent after cleanup;
-- grid/RNG/world-grid mutations are shared, rejected in multi-player `forEachPlayer`, and allowed in exact-cardinality `forSinglePlayer`;
-- rooms, enemies, and loot remain fixed compile-time slot pools built from existing `game.repeat`, scalar state, and presentation primitives rather than generic runtime arrays.
-
-Minecraft 26.1 function macros are the intended internal lowering for dynamic grid indexes. A mod-free probe on `second` verified dynamic scoreboard holders of the form `g$(i)` can be written and read using namespace-owned command storage. Raw macros/storage are not exposed through the portable API.
-
-The accepted v13 reference is a regenerated top-down procedural roguelike with runtime room/corridor generation on a 29 x 37 grid, deterministic seed replay, floor-to-floor regeneration, grid-authoritative movement collision, bounded enemy/loot slots, and incremental terrain projection. Generic arrays/maps/sets, BFS/A*, runtime-created actors, persistent saves, player-local grids/RNG, and multi-layer cell templates remain out of scope for v13.
-
-## Portable team PlayerSets v14
-
-ADR 0023 is the implemented and accepted v14 membership/audience contract. `game.players()` keeps its v12 meaning of all online players, while `game.teamPlayers(name)` denotes online members of an externally managed vanilla scoreboard team. Team-backed sets may drive `forEachPlayer`, `forSinglePlayer`, player-local HUDs, and camera audiences without compiler-owned player tags or fixed names/UUIDs. Team names are compile-time literals restricted to `[A-Za-z0-9_.-]{1,16}`, and at most eight distinct team PlayerSets may be declared.
-
-For v14 programs, player initialization and held-input sampling target the union of PlayerSets referenced by player execution, player HUDs, and cameras. If `all_online` is referenced the union collapses to all online players; otherwise unrelated online players outside every referenced team remain untouched. Player-local state is still attached to the real player and therefore follows that player across external team changes within the active portable instance.
-
-V14 permits up to eight player HUD declarations and eight cameras when their audiences are disjoint team PlayerSets. An `all_online` HUD/camera audience may not coexist with another of the same presentation kind, and duplicate team audiences are rejected. Camera mode still does not own player gamemode. The compiler owns generated camera carriers and portable objective state only; team creation, membership, and teardown are external server/session responsibilities.
-
-V14 itself stops at membership/audience partitioning. V15 builds on that membership boundary with independent logical session state; private world projection, team-local sidebars, reductions, and compiler-owned matchmaking remain future work.
-
-## Session-local logical matches v15
-
-ADR 0024 is the implemented and accepted v15 logical-session contract. V15 binds compile-time session slots one-to-one to team-backed PlayerSets and gives each session independent shared scalar state, Grid objectives, and deterministic RNG holders. The authoring shape is `game.session(id, teamPlayers, session => ...)`, with `session.state`, `session.grid`, `session.rng`, `session.forEachPlayer`, and `session.forSinglePlayer`. Session callbacks execute once per portable tick even when their team is empty; player iteration remains cardinality-driven by online team members.
-
-Session-local references are lexical: they may not escape to global rules or another session. Global shared values may be read inside a session, but global mutation from SessionContext is rejected. Multi-player session callbacks may not mutate session-shared state/Grid/RNG, while exact-cardinality `session.forSinglePlayer` may. Player-local state remains player-owned and follows the player across externally managed team changes. Session ids and team bindings are compile-time declarations; there is no runtime selector/string lookup or compiler-owned matchmaking.
-
-Each session may reuse the same local scalar, Grid, and RNG names as another session because lowering qualifies holders/objectives by session slot. Session Grids keep the v13 per-grid bounds and are additionally subject to a bounded aggregate session-grid budget. `/reload` or generated-pack replacement resets every session to its declarations. An empty team does not delete/reset its logical session, and `portable/cleanup` removes compiler-owned session state while leaving external vanilla teams and membership untouched.
-
-V15 is logic isolation, not private world isolation. Existing `gridWorld`, block/entity projection, ownership regions, and vanilla sidebar remain global. V16 adds the first session-local world boundary described below; automatic arena allocation/private scenes, dynamic matchmaking, session-local player state, cross-session reductions, and persistent saves remain deferred.
-
-## Session-local GridWorld projection v16
-
-ADR 0025 is the implemented and accepted v16 contract. V16 adds `session.gridWorld(id, spec)`, which projects a Grid declared by the same SessionContext into an explicit fixed block footprint. The API mirrors the v13 global GridWorld shape (`grid`, optional `dimension`, `originX`, `y`, `originZ`, `palette`, optional `cellsPerTick`) and exposes session-qualified `rebuild()` plus read-only `ready`. The same local Grid and GridWorld ids may be reused by another session because Grid objectives and projection ready/active/cursor holders are qualified by session slot.
-
-Every session GridWorld must lie completely inside the program's one declared `vanilla.ownership` rectangle and use that ownership dimension. This is the chunk-lifecycle boundary: the existing ownership startup force-loads the bounded rectangle, reaches staged `#ready=1`, and only then permits authored tick logic and session projections. V16 does not add transient per-session chunk leasing, per-session ownership rectangles, or automatic arena allocation.
-
-If either side is session-local, two GridWorld footprints may not overlap at the same dimension and Y level; session-vs-session and session-vs-global overlaps are compile-time errors. Existing global-vs-global semantics are unchanged for compatibility. Distinct footprints provide independent terrain state but are not visibility-private scenes.
-
-A session projection owns independent `ready`, `active`, and `cursor` state. After authored rules, each active session projection may advance one bounded `cellsPerTick` slice per tick, so one session does not consume another session's projection budget. The legacy global GridWorld scheduler is unchanged. `rebuild()` is a session-shared mutation: it is allowed at session scope and inside exact-cardinality `session.forSinglePlayer`, but rejected in multi-player `session.forEachPlayer`. `ready` is lexical and may not escape its SessionContext.
-
-V16 permits at most four GridWorld projections per session, sixteen session GridWorld projections in aggregate, and 16,384 aggregate projected session cells; `cellsPerTick` remains bounded to 1..256. Projected blocks are persistent world state: `/reload` deterministically resets/rebuilds them, while `portable/cleanup` removes generated objective/storage/force-load state but does not restore terrain.
-
-## Bounded player/session reductions v17
-
-ADR 0027 is the implemented and accepted v17 aggregation contract. V17 adds explicit deterministic `count`, `sum`, `min`, `max`, `any`, and `all` reductions over a `PlayerSet` without weakening the existing rule that arbitrary shared/session-shared mutation is rejected inside multi-player `forEachPlayer`. Global authoring uses `game.reduce.*(players, target, ...)`; inside a SessionContext, `session.reduce.*(target, ...)` implicitly uses that session's team PlayerSet and requires a target state from the same session.
-
-Reduction selector callbacks are read-only lexical PlayerContexts. They may read/declare player-local state, read sampled player input, and compare readable portable values, but they cannot emit mutations, HUD declarations, nested player iteration, or other actions. A PlayerSet referenced only by a reduction still participates in the v12 initialization/input prelude before authored reduction actions execute.
-
-All reduction results use normal fixed-point representation. Empty-set results are `count=0`, `sum=0`, `any=0`, and `all=1`; `min` and `max` require an explicit author-supplied empty value. A v17 program may contain at most 64 reduction actions. `sum` follows Minecraft signed 32-bit scoreboard arithmetic and does not add an overflow guard.
-
-V17 reductions introduce no new persistent resource type: they update existing shared/session state holders and reuse the existing player objective lifecycle. `/reload` resets active-instance state and player state before reductions recompute from current participants; `portable/cleanup` removes generated objectives while externally managed vanilla teams remain untouched.
-
-## Persistent scalar state v18
-
-ADR 0028 defines the implemented v18 persistence boundary. V18 adds `game.persistentState(name, initial, options?)` and `session.persistentState(...)` for global and session-shared fixed-point scalars that survive `/reload`, ordinary `portable/cleanup`, and same-namespace generated-pack replacement. Persistent values use a dedicated namespace-derived scoreboard objective and stable semantic-key holders rather than the active-instance objective. The complete program is bounded to 64 persistent scalar declarations.
-
-Each declaration has an integer `schema` (default `1`) and `onSchemaMismatch: "reset" | "preserve"` (default `"reset"`). Reset policy reinitializes that declaration when its stored schema differs; preserve policy keeps the numeric value and advances the stored schema marker. V18 does not run arbitrary migration callbacks. Newly introduced keys initialize from their declaration. Renaming a key creates a new persistent identity; historical holders remain until explicit purge.
-
-Lifecycle is intentionally split. `portable/cleanup` preserves persistent data while removing active-instance resources. `portable/reset_persistent` restores all currently declared persistent values/schema markers to declarations. `portable/purge_persistent` destructively removes the persistent objective and initialization metadata. Normal pack replacement should therefore run cleanup, replace the same namespace, and reload; purge is only for explicit data reset/final teardown.
-
-V18 itself remains global/session scalar persistence only. Portable v19 adds bounded persistent Grid collections as described below. Player-persistent/offline-player identity, persistent RNG/generic collections, structural migration callbacks, and cross-namespace storage remain deferred.
-
-## Persistent Grid state v19
-
-ADR 0029 defines the v19 bounded persistent-collection boundary. V19 adds `game.persistentGrid(id, spec)` and `session.persistentGrid(...)` with the same `fill/get/set/fillRect` operational semantics as ordinary Grid plus `schema` and `onSchemaMismatch` persistence policy. Persistent Grids use normal portable fixed-point values; runtime X/Z are integer cell coordinates, out-of-bounds reads return `outside`, out-of-bounds writes are ignored, and rectangle writes clip to declared bounds.
-
-Persistent Grid cells live in compiler-private namespace command storage as bounded integer arrays rather than one scoreboard holder per cell. Stable semantic identity is derived from global/session scope plus Grid id; function macros provide dynamic indexed element access internally. Raw command-storage paths and NBT operations are not exposed through Portable IR or `portableDsl`. The compiler may use ordinary scoreboard scratch values while evaluating coordinates and transferring the selected cell, but the complete persistent collection is not mirrored into scoreboard state.
-
-V19 permits at most 8 persistent Grids, 2,048 cells per Grid, dimensions up to 64 x 64 subject to that per-Grid limit, and 16,384 persistent cells in aggregate. Global/session mutation follows the same shared-state cardinality rules as ordinary Grid: multi-player `forEachPlayer` mutation is rejected, while exact-cardinality `forSinglePlayer` may mutate deterministically.
-
-Persistent Grid schema policy matches v18 scalars for same-shape data: reset-policy schema mismatch restores all cells to the current `initial` value; preserve policy keeps cells and advances the schema. Width/height mismatch is structural and always resets the Grid to its current declaration regardless of schema policy. `portable/cleanup` preserves persistent Grid storage, `portable/reset_persistent` restores currently declared scalar/Grid defaults, and `portable/purge_persistent` destructively removes namespace persistent Grid storage plus scalar persistence infrastructure when present.
-
-V19 does not expose arbitrary storage, runtime-created collections, persistent player/offline identity, persistent RNG, migration callbacks, or direct persistent-Grid-to-GridWorld projection. Ordinary v18 persistent scalars remain the preferred representation for small counters/flags; ordinary scoreboard-backed Grid remains the preferred high-frequency runtime scratch topology.
-
-## Interactive selection UI v20
-
-ADR 0030 defines the implemented v20 interactive UI boundary. `game.selection(id, spec)` declares one static bounded choice surface and `player.selection(selection)` returns a lexical player-local comparable handle with `open()` and `clear()`. Selection declarations contain a static title, optional static body, 1..16 labeled option values, optional cancel label/value, and 1..4 columns. Programs may declare at most eight selections. Dynamic text/form inputs and arbitrary dialog JSON are not part of v20.
-
-The player-local selection result uses normal portable fixed-point values but reserves compiler-private raw states: `-2147483648` means idle/rearmed and raw `0` means pending. Option and cancel values must therefore be distinct non-zero values after fixed-point scaling and may not equal the idle sentinel. `open()` only transitions idle to pending, so an authored level-triggered `open()` may safely run every tick without replacing an already-open dialog. A resolved non-zero result remains readable until `clear()` rearms the handle. Opening one selection also rearms any other pending selection for that player because Minecraft exposes one current dialog screen.
-
-Lowering uses Minecraft's native `minecraft:multi_action` dialog registry. Each selection receives a stable namespace-derived `trigger` objective selected from a complete eight-slot bank sorted by selection id. Generated buttons execute only a compiler-authored permission-0 `trigger <objective> set <raw-result>` action; portable source cannot supply command strings, objective names, registry ids, or arbitrary click actions. The generated resource is `data/<namespace>/dialog/portable/selection/<id>.json`, and PlayerContext lowering performs `scoreboard players enable` plus `dialog show @s ...` only on idle-to-pending transition.
-
-Selection resources are active-instance compiler ownership. Player initialization/reload rearms every selection, and `portable/cleanup` clears a visible dialog only for players whose generated selection is pending before removing the complete eight-objective bank. External teams and gamemode remain outside compiler ownership.
-
-Minecraft 26.1 treats dialog definitions as registry bootstrap data. Focused acceptance proved that copying a new v20 dialog pack into an already-running world and using only `/reload` does not make the new dialog id available while functions are parsed. Installation, replacement, or removal that changes generated dialog resources must therefore run cleanup where applicable, replace/remove files, then restart the server/world. Once a pack's dialog registry entries were bootstrapped at server start, ordinary `/reload` succeeded and reset v20 active-instance state as specified.
-
-V20 does not expose text/number/boolean form controls, dynamic dialog text, arbitrary click events/commands, inventory/container GUI ownership, quick-action or pause-screen registration, runtime-created menu graphs, custom packets, or persistent selection state. Portable v21 expands this boundary as described below.
-
-## Rich/typed native dialog UI v21
-
-ADR 0031 defines the implemented v21 dialog expansion. Static dialog-facing text may use a bounded `RichText` value made from strings and style spans (color, bold, italic, underline, strikethrough). Selection, confirmation, and form bodies may contain bounded static text elements plus presentation-only item elements with item id/count, optional description, tooltip/decorations flags, and bounded dimensions. Dynamic score/selector/NBT components, click/hover events, arbitrary component objects, custom fonts, and item NBT/components remain outside Portable IR.
-
-`game.confirmation(id, spec)` lowers to native `minecraft:confirmation` and reuses the v20 player-selection handle/lifecycle. Its yes/no actions return distinct non-zero authored fixed-point values through the existing stable selection trigger bank; native Escape follows the confirmation no action. Selection and confirmation declarations share the v20 eight-slot declaration bound.
-
-`game.form(id, spec)` plus `player.form(form)` adds one compiler-owned input per generated native form. V21 supports boolean, single-option, and integer `number_range` inputs. Boolean defaults to logical `1/0`; option labels map to bounded authored numeric values; range start/end/step/initial are integers. Each form owns a stable `trigger` transport objective plus a dummy fixed-point result objective from complete eight-slot banks sorted by form id. Submit uses compiler-authored permission-0 `minecraft:dynamic/run_command` to issue `trigger <transport> set $(v)`, then the tick prelude validates/maps that transport to the authored fixed-point result. Logical zero remains a valid resolved result because result idle state uses a separate signed-int sentinel.
-
-Form `open()` is idempotent while already pending. A resolved result remains readable until `clear()`. Opening a different generated selection/confirmation/form first rearms any other pending generated dialog surface for that player, matching Minecraft's one-current-dialog-per-client model. Form cancel uses a reserved compiler-private transport code and resolves to the declared cancel value (default logical `-1`). Player initialization, `/reload`, and `portable/cleanup` treat these as active-instance state; cleanup removes complete selection/form banks while leaving externally managed teams and gamemode untouched.
-
-The vanilla return channel intentionally bounds the feature: v21 exposes exactly one typed input because a permission-0 client can safely return one integer through `/trigger`. Free-form text cannot be returned through that channel, and generic multi-field packing, arbitrary commands/events, custom packet handlers, inventory/container GUI ownership, runtime-created dialog graphs, and persistent form state remain unsupported. Generated `minecraft:dialog` resources follow the same registry-bootstrap lifecycle established by v20: add/change/remove requires cleanup where applicable, file replacement/removal, then server/world restart; ordinary `/reload` remains valid after startup bootstrap.
-
-## Expanded mannequin actor presentation v22
-
-ADR 0032 defines the implemented v22 actor expansion. `game.actor(...)` keeps the existing maximum of 64 statically declared compiler-owned mannequin carriers and the v7 `x`/`y`/`z`/`yaw`/`when` lifecycle, while adding state-backed `pitch` plus bounded static character presentation: profile texture/cape/elytra resource ids with `wide`/`slim` model override, hidden player skin layers, mannequin pose, main-hand preference, and item-resource-id equipment for head/chest/legs/feet/mainhand/offhand.
-
-Profile input is deliberately resource-backed rather than identity-backed. Portable source cannot request a player name/UUID lookup, provide signed/raw profile properties or arbitrary base64 texture payloads, or depend on compiler network access. Custom namespaced profile assets may be referenced but must be delivered through normal Minecraft resource-pack mechanisms; built-in `minecraft:` assets need no custom client mod. Equipment is presentation-only and carries item ids only: item components/NBT, counts, enchantments, inventory mutation, and runtime equipment changes are not part of v22.
-
-The vanilla backend still always owns a `minecraft:mannequin`. V22-presented actors add `immovable:1b` while retaining compiler-authored position/rotation projection. Existing zombie/skeleton semantic intents continue to map to mob heads; on v22 actors that head is inserted into the static equipment map unless explicit `equipment.head` overrides it. Old v1-v21 actor declarations retain their historical lowering path byte-for-byte. Pose/profile/layers/hand/equipment are static declarations; position/yaw/pitch may follow shared portable state. Arbitrary limb rotations, roll/scale animation, `/swing` authoring, runtime-created actors, attachment/passenger graphs, arbitrary entity NBT, and generic item/model-display actors remain outside the boundary.
-
-Actor replacement/reload/cleanup semantics do not change. A false `when` removes the owned mannequin and a later true condition recreates it with the full declaration. V22 introduces no registry-bootstrap resource; ordinary datapack `/reload` remains sufficient unless another declared capability such as v20+ dialogs independently requires restart for changed registry entries.
-
-## World interaction use v23
-
-ADR 0034 adds a bounded vanilla right-click input primitive backed by compiler-owned `minecraft:interaction` entities. `game.interaction(id, spec)` declares at most 64 static hitboxes. Coordinates use the existing shared/state-backed coordinate model; width/height are static `0.01..64` values, `response` is a static boolean defaulting to `true`, and optional `when` owns the entity lifetime. Interactions participate in the existing ownership rectangle, staged initialization, stable tagging, reload replacement, and cleanup lifecycle.
-
-A handle's single `onUse(player => ...)` handler is declared directly in the root `game.tick(...)` scope. The backend executes the callback through vanilla `execute ... on target`, so `player` is the actual player whose right click Minecraft recorded. The callback uses an exact mutable PlayerContext subset: player-local state/input and selection/form operations are available, and shared state mutation is allowed under the existing single-player mutation rule. `player.hud(...)` is excluded because HUD declarations require a static PlayerSet audience.
-
-After dispatch, generated code removes the interaction entity's `interaction` compound. A right click is therefore an edge-like event rather than a persistent level and cannot replay every tick. Vanilla stores only the latest interaction record, so v23 deliberately does not promise a queued stream if multiple uses are collapsed before one compiler tick. Left-click/attack handling, arbitrary entity/NBT queries, dynamic hitbox shape/response, runtime-created interactions, session-local interaction declarations, and later-tick controller binding are not part of the v23 contract; Portable v24 adds only the bounded active-instance controller case described below. The feature adds no registry resource; ordinary `/reload` is sufficient.
-
-## Interaction controller binding v24
-
-ADR 0035 extends a v23 interaction handle with active-instance controller ownership. Inside that interaction's exact `onUse(player => ...)` callback, `interaction.controller.claim(player)` binds the current clicker. A root-tick `interaction.controller.forPlayer(player => ...)` then runs zero or one times per tick: zero while no current controller is online, or once as the exact currently bound online player. The callback can use player-local state/input and selection/form surfaces and may mutate shared state under the existing exact-player rule; `player.hud(...)` remains excluded because its audience must be statically declared.
-
-The backend does not expose UUIDs, tags, selectors, or arbitrary identity values. Instead each controller-enabled interaction owns one compiler-private dummy objective plus an opaque generation holder. Claim increments the generation and copies it to the clicker's score. Later controller execution requires equality with the current generation, so a new claim invalidates an old controller without enumerating that player. Disconnect/reconnect during one active instance resumes control only while no newer claim has advanced the generation. If the old player was offline during a new claim, its stale score remains harmless and still fails after reconnect.
-
-Controller generations are raw internal integers rather than fixed-point game values. At signed 32-bit maximum, claim lowering removes/recreates that interaction's controller objective and resets generation before issuing token `1`, so token reuse cannot revive an ancient offline controller. `/reload` applies the same lifecycle at namespace scope: the compiler removes the complete 64-slot controller-objective bank, recreates only used objectives, and resets generations to zero. Thus controller binding is intentionally active-instance state and is cleared for both online and offline players on every reload. `portable/cleanup` removes the same bank. Removing v24 controller use from an existing namespace so it compiles back to v23 or earlier requires running the installed v24 cleanup before replacement, because historical v1-v23 generated packs intentionally do not contain later-version objective cleanup.
-
-V24 does not provide persistent controller identity, arbitrary player transfer/release, multi-controller membership, session-local interaction/controller declarations, automatic cabinet/session allocation, or dynamic per-controller HUD declarations. Plain v23 interaction source remains v23 and preserves its historical output.
-
-## Bounded item/placeable objects v25
-
-ADR 0036 adds bounded item-backed runtime-placeable world objects without pretending that datapacks can register native Minecraft block/item types. `game.item(id, spec)` declares a small compiler-known appearance/name/stack-size template. V25 currently supports either a built-in player-head appearance backed by an HTTPS `textures.minecraft.net/texture/<hex>` URL or a static `minecraft:item_model` resource id. Every v25 ItemTemplate is bound to exactly one PlaceableType; arbitrary item components/NBT, standalone generic custom items, inventory querying, recipes, and item-use callbacks remain outside the contract.
-
-`game.placeable(id, { item, maxInstances, orientation: "cardinal" }, instance => ...)` expands one lexical template into a fixed slot pool. The backend gives the item as a compiler-controlled `minecraft:armor_stand` placement carrier whose `minecraft:entity_data` creates an invisible no-gravity Marker with compiler tags. When Minecraft places it inside the ownership rectangle, the allocator stores the exact `Pos`, quantizes placement yaw to one of four cardinal orientations, initializes the lowest free slot, and retags the Marker as that slot's anchor. Full-capacity, wrong-dimension, or outside-ownership placement is rejected by removing the Marker and emitting one matching refund stack at the attempted anchor. No exact `onPlace(player)` identity or generic selector/raycast API is exposed.
-
-Each active slot owns bounded local state plus local block/text/item Display presentation, interactions/controllers, existing 2D collision primitives, tick rules, removal, and pickup. Local X/Z presentation is transformed by the slot's cardinal orientation around the anchor; Display children receive the corresponding cardinal quaternion. `itemDisplay` renders only a compiler-known ItemTemplate appearance, so a head-backed cabinet needs no custom resource pack while a namespaced model remains ordinary resource-pack content. Child interactions reuse v23/v24 use/controller semantics with slot-qualified controller generations. Allocation and removal both advance those generations, preventing stale controller tokens from resurrecting when a slot is reused.
-
-The accepted bounds are 32 ItemTemplates, 8 PlaceableTypes, 1..16 slots per type, 32 aggregate slots, 16 local state fields per template / 256 expanded state cells, and 256 expanded placeable child presentation entities. Child interactions still consume the existing global 64-interaction/controller bank and expanded actions still obey the 2,048-action bound.
-
-V25 placeables are deliberately active-instance state. Pickup/removal frees and resets a slot; `/reload` clears every pending/active placeable entity, slot state, and controller token; `portable/cleanup` removes the full v25-owned scoreboard/entity/force-load footprint. Persistence of placed furniture, native block collision/mining/redstone/fluids/pistons, free-angle placement, generic runtime collections, and 3D/swept collision remain separate capabilities.
-
-## Interaction-controller camera routing v26
-
-ADR 0037 closes the cabinet-to-remote-game camera gap without introducing generic player identity. A camera may use an `InteractionController` handle as its audience. The v26 IR records `{ interactionController: id }`; lowering selects the same exact online player as `controller.forPlayer(...)` by comparing that player's compiler-private controller score with the interaction generation holder. No player name, UUID, persistent tag, or author-visible selector is created.
-
-Controller-backed cameras are deliberately bounded to one camera declaration and `position_lock` mode. Static PlayerSet cameras keep their v14 rules when no controller-backed camera exists. This avoids implicit precedence when one player has multiple controller tokens and avoids datapack-owned gamemode transitions for `spectate`.
-
-Inside the matching `controller.forPlayer(player => ...)`, `controller.returnToInteraction(player)` teleports the exact controller to the source interaction entity when it exists and then advances the controller generation without assigning the replacement token. Authored actions run before camera locking, so that same tick's camera test no longer matches and cannot recapture the player. If the source interaction has already disappeared, teleport is skipped but generation still advances, making release deterministic. Placeable child interactions inherit this behavior and therefore return to their current placed cabinet.
-
-V26 adds no new lifecycle bank: controller-camera selection and return reuse v24 controller objectives/generations, v10+ camera carriers, and v25 slot invalidation. `/reload` and cleanup continue to reset controller state and owned camera/interaction entities.
-
-## Portable v27 compound conditions
-
-ADR 0040 adds bounded recursive `all`, `any`, and `not` condition nodes while retaining scalar comparisons as leaves. The authoring API is `game.condition.all/any/not`; no parallel compound-branch helper API is retained. A returned `PortableDslCondition` can be reused by ordinary `game.when`, `unless`, `choose`, player/session reduction predicates, and declarative `when:` surfaces.
-
-Condition trees preserve lexical PlayerContext/SessionContext/PlaceableInstanceContext rules and add independent bounds of 16 children, depth 8, and 64 nodes. Raw compound IR is version-gated to v27.
-
-Vanilla lowering keeps comparison-only fast paths. Compound trees become generated boolean evaluator functions using Minecraft `return`; callers store the 0/1 result in compiler-private score scratch and branch from that materialized value. Player reduction predicates evaluate as each selected player so player-local `@s` leaves retain their meaning. The existing 2,048 action bound is unchanged because boolean nodes no longer duplicate guarded action bodies.
-
-The migrated `portable-othello` reference uses v27 conjunctions for seat admission and scan scheduling. Reusable runtime rules/procedures remain a separate future capability because they require parameter/local-state, recursion/cycle, lexical specialization, and execution-context semantics beyond condition composition.
-
-## Portable v28 constant scalar arithmetic
-
-ADR 0041 adds compile-time-number multiplication and division to mutable global, persistent, session, player-local, and placeable-local scalar state. The authoring surface is `state.mul(factor)` and `state.div(divisor)`; factors are JavaScript numbers, not Portable value references. Using either method raises inferred Portable version to v28.
-
-The parser quantizes the factor with the program `fixedPoint`. Division is rejected when the quantized divisor is zero. Lowering reduces the fixed-point ratio by GCD before emitting scoreboard arithmetic. With `fixedPoint=1000`, `velocity.mul(0.98)` becomes the reduced coefficient `49/50`, so generated code multiplies by 49 and divides by 50 rather than multiplying by 980 and dividing by 1000. Negative factors negate first and then use a positive reduced divisor; `mul(0)` lowers directly to zero.
-
-V28 remains deliberately constant-only. It does not add state-by-state multiply/divide or an expression tree. Intermediate multiplication still follows signed 32-bit Minecraft scoreboard behavior and has no generic overflow guard, so game code must keep runtime magnitudes within a safe range. This is suitable for intended arcade coefficients and pinball-scale positions/velocities while keeping lowering bounded and deterministic.
-
-## Planned capability roadmap after v16
-
-ADR 0026 establishes a capability-first roadmap: prioritize portable semantics that current game source cannot reproduce safely with existing primitives before automation or infrastructure that already has a workable explicit fallback. This is planning policy, not an implemented API contract; each capability requires its own ADR and Portable IR version decision before implementation.
-
-The roadmap order is:
-
-1. **bounded player/session reductions** — completed by Portable v17 / ADR 0027;
-2. **persistent portable state** — completed for bounded global/session scalar state by Portable v18 / ADR 0028 and bounded persistent Grid state by Portable v19 / ADR 0029; player/offline persistence remains deferred;
-3. **interactive dialog UI** — completed for bounded selections by Portable v20 / ADR 0030 and expanded in Portable v21 / ADR 0031 with static rich text/item bodies, native confirmation, and boolean/option/integer-range single-input forms;
-4. **mannequin/actor presentation expansion** — completed by Portable v22 / ADR 0032 with bounded static profile/skin-layer/pose/hand/equipment presentation and state-backed pitch while preserving compiler-owned lifecycle and the 64-actor declaration bound. Item/model projections and attachment relationships remain separate future capabilities.
-
-ADR 0032 completes item 4 by extending rather than replacing the v7 lifecycle: actor carriers remain bounded compiler-owned mannequins with state-backed transforms/lifetime and zombie/skeleton mob-head intents, now with the v22 presentation fields described above. Runtime-created or unbounded entity collections remain out of scope.
-
-Automatic arena allocation, per-session ownership/dynamic chunk leasing, dynamic matchmaking, session-local presentation declarations, and per-player vanilla sidebars remain useful but lower priority because current prototypes have explicit workarounds. Bounded local TypeScript module/import authoring is implemented by ADR 0033 without changing Portable IR. Bounded world-object right-click input is implemented by Portable v23 / ADR 0034 without opening a generic Minecraft query/event API, and v24 / ADR 0035 adds active-instance exact-player controller binding for those interactions without introducing generic identity queries. Client-private scene visibility is still a genuine missing isolation feature, but spatially separate footprints are sufficient for current acceptance games, so privacy work is also behind the four capability priorities unless a retained game makes it a blocker.
-
-ADR 0036 completes the bounded item-backed placeable-object capability in Portable v25. ADR 0037 / Portable v26 then separates the checked-in pinball cabinet from its remote game board by routing the exact active interaction controller to one remote position-lock camera and providing bounded return to the source interaction. ADR 0040 / Portable v27 adds bounded recursive compound conditions shared across action and declarative predicate surfaces without increasing the action ceiling. ADR 0041 / Portable v28 adds bounded constant-factor fixed-point multiplication/division for mutable scalar state. Additional capability gaps include persistent placed furniture, native block semantics, standalone/general custom items, multiple/dynamic controller-camera arbitration, per-player camera coordinates, 3D/swept collision, deliberately scoped Minecraft world/entity queries, pathfinding/topology helpers, and generic runtime collections where existing Grid/fixed-slot patterns prove insufficient.
+Generated artifacts belong under `build/` and are not committed.
+
+## Compiler-enforced bounds
+
+The compiler owns the exact validation. These are the principal current limits:
+
+| Resource | Limit |
+| --- | ---: |
+| Global scalar states / inputs | 128 states / 32 inputs |
+| Player-local states | 32 |
+| Team PlayerSets / sessions | 8 / 8 |
+| Session scalar states | 64 per session |
+| Global Grids / RNG streams / GridWorlds | 4 / 4 / 4 |
+| Grid dimensions / cells | max 64 × 64, max 2,048 cells per Grid |
+| Session Grid cells | 16,384 aggregate |
+| Session GridWorlds | 4 per session, 16 aggregate, 16,384 projected cells aggregate |
+| Persistent scalar states | 64 aggregate |
+| Persistent Grids | 8 aggregate, 16,384 cells aggregate |
+| Reductions | 64 |
+| Block projections / text / actors / interactions | 64 each |
+| World batches / writes | 32 batches / 32,768 writes |
+| Cameras / player HUDs | 8 / 8 |
+| Shared HUD / sidebar | 1 / 1; sidebar max 15 rows |
+| Selections / options | 8 surfaces, max 16 options |
+| Forms / form options | 8 forms, max 16 option values |
+| Item templates / placeable types | 32 / 8 |
+| Placeable instances | 16 per type, 32 aggregate |
+| Placeable state | 16 fields per type, 256 expanded cells aggregate |
+| Placeable child presentation | 256 expanded declarations |
+| Ownership region | 64 chunks |
+| Runtime actions / nesting | 2,048 actions / depth 16 |
+| Compound conditions | 16 children, depth 8, 64 nodes |
+
+Other field-specific bounds are enforced by the parser/DSL and should remain implementation-aligned with these architectural limits.
 
 ## Current limitations
 
-- TypeScript modules are local build-time composition only: at most 64 `.ts` files / 1,000,000 aggregate source bytes under the entry directory; Node built-ins, npm/bare packages, non-TypeScript assets, dynamic import, authored `require`, and circular imports are unsupported;
-- v1-v11 remain single-controller-oriented for compatibility; v12 is the multiplayer model;
-- fixed-point arithmetic relies on Minecraft scoreboard 32-bit behavior; generated commands do not add generic overflow guards. V28 `mul`/`div` accept compile-time numeric factors only, reduce coefficients before lowering, and still require authored runtime values to avoid 32-bit intermediate overflow;
-- no runtime generic arrays/collections, arbitrary packet-event dispatch, arbitrary inventory/form/dialog API, arbitrary NBT/storage API, or arbitrary Minecraft queries; v21 provides bounded static rich native-dialog content, v22 provides bounded static mannequin profile/pose/equipment presentation, v23 provides bounded right-click/use events through compiler-owned interaction entities, v24 provides active-instance interaction-controller binding, v25 provides bounded compiler-known item appearances plus active-instance placeable slots, and v26 permits one position-lock camera to use an interaction controller as its exact dynamic audience plus bounded return to the source interaction; free-form text input, generic multi-field/dynamic forms, arbitrary click/attack events or commands, inventory GUI ownership, generic entity mutation, standalone/general custom-item behavior, persistent controller identity across reload, persistent placed objects, native custom block semantics, generic player identity values, and runtime entity collections remain unsupported;
-- one server-global sidebar; v14 permits up to eight camera declarations only for disjoint external-team audiences;
-- bounded 2D logic collision only, not Minecraft hitbox queries or 3D/swept physics;
-- v8 world projection is compile-time declared and persistent; v13 additionally provides bounded incremental runtime grid projection, also persistent;
-- v15 adds independent team-bound logical sessions; v16 adds explicit session-local Grid-to-world footprints inside one shared ownership rectangle; v17 adds bounded cross-player/session reductions; v18 adds persistent scalars, v19 adds persistent Grids, v20 adds player-local native-dialog selection, v21 adds bounded rich/typed native-dialog UI, v22 expands bounded mannequin actor presentation, v23 adds bounded compiler-owned world interaction/right-click input, v24 adds reload-scoped exact-player controller binding to those interactions, v25 adds bounded item-backed placeable object slots with local presentation/state, and v26 adds exact controller-to-camera routing plus return. Automatic arena allocation, per-session ownership/private visibility scenes, dynamic matchmaking, independent per-player vanilla sidebars, player/offline persistent state, persistent controller identity, persistent placed furniture, richer generic persistent collections, free-form/multi-field forms, and inventory UI are not implemented.
+The engine intentionally does not provide arbitrary JavaScript-at-runtime semantics, generic arrays/maps/sets, arbitrary command/NBT/storage escape hatches, generic Minecraft entity/world queries, runtime-created actors/interactions/placeables, arbitrary player identity values, dynamic matchmaking, or unrestricted UI/event dispatch.
 
-## Validation baseline
+Notable capability gaps include persistent player/offline identity, persistent placed furniture, native custom block semantics, standalone/general custom-item behavior, free-form or generic multi-field forms, independent per-player vanilla sidebars, private client-only world scenes, per-player camera coordinates, multiple/dynamic controller-camera arbitration, 3D/swept collision, pathfinding/topology helpers, and generic runtime collections beyond the bounded Grid/fixed-slot models.
 
-### Bounded local TypeScript module validation
+## Examples and validation
 
-ADR 0033 adds compiler-frontend module composition without changing Portable IR or vanilla lowering. Node coverage exercises relative extensionless/explicit `.ts` imports, nested imports, named/default exports and re-exports, plus rejection of Node built-ins, npm packages, non-TypeScript files, dynamic import, authored/CommonJS `require`, source-root/symlink escape, cycles, and graph bounds. `examples/portable-breakout-core` imports its brick-field builder from `./bricks` and generates byte-for-byte identical output to the former single-file source. The full regression suite is 45/45 green, and all 18 retained example datapacks are byte-for-byte identical to pre-change commit `d091570`.
+`examples/` is a human-facing reference surface, not a version archive. The retained examples are documented in `examples/README.md`. Narrow version-gating and lowering behavior belongs in `tools/portable-compiler/test/`.
 
-Because this feature changes only build-time source loading, Minecraft runtime acceptance is inherited from the unchanged generated datapack semantics; compiler regression and byte-parity validation are the acceptance evidence.
+Compiler changes must keep the Node regression suite green. Behavior that depends on Minecraft semantics requires focused mod-free Minecraft 26.1 validation according to `docs/operations.md`.
 
-Portable v1-v27 compiler behavior is covered by the Node regression suite; generated milestone behavior has focused mod-free Minecraft 26.1 acceptance where the relevant semantics require it. The strongest acceptance path is generated-pack validation on the vanilla `second` environment with a real client where visual/input semantics matter.
-
-Node migration ADR 0021 additionally established byte-for-byte output parity with the retired Java compiler for representative v1, v9, v10, and v11 programs including Bounce, Pinball, Breakout, Presentation, UI, World, JRPG, and spectate-camera cases. Node compiler regression tests are now the maintained build-time acceptance suite.
-
-### v25 bounded item/placeable validation
-
-Portable v25 passed the full ADR 0036 gate on mod-free Minecraft 26.1 `second` with real clients `Camera` and `Camera2` using checked-in `examples/portable-pinball-cabinet`. Real Survival placement consumed the compiler-generated Armor Stand carrier and allocated two exact anchors at `[731.5,65,732.5]` and `[741.5,65,742.5]`. The carrier's compiler-owned `entity_data` produced the tagged `Invisible` / `Marker` / `NoGravity` placement transport, and active slots spawned their local block/text/item Display and interaction children.
-
-The two cabinets maintained independent slot state and controller objectives. Camera and Camera2 separately claimed the two controls; real Space input launched only the corresponding local pinball state. Repeated pickup/replacement of slot 1 exercised all four cardinal orientations: the same local controls offset appeared on `-Z`, `+X`, `+Z`, and `-X` around the anchor, and a live orientation-3 block Display carried quaternion `[0.0f,0.7071068f,0.0f,0.7071068f]`. The head-backed item Display used the built-in player-head path without a custom resource pack.
-
-Sneak-use pickup returned the item, freed the slot, removed its interaction, and advanced the controller generation. Reallocation advanced generation again while the player's old token remained stale; real Space before reclaim did not mutate the new instance. Both full-capacity and outside-ownership placement returned one matching refund stack and left no pending Marker/active slot. `/reload` reset all slots/generations and removed player controller scores/entities. Final cleanup left zero objectives, owned/pending entities, and force-loads; temporary floors and the acceptance pack were removed, leaving only vanilla enabled.
-
-The Node suite is 59/59 green. All 20 retained v1-v24 example outputs are byte-for-byte identical to parent compiler commit `37b4b70`.
-
-### v28 constant scalar arithmetic validation
-
-Portable v28 passed focused mod-free Minecraft 26.1 acceptance on `second` with a generated fixed-point arithmetic smoke pack. The generated marker reported `portable_version=28` and `fixed_point=1000`. Lowering reduced `mul(0.98)` from raw coefficient `980/1000` to `49/50`.
-
-Starting from raw values `mulPos=1234`, `divPos=1235`, `mulNeg=1001`, `divNeg=1001`, and `zero=1000`, one authored arithmetic tick produced `1209`, `617`, `-501`, `-501`, and `0` respectively. A subsequent ordinary `/reload` reproduced the same values. `portable/cleanup` removed the smoke objective, and pack teardown left only the pre-existing Othello datapack enabled.
-
-The Node regression suite is 74/74 green. The checked-in pinball core and pinball cabinet also compile successfully without using v28 arithmetic and retain their previous inferred Portable versions, v10 and v26 respectively.
-
-### v27 compound-condition validation
-
-Portable v27 passed focused mod-free Minecraft 26.1 acceptance on `second` using the migrated checked-in `examples/portable-othello` and real clients `Camera` / `Camera2`. The generated marker reported `portable_version=27`; the pack contained 65 generated `condition_NNN` evaluators and loaded through ordinary `/reload` with no datapack problems. The initialized 8 x 8 GridWorld contained 60 green, two black, and two white cells.
-
-Camera and Camera2 used the world interaction seats as real clients. Their player-local colors became raw `1000` / `2000`; the v27 compound start predicate observed both seat-presence reductions and moved shared `phase` from waiting to playing while leaving Black as the opening turn. Camera then physically used legal cell `(2,3)`. The board became 59 green / four black / one white, score changed `2-2 -> 4-1`, and after bounded legality scanning shared `turn` remained raw `2000` (White) with `phase=PLAYING` and zero consecutive passes. This simultaneously validates v27 compound evaluation and the ADR 0039 exclusive if/else dispatch correction under real Minecraft execution.
-
-The Node regression suite is 70/70 green. All 22 checked-in examples compile; only Othello infers v27, while the other 21 retain their prior Portable versions. The migrated Othello compiles to 633 branch functions versus 761 in the pre-v27 nested-expansion form, without changing the 2,048-action ceiling.
-
-### v26 interaction-controller camera validation
-
-Portable v26 passed focused mod-free Minecraft 26.1 acceptance on `second` with real clients `Camera` and `Camera2` using the updated checked-in `examples/portable-pinball-cabinet`. A real Survival placement created the approximately block-sized cabinet at `[732.5,65,731.5]` with its child interaction at `[732.5,65.65,731.98]`, while the shared remote pinball presentation remained around `[770,104,770]`.
-
-A real cabinet use advanced controller generation `1 -> 2`, gave token `2` only to Camera, and routed Camera to the remote carrier `[770,104,778]`; Camera2 had no controller token and remained outside that camera audience. Camera2 `Space+A` left `launched=0` / `ballY=-1850`, while Camera Space launched the ball and advanced live ball/score state. Real Sneak returned Camera to the cabinet, advanced generation `2 -> 3`, and left Camera's old token stale so the later camera-lock phase did not recapture it. A second use advanced `3 -> 4` and re-entered the remote camera.
-
-Reload during an active claim reset generation to `0`, removed the player's controller score, reset the placeable active slot, and removed its child interaction/anchor. Cleanup then left zero generated objectives, owned entities, and force-loads; pack/terrain/item teardown restored `second` to vanilla-only enabled datapacks. The Node suite is 63/63 green, and all 21 retained pre-v26 example sources from `5a4b98b` compile byte-for-byte identically with the v26 and parent v25 compilers.
-
-### v24 interaction controller validation
-
-Portable v24 passed focused mod-free Minecraft 26.1 acceptance on `second` with real clients `Camera` and `Camera2` using the then-checked-in focused v24 interaction-controller pack (retired during example consolidation; current integrated smoke uses `examples/portable-pinball-cabinet`). Camera first claimed cabinet generation `1`; its player-local controller tick counter advanced while Camera2's stayed at `0`. A real Space press from Camera2 produced no controller action. A real Space press from Camera changed shared `controlUses` from raw `0` to `3000` and Camera's player-local `personalUses` to `3000`, while Camera2 remained `0`.
-
-Camera2 then reclaimed the cabinet. Generation advanced `1 -> 2`, Camera retained stale token `1`, and Camera2 received token `2`. Camera's controller tick counter stopped at raw `545000` while Camera2's advanced, Camera's subsequent Space input did not change shared/controller-local use state, and Camera2's Space advanced shared `controlUses` to `9000` and its own `personalUses` to `6000`. Disconnecting and reconnecting Camera2 without another claim preserved token `2` and resumed its controller tick counter. In the inverse stale-offline case, Camera2 disconnected with token `2`, Camera reclaimed generation `3`, and after Camera2 reconnected its controller tick counter remained exactly `1209000` while Camera's continued advancing, proving an older offline token cannot resurrect after a newer claim.
-
-Ordinary `/reload` reset generation and shared active-instance state to `0`, removed both players' controller-objective scores entirely, reset controller player-local state, and recreated exactly one interaction entity. The signed-32-bit wrap path was exercised explicitly by forcing generation to `2147483647`, seeding a stale holder with that token, then issuing a real cabinet click: the controller objective was removed/recreated, generation/token became `1`, and the stale holder had no remaining score. Cleanup removed every generated objective and owned entity and reduced ownership force-loads to zero. After deleting the pack and temporary floor and reloading, the server had no objectives or force-loaded chunks, only vanilla enabled, with `video_breakout` and `video_pinball` still disabled/available.
-
-The Node regression suite was 54/54 green. All 19 pre-existing retained v1-v23 examples were independently compiled with v24 and parent commit `8af93f4`, with byte-for-byte identical output.
-
-### v23 world interaction/use validation
-
-Portable v23 passed focused mod-free Minecraft 26.1 acceptance on `second` using real client `Camera` and the then-checked-in focused v23 interaction pack (retired during example consolidation; current integrated smoke uses `examples/portable-pinball-cabinet`). The generated cabinet owned exactly one `minecraft:interaction` with authored `width=1.8f`, `height=2.2f`, `response=1b`, the stable declaration tag, and the normal namespace owner tag. The accompanying block/text Displays rendered the visible cabinet while the interaction entity remained the invisible use hitbox.
-
-The first real right click changed shared raw `totalUses` and Camera's player-local raw `cabinetUses` from `0` to `1000`. Generated event consumption removed the entity's `interaction` compound after dispatch. A second distinct real right click changed both values to `2000`, proving separate uses dispatch separately without replaying the prior record. Ordinary `/reload` reset both active-instance states to `0`, recreated exactly one interaction entity, and left no stale pending use.
-
-The Node regression suite was 50/50 green. All 18 pre-existing retained v1-v22 examples were compiled with v23 and parent commit `ed4673e`, with byte-for-byte identical generated output. Cleanup removed every generated objective and owned entity and reduced the four acceptance ownership force-loaded chunks to zero. Final pack removal plus `/reload` left only vanilla enabled; the two pre-existing video packs remained disabled/available.
-
-### v22 expanded mannequin actor validation
-
-Portable v22 passed focused mod-free Minecraft 26.1 acceptance on `second` using real client `Camera` and checked-in `examples/portable-actor-presentation`. The rendered scene contained a slim Alex-profile crouching hero with diamond chest/boots, sword and shield; a wide Steve-profile guard in iron equipment; and a crouching zombie-intent mannequin with authored chest/main-hand equipment plus the compiler-supplied zombie-head fallback. Runtime entity data confirmed the authored `profile`, `hidden_layers`, `pose`, `main_hand`, and equipment maps.
-
-With exactly one player in the `forSinglePlayer` scope, real A input changed shared `heroYaw` from raw `180000` to `204000` and the owned mannequin rotation followed at `204.0f`. Real Space input set `heroPitch=-20000` with entity pitch `-20.0f`; Shift then set raw `15000` with entity pitch `15.0f`. Ordinary `/reload` restored yaw/pitch to `180000/0`, recreated exactly three owned mannequin actors, and restored the hero profile/equipment and `[180.0f, 0.0f]` rotation.
-
-The Node regression suite was 39/39 green. Seventeen retained v1-v21 checked-in examples were compiled against both v22 and pre-v22 commit `c7d3cc9`, with byte-for-byte identical generated output. Cleanup removed all generated objectives and owned entities and reduced the acceptance ownership rectangle from nine force-loaded chunks to zero. Final pack removal plus `/reload` left only vanilla enabled; the two pre-existing video packs remained disabled/available.
-
-### v21 rich/typed native dialog UI validation
-
-Portable v21 passed focused mod-free Minecraft 26.1 acceptance on `second` using real client `Camera` in externally managed team `v21_party`. The checked-in `examples/portable-dialog-ui` pack rendered a styled `Arcane Purchase` native confirmation with mixed-color text, a diamond-sword item body and tooltip, plus authored `Buy`/`Leave` actions. The confirmation `Leave` path resolved to logical `-10`. The same pack rendered boolean, single-option, and integer-range forms; real-client submit paths reached logical boolean `1`, option `Mage=3`, and range `3` in authored player-local fixed-point state. Option/range cancel paths resolved logical `-1`.
-
-The acceptance source deliberately calls each surface's `open()` every tick while armed. Pending transport state remained stable across ticks. Replacing a pending `hints` form with `role` rearmed the old transport from pending to idle and left only the new form pending, proving cross-surface replacement does not leave a stale sentinel. `/reload` after startup bootstrap reset stage/results/transports while preserving external team membership. Running `portable/cleanup` from a pending confirmation removed every generated objective and left `v21_party` intact. Final teardown then removed the team and pack and restarted the server to remove registry entries; the server finished with zero objectives, zero teams, and only vanilla enabled (with the pre-existing disabled video packs merely available).
-
-The Node regression suite was 35/35 green. Sixteen retained v1-v20 checked-in examples were recompiled against both v21 and pre-v21 commit `b000162`, with byte-for-byte identical generated output. Node coverage includes rich-text/body validation, item lowering, all three form kinds, logical-zero result mapping, cancel, replacement, bounds, and rejection of unsupported text input.
-
-### v20 interactive selection UI validation
-
-Portable v20 passed focused mod-free Minecraft 26.1 acceptance on `second` using real client `Camera` in externally managed team `v20_party`. The then-checked-in focused v20 selection pack (retired during example consolidation; current UI gallery is `examples/portable-dialog-ui`) generated one native `Portable Shop` multi-action dialog with Potion=`1`, Sword=`2`, and Cancel=`-1`, while intentionally calling `choice.open()` every tick while enabled. The rendered client showed the generated title, body, two option buttons, Cancel button, and tooltips. A pending selection remained raw `0` across multiple ticks despite repeated authored `open()`, proving the idle-to-pending guard kept the screen actionable.
-
-In one real-client sequence, Jump opened the menu and a mouse click chose Potion, producing trigger raw `1000`, authored `lastChoice=1000`, `menuEnabled=0`, and the rearmed idle sentinel. A second sequence used Jump then Escape and produced `lastChoice=-1000`. These paths use a compiler-owned trigger objective and native dialog controls; no held-key convention selected the option itself.
-
-Initial reload-only installation intentionally exposed the Minecraft 26.1 registry boundary: the new pack files were present, but function loading reported the dialog id missing from `minecraft:dialog`. Restarting the server with the pack present bootstrapped the registry and loaded cleanly. A later ordinary `/reload` of that already-bootstrapped pack succeeded with no problems, preserved `v20_party`, reset `lastChoice=0` and `menuEnabled=1000`, and reopened the selection to pending raw `0`. `portable/cleanup` removed all generated objectives and the pending dialog while preserving external team membership. Final removal used cleanup, pack deletion, and server restart; the server ended with zero objectives, zero teams, and only vanilla enabled.
-
-The Node regression suite was 31/31 green. Fifteen retained v1-v19 examples were recompiled against both v20 and pre-v20 commit `a2d324c`, with byte-for-byte identical generated output.
-
-### v19 persistent Grid validation
-
-Portable v19 passed focused mod-free Minecraft 26.1 acceptance on `second` using real client `Camera` in externally managed team `v19_party`. The then-checked-in focused v19 persistent-Grid pack (retired during example consolidation; current persistence reference is `examples/portable-persistence-lab`) began with global reset-policy Grid `world` as twelve logical zero cells and session preserve-policy Grid `stash` as four logical `5` cells. Real A/left wrote `world[1,1]=7`; real D/right wrote `stash[0,0]=9`. Authored `get` operations then exposed raw fixed-point values `worldCell=7000`, `stashCell=9000`, and out-of-bounds `worldOutside=-1000`, while command storage showed the corresponding arrays with only those cells changed.
-
-With the real client connected and the server ticking, `/reload`, ordinary cleanup/reload, and same-namespace same-schema replacement all preserved the Grid cells and external team membership. Cleanup removed all nine generated active-instance objectives while leaving persistent storage intact. A same-shape schema-2 replacement with new defaults `world=100` / reset and `stash=500` / preserve reset all world cells to raw `100000`, preserved stash as `[9000,5000,5000,5000]`, and advanced both schema markers. `reset_persistent` produced twelve `100000` world cells plus four `500000` stash cells; `purge_persistent` then removed the Grid storage.
-
-Final teardown removed the acceptance pack and external team and left zero objectives, zero teams, empty v19 namespace persistence storage, and only vanilla enabled. The Node regression suite was 28/28 green. Fourteen retained v1-v18 checked-in examples were recompiled against both v19 and pre-v19 commit `d55cbbf`, with byte-for-byte identical generated output.
-
-### v18 persistent scalar validation
-
-Portable v18 passed focused mod-free Minecraft 26.1 acceptance on `second` using real client `Camera` in externally managed team `v18_party`. The then-checked-in focused v18 persistent-scalar pack (retired during example consolidation; current persistence reference is `examples/portable-persistence-lab`) began with global `campaign=10`, global preserve-policy `legacy=5`, and session `wins=3`. Real A/left changed campaign to `11` and legacy to `15`; real D/right changed wins to `4`. `/reload` preserved all three persistent values and the external team membership while active-instance player/runtime objectives followed the normal reload lifecycle.
-
-Normal `portable/cleanup` removed active-instance objectives but deliberately left the one persistent objective and values `11 / 15 / 4`. Same-namespace replacement with the same schema preserved those values. A schema-2 replacement with new defaults `campaign=100`, `legacy=500`, `wins=200` then proved both policies: campaign and wins reset to `100 / 200`, while legacy preserved `15`; all schema markers advanced to 2. `portable/reset_persistent` restored the current declaration defaults `100 / 500 / 200`. A subsequent cleanup again left only persistent data, and `portable/purge_persistent` removed the persistence objective and initialization marker. Final teardown removed the temporary team and pack and left zero objectives and zero teams.
-
-The Node regression suite was 25/25 green. Retained v1-v17 generated examples were byte-for-byte identical to pre-v18 commit `a262bf1`.
-
-### v17 player/session reduction validation
-
-Portable v17 passed its mod-free Minecraft 26.1 acceptance on `second` using real clients `Camera` and `Camera2` as simultaneous members of externally managed team `v17_party`. The then-checked-in focused v17 reductions pack (retired during example consolidation; current multiplayer/session reference is `examples/portable-multiplayer-lab`) stores identity-local `score` / `ready` values and recomputes one session's `count`, `sum`, `min`, `max`, `any`, and `all` every tick. With both clients initialized at zero, the aggregate reached `count=2000`, `sum=0`, `min=0`, `max=0`, `any=0`, and `all=0` at fixed point 1000.
-
-Real A/left input on Camera changed only Camera's score to `1000`, producing `sum=1000`, `min=0`, `max=1000`. Real D/right input on Camera2 then changed only Camera2's score to `2000`, producing `sum=3000`, `min=1000`, `max=2000`. Jump on only Camera produced `any=1000` / `all=0`; after Camera2 also jumped, both became `1000`. This validates player-local source isolation plus deterministic numeric and boolean reduction lowering.
-
-Removing both clients from `v17_party` while they remained online produced the defined empty-set values `count=0`, `sum=0`, `min=-1000`, `max=-1000`, `any=0`, `all=1000`, while the identity-local scores `1000` / `2000` and ready values `1000` / `1000` remained intact. Rejoining both clients immediately recomputed the previous non-empty aggregates from those retained values. `/reload` preserved external team membership but reset player-local active-instance values to zero, after which reductions recomputed `count=2000`, `sum=0`, `min=0`, `max=0`, `any=0`, `all=0`.
-
-`portable/cleanup` removed every generated scoreboard objective while `v17_party` still retained both members. Test teardown then removed the team and acceptance datapack; final server state had zero objectives and zero teams, with only the pre-existing disabled video packs remaining. The Node regression suite was 22/22 green, and all retained v1-v16 generated examples were byte-for-byte identical to pre-v17 commit `4c485fd`.
-
-### v16 session GridWorld validation
-
-Portable v16 passed its mod-free Minecraft 26.1 acceptance on `second` using real clients `Camera` and `Camera2` in external teams `v16_red` and `v16_blue`. The then-checked-in focused v16 session-GridWorld pack (retired during example consolidation; current multiplayer/session reference is `examples/portable-multiplayer-lab`) deliberately reuses session-local Grid `map` and GridWorld `terrain` while projecting red at x=404..407 / z=4..7 / y=100 and blue at x=436..439 / z=4..7 / y=100 inside one ownership rectangle. Staged startup reached `#ready=1`, both session GridWorld ready values and session-local `readySeen` values reached `1000`, eight ownership chunks were force-loaded, and both 4 x 4 footprints initially contained 16 black-concrete blocks.
-
-With both clients online simultaneously, real A input from Camera changed only red `hits` from `0 -> 1000` and rebuilt red terrain to 15 black + one red block at `(404,100,4)`; blue remained `hits=0` with 16 black blocks. Real D input from Camera2 then changed only blue `hits` to `1000` and rebuilt blue terrain to 15 black + one blue block at `(436,100,4)` while red state remained unchanged. This validates same-name Grid/GridWorld qualification, lexical readiness, independent rebuild state, and distinct fixed footprints.
-
-`/reload` reset both hit counters to `0`, restored both readiness values to `1000`, returned both footprints to 16 black blocks, and preserved external team membership. Final `portable/cleanup` removed every scoreboard objective and all eight ownership force-loaded chunks while the teams still retained their members. Explicit teardown cleared all 32 persistent projected blocks, then removed the temporary teams and datapack; the final server state had zero objectives, zero force-loaded chunks, and zero teams. The Node regression suite was 19/19 green.
-
-### v15 session-local logical-match validation
-
-Portable v15 passed its mod-free Minecraft 26.1 acceptance on `second` using real clients `Camera` and `Camera2` in external teams `v15_red` and `v15_blue`. The checked-in acceptance pack deliberately reused local names `score`, `cell`, `sample`, Grid `map`, and RNG `run` in both sessions. Before player input, both identically seeded RNGs had state `1879724910` and first sample `31000`. With both clients online globally, real A input from Camera changed only red `score` / `cell` / `map[0,0]` from `0 -> 1000`, advanced red RNG state to `804324341` with sample `30000`, and left every blue value unchanged. Real D input from Camera2 then produced the same first transition in blue while red remained unchanged. This validates same-name scalar/Grid/RNG isolation and independent per-session exact-cardinality execution.
-
-Real-client captures rendered session-local HUD values independently (`RED S 1 C 1 R 30` and `BLUE S 1 C 1 R 30`). Removing Camera from `v15_red` left red `score=1000`, Grid cell `1000`, sample `30000`, and RNG state `804324341` intact while the team was empty. Rejoining and pressing A resumed the existing instance (`score` / Grid `1000 -> 2000`, RNG `804324341 -> 372032720`) without changing blue. `/reload` then reset both sessions deterministically to `score/cell/Grid=0`, reproduced sample `31000` and RNG state `1879724910`, and preserved the externally managed team memberships.
-
-Final `portable/cleanup` removed all portable/session objectives, eight ownership force-loaded chunks, and owner/camera entities while both external teams still retained their members. Test teardown then removed the temporary teams and acceptance datapack; the server datapack directory returned to its pre-test packs. The Node regression suite was 17/17 green, including deterministic compilation of all retained v1-v14 examples plus v15 lowering tests.
-
-### v14 team PlayerSet validation
-
-Portable v14 passed its mod-free Minecraft 26.1 acceptance on `second` using two real clients and one unrelated bot. External teams `v14_red` and `v14_blue` contained `Camera` and `Camera2` respectively. With both real clients online globally, real A input on Camera changed only its team-scoped player-local meter (`0 -> -14000`) and the red exact-cardinality edge counter (`0 -> 1000`), while Camera2 stayed `0` and the blue counter stayed `0`. Real D input on Camera2 then changed only its meter (`0 -> 13000`) and blue edge counter (`0 -> 1000`) while the red values remained unchanged. This proves that two one-member team `forSinglePlayer` scopes execute independently even though the global online count is two.
-
-The red and blue position-lock cameras held the clients at distinct carriers `[248,140,8]` / yaw `0` and `[280,140,8]` / yaw `180`, both pitch `15`. Real-client captures rendered only the matching actionbars (`RED METER -14 HIT 1` and `BLUE METER 13 HIT 1`). With both clients still online, unrelated `Test_v14out` joined outside both teams; it received neither the player-init score nor the left/right input scores. Neither real client carried generated entity tags. Cleanup reduced eight ownership force-loaded chunks to zero, removed all objectives and both camera/owner entity sets, and left the external teams and their memberships intact. Test teardown then removed the temporary teams and datapack and reloaded cleanly. The Node regression suite was 15/15 green including deterministic compilation of all retained v1-v14 examples.
-
-### v13 core validation
-
-The v13 compiler core has focused mod-free Minecraft 26.1 validation on `second`. Runtime grid `fill`, clipped `fillRect`, dynamic macro-backed `get`/`set`, out-of-bounds fallback, deterministic RNG reset/reload behavior, and incremental `gridWorld` projection were exercised against a generated 4 x 3 smoke grid. The projection completed in three 5-cell slices, exposed `ready == 1` in portable fixed-point form, produced the expected 5 white / 7 black block footprint, and left no force-loaded chunks. `/reload` reproduced the same first RNG sample and grid result.
-
-`forSinglePlayer` was validated at zero, one, and two participants. With only real client `Camera2` online, a real A input changed shared `inputHits` from `0` to `1000` through `player.input.left`; with a second participant simultaneously online, the same real A input left both `inputHits` and a shared singleton tick counter at `0`, proving exact-cardinality suppression rather than arbitrary first-player selection. Cleanup removed the complete grid bank, player-input objective, main objective, and force-loads; the 12-cell temporary terrain footprint was explicitly restored to air and the smoke pack removed. The current v13 compiler was also compared against `6dc6da7` for all eight retained v1-v12 examples (Bounce, Pinball, Breakout, Presentation, UI, World, JRPG, and Multiplayer), with byte-for-byte identical generated output.
-
-### v13 procedural roguelike validation
-
-The full v13 reference E2E passed on mod-free Minecraft 26.1 `second`. The generated 29 x 37 dungeon reached `projection.ready == 1` without embedding final topology at compile time. `/reload` reproduced the same first-floor RNG state and all six room coordinates. Consuming the stream produced a different second floor, including a projected floor-cell count change from 217 to 224. With the target Minecraft block deliberately replaced by black concrete while the corresponding grid cell remained floor, real `Camera2` D input still moved logical position `(19,5) -> (20,5)`, collected the generated loot slot, and changed score `0 -> 1`, directly validating grid-authoritative collision. A second real-input setup entered the generated enemy slot and changed score `1 -> 6`; stepping onto the generated exit advanced to floor 3 and completed another projection rebuild.
-
-The first large-grid attempt exposed Minecraft's 65,536-command execution limit in the original all-cell `fillRect` lowering. Row-dispatch lowering removed that failure; repeated reload and floor generation produced no further command-limit event. Final teardown removed every generated objective, force-load, and owned/presentation entity, explicitly cleared the 1,073-cell projected footprint, deleted the reference datapack, and reloaded with no datapack problems.
-
-### v12 multiplayer validation
-
-Portable v12 was accepted on the mod-free `second` Minecraft 26.1 server with two simultaneous participants plus the real render client. `Test_v12a` holding Left changed only its own `meter` (`0 -> -10000`) while `Test_v12b` stayed `0`; then B holding Right changed only B (`0 -> 7000`) while A remained `-10000`. A held Jump for about 700 ms and its player-local rising-edge counter advanced only once (`0 -> 1000`), then advanced to `2000` only after release and a second press, while B remained `0`. Disconnect/reconnect in the same active instance preserved A's local values; `/reload` reset both participants to their declared initial values. The real 26.1 client remained position-locked to the shared camera and rendered its own actionbar (`METER -6  JUMP 0  ROUND 1`). Finally, cleanup was run with A offline: the player-state objective ceased to exist for both A and B and the ownership force-load returned to zero.
-
-The v12 `spectate` audience path was subsequently accepted with two simultaneous real Minecraft 26.1 clients (`Camera` and `Camera2`) using the multi-render-client mc-mcp control path. Both clients were explicitly placed in Spectator and converged to the same owned camera carrier at `[240,100,0]` with rotation `[180,15]`. Real A input on `Camera` changed only its local `meter` (`0 -> -9000`) while `Camera2` stayed `0`; real D input on `Camera2` then changed only its local value (`0 -> 8000`) while `Camera` remained `-9000`. Opposite mouse-look attempts on the two clients both returned to the carrier position/rotation, demonstrating that both clients were actively spectating the shared carrier rather than merely being free spectators at the same coordinates. Neither player had generated tags. `portable/cleanup` left both players in Spectator, removed the complete player-objective bank, and returned force-loads to zero. This closes the v12 shared-spectate-camera multiplayer E2E gate.
-
-After v12 landed, the v10 Breakout and Pinball reference packs were regenerated by the current compiler and re-tested on the same vanilla server. Breakout real A input moved `paddleX` from `0` to `-2240`; Space launched play, an actual brick collision changed `bricksLeft 40 -> 39` and `score 0 -> 1`, and a drain changed `lives 3 -> 2`. Pinball client A and D inputs hit deterministic active-flipper setups with mirrored responses (`score +5`, `ballVx +0.24` / `-0.24`), and real Space input launched normal play under the fixed camera. Both packs cleaned their objectives and force-loads back to zero.
+Historical rationale and acceptance evidence belong in the ADRs; use `docs/decisions/README.md` to find the relevant decision.

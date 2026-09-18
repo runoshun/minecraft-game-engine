@@ -89,7 +89,7 @@ The compiler uses the bundled TypeScript 5.9.2 distribution to load a bounded lo
 
 This extraction step is intentionally not a general TypeScript runtime. Game code must express deployable behavior through portable IR/DSL declarations; live Minecraft state, filesystem/network access, arbitrary runtime callbacks, and host objects are not compiler capabilities.
 
-See `docs/architecture.md` for the current design contract, `docs/operations.md` for compile/deploy/validation procedures, and `docs/decisions/` for architectural decisions.
+See `docs/architecture.md` for the current design contract, `docs/operations.md` for compile/deploy/validation procedures, and `docs/decisions/README.md` for the indexed architectural decisions.
 
 ## Development rules
 
